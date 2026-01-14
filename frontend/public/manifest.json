@@ -1,0 +1,17 @@
+{
+  "name": "Base44 APP",
+  "short_name": "Base44",
+  "description": "Sistema de gestão fiscal com IA",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0a0a0f",
+  "theme_color": "#0a0a0f",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "https://base44.com/logo_v2.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}

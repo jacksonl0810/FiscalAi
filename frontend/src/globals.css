@@ -1,0 +1,244 @@
+css
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Fusion AI Color Palette */
+    --fusion-blue: #0066FF;
+    --fusion-blue-dark: #0047B3;
+    --fusion-black: #0A0A0F;
+    --fusion-orange: #FF6B35;
+    --fusion-purple: #6366F1;
+    
+    /* Backgrounds */
+    --background: 10 10 15;
+    --surface: 15 15 22;
+    --surface-elevated: 20 20 30;
+    
+    /* Text */
+    --foreground: 255 255 255;
+    --muted: 156 163 175;
+    
+    /* Borders */
+    --border: 255 255 255 / 0.1;
+    
+    /* Gradients */
+    --gradient-primary: linear-gradient(135deg, #0066FF 0%, #0A0A0F 50%, #FF6B35 100%);
+    --gradient-hover: linear-gradient(135deg, #0047B3 0%, #000000 50%, #FF5722 100%);
+  }
+  
+  * {
+    @apply border-border;
+  }
+  
+  body {
+    @apply bg-[#0A0A0F] text-foreground;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+}
+
+@layer utilities {
+  /* Animated Gradient Button */
+  .btn-gradient-animated {
+    position: relative;
+    background: linear-gradient(135deg, #0066FF 0%, #0A0A0F 50%, #FF6B35 100%);
+    background-size: 200% 200%;
+    animation: gradientShift 4s ease infinite;
+    transition: all 0.2s ease-in-out;
+  }
+  
+  .btn-gradient-animated:hover {
+    box-shadow: 0 0 30px rgba(0, 102, 255, 0.4);
+    transform: translateY(-2px);
+  }
+  
+  .btn-gradient-animated:active {
+    transform: translateY(0);
+  }
+  
+  /* Card Hover Effect */
+  .card-interactive {
+    position: relative;
+    transition: all 0.3s ease-in-out;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+  }
+  
+  .card-interactive::before {
+    content: '';
+    position: absolute;
+    inset: -1px;
+    border-radius: inherit;
+    padding: 1px;
+    background: linear-gradient(135deg, transparent, #0066FF, transparent);
+    background-size: 200% 200%;
+    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+  }
+  
+  .card-interactive:hover::before {
+    opacity: 1;
+    animation: gradientShift 3s ease infinite;
+  }
+  
+  .card-interactive:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 8px 32px rgba(0, 102, 255, 0.15);
+  }
+  
+  /* Nav Item Active */
+  .nav-item-active {
+    position: relative;
+    background: linear-gradient(135deg, rgba(0, 102, 255, 0.15) 0%, rgba(10, 10, 15, 0.3) 50%, rgba(255, 107, 53, 0.1) 100%);
+    background-size: 200% 200%;
+    animation: gradientShift 4s ease infinite;
+  }
+  
+  .nav-item-active::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 3px;
+    background: linear-gradient(180deg, #0066FF 0%, #FF6B35 100%);
+  }
+  
+  /* Nav Item Hover */
+  .nav-item-hover:hover {
+    background: rgba(0, 102, 255, 0.08);
+    transition: all 0.2s ease-in-out;
+  }
+  
+  /* Glass Effect */
+  .glass-card {
+    background: rgba(15, 15, 22, 0.8);
+    backdrop-filter: blur(20px);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+  }
+  
+  /* Glow Effect */
+  .glow-blue {
+    box-shadow: 0 0 40px rgba(0, 102, 255, 0.3);
+  }
+  
+  .glow-orange {
+    box-shadow: 0 0 40px rgba(255, 107, 53, 0.3);
+  }
+  
+  /* Text Gradient */
+  .text-gradient-blue {
+    background: linear-gradient(135deg, #0066FF, #6366F1);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  
+  .text-gradient-orange {
+    background: linear-gradient(135deg, #FF6B35, #FF5722);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  
+  /* Icon Hover Animation */
+  .icon-interactive {
+    transition: all 0.2s ease-in-out;
+  }
+  
+  .icon-interactive:hover {
+    transform: scale(1.1);
+    filter: drop-shadow(0 0 8px rgba(0, 102, 255, 0.6));
+  }
+  
+  /* Gradient Shift Animation */
+  @keyframes gradientShift {
+    0% {
+      background-position: 0% 50%;
+    }
+    50% {
+      background-position: 100% 50%;
+    }
+    100% {
+      background-position: 0% 50%;
+    }
+  }
+  
+  /* Pulse Animation */
+  @keyframes pulse-slow {
+    0%, 100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.8;
+    }
+  }
+  
+  .animate-pulse-slow {
+    animation: pulse-slow 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+  
+  /* Border Gradient Animation */
+  .border-gradient-animated {
+    position: relative;
+  }
+  
+  .border-gradient-animated::after {
+    content: '';
+    position: absolute;
+    inset: -1px;
+    border-radius: inherit;
+    padding: 1px;
+    background: linear-gradient(90deg, #0066FF, #FF6B35, #0066FF);
+    background-size: 200% 100%;
+    animation: borderShift 3s linear infinite;
+    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+  }
+  
+  @keyframes borderShift {
+    to {
+      background-position: 200% 0;
+    }
+  }
+  
+  /* Secondary Button */
+  .btn-secondary-animated {
+    position: relative;
+    background: rgba(15, 15, 22, 0.6);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    transition: all 0.2s ease-in-out;
+  }
+  
+  .btn-secondary-animated:hover {
+    border-color: transparent;
+    background: rgba(15, 15, 22, 0.8);
+  }
+  
+  .btn-secondary-animated:hover::before {
+    content: '';
+    position: absolute;
+    inset: -1px;
+    border-radius: inherit;
+    padding: 1px;
+    background: linear-gradient(135deg, #0066FF, #FF6B35);
+    background-size: 200% 200%;
+    animation: gradientShift 3s ease infinite;
+    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+  }
+  
+  /* Smooth Transitions */
+  .transition-smooth {
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+}
