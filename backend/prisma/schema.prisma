@@ -1,0 +1,227 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                String        @id @default(uuid())
+  email             String        @unique
+  passwordHash      String        @map("password_hash")
+  name              String
+  avatar            String?
+  pagarMeCustomerId String?       @map("pagar_me_customer_id")
+  cpfCnpj           String?       @map("cpf_cnpj")
+  createdAt         DateTime      @default(now()) @map("created_at")
+  updatedAt         DateTime      @updatedAt @map("updated_at")
+
+  // Relations
+  companies     Company[]
+  notifications Notification[]
+  settings      UserSettings?
+  refreshTokens RefreshToken[]
+  subscription Subscription?
+  conversationMessages ConversationMessage[]
+
+  @@map("users")
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  userId    String   @map("user_id")
+  expiresAt DateTime @map("expires_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("refresh_tokens")
+}
+
+model Company {
+  id                 String  @id @default(uuid())
+  userId             String  @map("user_id")
+  cnpj               String
+  razaoSocial        String  @map("razao_social")
+  nomeFantasia       String? @map("nome_fantasia")
+  cidade             String
+  uf                 String  @db.Char(2)
+  cnaePrincipal      String? @map("cnae_principal")
+  regimeTributario   String  @map("regime_tributario")
+  certificadoDigital Boolean @default(false) @map("certificado_digital")
+  email              String
+  telefone           String
+  inscricaoMunicipal String  @map("inscricao_municipal")
+  nuvemFiscalId      String? @map("nuvem_fiscal_id")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  user                    User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  invoices                Invoice[]
+  dasPayments             DAS[]
+  fiscalIntegrationStatus FiscalIntegrationStatus?
+  userSettings            UserSettings[]
+
+  @@map("companies")
+}
+
+model Invoice {
+  id                String   @id @default(uuid())
+  companyId         String   @map("company_id")
+  numero            String?
+  clienteNome       String   @map("cliente_nome")
+  clienteDocumento  String   @map("cliente_documento")
+  descricaoServico  String   @map("descricao_servico")
+  valor             Decimal  @db.Decimal(15, 2)
+  aliquotaIss       Decimal  @default(5) @map("aliquota_iss") @db.Decimal(5, 2)
+  valorIss          Decimal? @map("valor_iss") @db.Decimal(15, 2)
+  issRetido         Boolean  @default(false) @map("iss_retido")
+  status            String   @default("rascunho")
+  municipio         String?
+  codigoVerificacao String?  @map("codigo_verificacao")
+  dataEmissao       DateTime? @map("data_emissao") @db.Date
+  dataPrestacao     DateTime? @map("data_prestacao") @db.Date
+  codigoServico     String?  @map("codigo_servico")
+  pdfUrl            String?  @map("pdf_url")
+  xmlUrl            String?  @map("xml_url")
+  nuvemFiscalId     String?  @map("nuvem_fiscal_id")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  company       Company        @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  notifications Notification[]
+
+  @@map("invoices")
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  titulo    String
+  mensagem  String
+  tipo      String   // 'sucesso', 'erro', 'alerta', 'info'
+  lida      Boolean  @default(false)
+  invoiceId String?  @map("invoice_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  // Relations
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  invoice Invoice? @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+
+  @@map("notifications")
+}
+
+model UserSettings {
+  id              String   @id @default(uuid())
+  userId          String   @unique @map("user_id")
+  theme           String   @default("dark")
+  fontSize        String   @default("medium") @map("font_size")
+  activeCompanyId String?  @map("active_company_id")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  activeCompany Company? @relation(fields: [activeCompanyId], references: [id], onDelete: SetNull)
+
+  @@map("user_settings")
+}
+
+model DAS {
+  id             String    @id @default(uuid())
+  companyId      String    @map("company_id")
+  referencia     String    // e.g., '01/2025'
+  dataVencimento DateTime  @map("data_vencimento") @db.Date
+  valorTotal     Decimal   @map("valor_total") @db.Decimal(15, 2)
+  valorInss      Decimal?  @map("valor_inss") @db.Decimal(15, 2)
+  valorIcms      Decimal?  @map("valor_icms") @db.Decimal(15, 2)
+  valorIss       Decimal?  @map("valor_iss") @db.Decimal(15, 2)
+  status         String    @default("pendente") // 'pendente', 'pago'
+  codigoBarras   String?   @map("codigo_barras")
+  pdfUrl         String?   @map("pdf_url")
+  dataPagamento  DateTime? @map("data_pagamento") @db.Date
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  // Relations
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@map("das")
+}
+
+model FiscalIntegrationStatus {
+  id                 String    @id @default(uuid())
+  companyId          String    @unique @map("company_id")
+  status             String    @default("verificando") // 'conectado', 'falha', 'verificando'
+  mensagem           String?
+  ultimaVerificacao  DateTime? @map("ultima_verificacao")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+
+  // Relations
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@map("fiscal_integration_status")
+}
+
+model Subscription {
+  id                    String    @id @default(uuid())
+  userId                String    @unique @map("user_id")
+  pagarMeSubscriptionId String    @unique @map("pagar_me_subscription_id")
+  pagarMePlanId        String    @map("pagar_me_plan_id")
+  status                String    @default("trial") // 'trial', 'ativo', 'inadimplente', 'cancelado'
+  currentPeriodStart    DateTime? @map("current_period_start")
+  currentPeriodEnd      DateTime? @map("current_period_end")
+  canceledAt            DateTime? @map("canceled_at")
+  trialEndsAt           DateTime? @map("trial_ends_at")
+  createdAt             DateTime  @default(now()) @map("created_at")
+  updatedAt             DateTime  @updatedAt @map("updated_at")
+
+  // Relations
+  user    User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  payments Payment[]
+
+  @@map("subscriptions")
+}
+
+model Payment {
+  id                String   @id @default(uuid())
+  subscriptionId    String   @map("subscription_id")
+  pagarMeTransactionId String @unique @map("pagar_me_transaction_id")
+  amount            Decimal  @db.Decimal(15, 2)
+  status            String   // 'pending', 'paid', 'failed', 'refunded'
+  paymentMethod     String   @map("payment_method") // 'credit_card', 'boleto', 'pix'
+  paidAt            DateTime? @map("paid_at")
+  failedAt          DateTime? @map("failed_at")
+  nfseId            String?  @map("nfse_id") // Link to fiscal invoice
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  subscription Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  @@map("payments")
+}
+
+model ConversationMessage {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  role      String   // 'user' or 'assistant'
+  content   String   @db.Text
+  metadata  Json?    // Store action data, timestamps, etc.
+  createdAt DateTime @default(now()) @map("created_at")
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@map("conversation_messages")
+}
