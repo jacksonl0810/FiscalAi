@@ -7,6 +7,7 @@ import { authenticate } from '../middleware/auth.js';
 import { asyncHandler, AppError } from '../middleware/errorHandler.js';
 import { createCustomer } from '../services/pagarMe.js';
 import { authLimiter } from '../middleware/rateLimiter.js';
+import { sendWelcomeEmail } from '../services/email.js';
 
 const router = express.Router();
 
@@ -123,6 +124,11 @@ router.post('/register', authLimiter, [
     data: {
       userId: user.id
     }
+  });
+
+  // Send welcome email (async, don't block registration)
+  sendWelcomeEmail(user).catch(err => {
+    console.error('[Auth] Failed to send welcome email:', err);
   });
 
   res.status(201).json({

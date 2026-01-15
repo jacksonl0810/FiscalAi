@@ -5,11 +5,12 @@ const API_BASE_URL = import.meta.env.VITE_API_URL || '/api';
 // Create axios instance
 const apiClient: AxiosInstance = axios.create({
   baseURL: API_BASE_URL,
-  headers: {
-    'Content-Type': 'application/json',
-  },
   timeout: 30000,
 });
+
+// Don't set default Content-Type - let axios set it automatically based on data type
+// For JSON, axios will set application/json
+// For FormData, axios will set multipart/form-data with correct boundary
 
 // Token management
 const TOKEN_KEY = 'fiscalai_token';
@@ -36,13 +37,22 @@ export const clearTokens = (): void => {
   localStorage.removeItem(REFRESH_TOKEN_KEY);
 };
 
-// Request interceptor - add auth token
+// Request interceptor - add auth token and set Content-Type appropriately
 apiClient.interceptors.request.use(
   (config: InternalAxiosRequestConfig) => {
     const token = getToken();
     if (token && config.headers) {
       config.headers.Authorization = `Bearer ${token}`;
     }
+    
+    // Only set Content-Type for non-FormData requests
+    // FormData needs axios to set multipart/form-data with the correct boundary automatically
+    if (config.data && !(config.data instanceof FormData) && config.headers) {
+      if (!config.headers['Content-Type']) {
+        config.headers['Content-Type'] = 'application/json';
+      }
+    }
+    
     return config;
   },
   (error: AxiosError) => {

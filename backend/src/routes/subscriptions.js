@@ -6,6 +6,7 @@ import { asyncHandler, AppError } from '../middleware/errorHandler.js';
 import { createCustomer, createPlan, createSubscription, getSubscription, cancelSubscription } from '../services/pagarMe.js';
 import { sendSuccess } from '../utils/response.js';
 import { emitNfse } from '../services/nuvemFiscal.js';
+import { sendPaymentConfirmationEmail, sendSubscriptionStatusEmail } from '../services/email.js';
 
 const router = express.Router();
 
@@ -69,6 +70,104 @@ router.post('/create-customer', [
   } catch (error) {
     throw new AppError(error.message || 'Falha ao criar cliente no Pagar.me', 500, 'CUSTOMER_CREATION_ERROR');
   }
+}));
+
+/**
+ * GET /api/subscriptions/status
+ * Get current user's subscription status
+ */
+router.get('/status', asyncHandler(async (req, res) => {
+  const userId = req.user.id;
+
+  // Find user's active subscription
+  const subscription = await prisma.subscription.findFirst({
+    where: { userId },
+    orderBy: { createdAt: 'desc' }
+  });
+
+  // Check user creation date for trial calculation
+  const user = await prisma.user.findUnique({
+    where: { id: userId }
+  });
+
+  let status = 'trial';
+  let planId = null;
+  let currentPeriodEnd = null;
+  let daysRemaining = 0;
+
+  if (subscription) {
+    status = subscription.status;
+    planId = subscription.planId;
+    currentPeriodEnd = subscription.currentPeriodEnd;
+    
+    if (currentPeriodEnd) {
+      const now = new Date();
+      daysRemaining = Math.max(0, Math.ceil((new Date(currentPeriodEnd) - now) / (1000 * 60 * 60 * 24)));
+    }
+  } else if (user) {
+    // Calculate trial status based on account creation
+    const trialDays = 7;
+    const accountAgeDays = Math.floor((Date.now() - new Date(user.createdAt)) / (1000 * 60 * 60 * 24));
+    
+    if (accountAgeDays <= trialDays) {
+      status = 'trial';
+      daysRemaining = trialDays - accountAgeDays;
+      currentPeriodEnd = new Date(new Date(user.createdAt).getTime() + trialDays * 24 * 60 * 60 * 1000);
+    } else {
+      status = 'inadimplente'; // Trial expired
+      daysRemaining = 0;
+    }
+  }
+
+  sendSuccess(res, 'Subscription status retrieved', {
+    status,
+    plan_id: planId,
+    current_period_end: currentPeriodEnd,
+    days_remaining: daysRemaining
+  });
+}));
+
+/**
+ * POST /api/subscriptions/create-checkout
+ * Create a checkout session for subscription
+ */
+router.post('/create-checkout', [
+  body('plan_id').notEmpty().withMessage('Plan ID is required'),
+  body('return_url').notEmpty().withMessage('Return URL is required'),
+  body('cancel_url').optional()
+], validateRequest, asyncHandler(async (req, res) => {
+  const { plan_id, return_url, cancel_url } = req.body;
+  const userId = req.user.id;
+
+  // Get user data
+  const user = await prisma.user.findUnique({
+    where: { id: userId }
+  });
+
+  if (!user) {
+    throw new AppError('Usuário não encontrado', 404, 'NOT_FOUND');
+  }
+
+  // Plan configuration
+  const plans = {
+    'pro': { name: 'FiscalAI Pro', amount: 9700, description: 'Plano mensal Pro' },
+    'business': { name: 'FiscalAI Business', amount: 19700, description: 'Plano mensal Business' }
+  };
+
+  const plan = plans[plan_id];
+  if (!plan) {
+    throw new AppError('Plano não encontrado', 400, 'INVALID_PLAN');
+  }
+
+  // For now, return a simulated checkout URL
+  // In production, this would create a real Pagar.me checkout session
+  const checkoutUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/payment-success?plan=${plan_id}&session_id=${Date.now()}`;
+
+  sendSuccess(res, 'Checkout session created', {
+    checkout_url: checkoutUrl,
+    plan_id,
+    amount: plan.amount
+  });
 }));
 
 /**
@@ -536,6 +635,18 @@ async function handlePaymentApproved(event) {
     }
   });
 
+  // Send payment confirmation email (async)
+  if (subscription.user?.email) {
+    sendPaymentConfirmationEmail(subscription.user, {
+      amount: payment.amount * 100, // Convert back to cents for email template
+      planName: subscription.planId || 'FiscalAI Pro',
+      date: paidAt,
+      transactionId: transactionId
+    }).catch(err => {
+      console.error('[Webhook] Failed to send payment confirmation email:', err);
+    });
+  }
+
   // Trigger NFS-e emission for the payment
   try {
     await emitInvoiceForPayment(subscription, payment, transactionData);
@@ -562,9 +673,10 @@ async function handlePaymentFailed(event) {
     throw new Error('Transaction ID not found in payment failed event');
   }
 
-  // Find subscription
+  // Find subscription with user
   const subscription = await prisma.subscription.findFirst({
-    where: { pagarMeSubscriptionId: subscriptionId }
+    where: { pagarMeSubscriptionId: subscriptionId },
+    include: { user: true }
   });
 
   if (!subscription) {
@@ -623,6 +735,13 @@ async function handlePaymentFailed(event) {
     }
   });
 
+  // Send status change email (async)
+  if (subscription.user?.email) {
+    sendSubscriptionStatusEmail(subscription.user, 'inadimplente').catch(err => {
+      console.error('[Webhook] Failed to send subscription status email:', err);
+    });
+  }
+
   console.log(`[Webhook] Payment failed processed: ${transactionId}`, {
     paymentId: payment.id,
     subscriptionId: subscription.id,
@@ -648,9 +767,10 @@ async function handleSubscriptionCanceled(event) {
     throw new Error('Subscription ID not found in canceled event');
   }
 
-  // Find subscription
+  // Find subscription with user
   const subscription = await prisma.subscription.findFirst({
-    where: { pagarMeSubscriptionId: subscriptionId }
+    where: { pagarMeSubscriptionId: subscriptionId },
+    include: { user: true }
   });
 
   if (!subscription) {
@@ -680,6 +800,13 @@ async function handleSubscriptionCanceled(event) {
       tipo: 'info'
     }
   });
+
+  // Send cancellation email (async)
+  if (subscription.user?.email) {
+    sendSubscriptionStatusEmail(subscription.user, 'cancelado').catch(err => {
+      console.error('[Webhook] Failed to send cancellation email:', err);
+    });
+  }
 
   console.log(`[Webhook] Subscription canceled: ${subscriptionId}`, {
     subscriptionId: subscription.id,

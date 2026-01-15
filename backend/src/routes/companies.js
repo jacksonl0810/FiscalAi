@@ -4,7 +4,7 @@ import { prisma } from '../index.js';
 import { authenticate } from '../middleware/auth.js';
 import { asyncHandler, AppError } from '../middleware/errorHandler.js';
 import { requireActiveSubscription } from '../middleware/subscriptionAccess.js';
-import { registerCompany, checkConnection } from '../services/nuvemFiscal.js';
+import { registerCompany, checkConnection, isNuvemFiscalConfigured } from '../services/nuvemFiscal.js';
 import { getMEILimitStatus } from '../services/meiLimitTracking.js';
 import { sendSuccess } from '../utils/response.js';
 
@@ -219,6 +219,14 @@ router.delete('/:id', asyncHandler(async (req, res) => {
  * Register company in fiscal cloud (Nuvem Fiscal)
  */
 router.post('/:id/register-fiscal', asyncHandler(async (req, res) => {
+  // Check if Nuvem Fiscal is configured
+  if (!isNuvemFiscalConfigured()) {
+    return sendSuccess(res, 'Nuvem Fiscal não configurado. Configure as credenciais para habilitar a integração fiscal.', {
+      status: 'not_configured',
+      message: 'Para usar a integração fiscal, configure NUVEM_FISCAL_CLIENT_ID e NUVEM_FISCAL_CLIENT_SECRET nas variáveis de ambiente.'
+    }, 200);
+  }
+
   // Check ownership
   const company = await prisma.company.findFirst({
     where: {
@@ -318,6 +326,15 @@ router.get('/:id/fiscal-status', asyncHandler(async (req, res) => {
  * Check fiscal connection status
  */
 router.post('/:id/check-fiscal-connection', asyncHandler(async (req, res) => {
+  // Check if Nuvem Fiscal is configured
+  if (!isNuvemFiscalConfigured()) {
+    return sendSuccess(res, 'Nuvem Fiscal não configurado', {
+      connectionStatus: 'not_configured',
+      message: 'Integração fiscal não configurada. Configure as credenciais da Nuvem Fiscal para habilitar a emissão de notas fiscais.',
+      details: 'As variáveis de ambiente NUVEM_FISCAL_CLIENT_ID e NUVEM_FISCAL_CLIENT_SECRET não foram configuradas.'
+    }, 200);
+  }
+
   // Check ownership
   const company = await prisma.company.findFirst({
     where: {

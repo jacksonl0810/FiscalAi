@@ -22,6 +22,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import CompanySelector from "@/components/layout/CompanySelector";
 import UserMenu from "@/components/layout/UserMenu";
+import SubscriptionBadge from "@/components/layout/SubscriptionBadge";
 
 export default function Layout({ children, currentPageName }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -157,6 +158,13 @@ export default function Layout({ children, currentPageName }) {
                 activeCompanyId={activeCompanyId}
                 onCompanyChange={setActiveCompanyId}
               />
+            </div>
+          )}
+
+          {/* Subscription Status */}
+          {!sidebarCollapsed && (
+            <div className="px-4 py-3 border-b border-white/5 flex justify-center">
+              <SubscriptionBadge />
             </div>
           )}
 

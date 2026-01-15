@@ -106,29 +106,71 @@ export default function Assistant() {
         conversationHistory: recentMessages
       });
 
-      // Handle response - always show explanation if available
-      const explanation = data.explanation || data.message || data.data?.explanation || "Desculpe, não consegui processar sua mensagem.";
-      const aiResponse = {
-        id: Date.now() + 1,
-        isAI: true,
-        content: explanation,
-        time: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
-      };
-      setMessages(prev => [...prev, aiResponse]);
+      // Try to parse JSON from response if it's a string
+      let parsedData = data;
+      let action = null;
+      let explanation = null;
 
-      // Handle invoice emission action
-      const action = data.action || data.data?.action;
+      // Check if response contains JSON (could be in explanation, message, or data fields)
+      const responseText = data.explanation || data.message || data.data?.explanation || JSON.stringify(data);
+      
+      // Try to extract JSON from markdown code blocks
+      const jsonMatch = responseText.match(/```json\s*([\s\S]*?)\s*```/) || responseText.match(/```\s*([\s\S]*?)\s*```/);
+      if (jsonMatch) {
+        try {
+          parsedData = JSON.parse(jsonMatch[1]);
+          action = parsedData.action;
+          explanation = parsedData.explanation;
+        } catch (e) {
+          // If JSON parsing fails, continue with original data
+        }
+      }
+
+      // Also check if data itself has action structure
+      if (!action) {
+        action = data.action || data.data?.action || parsedData?.action;
+      }
+
+      // Get explanation - prefer parsed, then original
+      explanation = explanation || parsedData?.explanation || data.explanation || data.message || data.data?.explanation || "Desculpe, não consegui processar sua mensagem.";
+
+      // Only show explanation if it's not just JSON
+      if (explanation && !explanation.trim().startsWith('{') && !explanation.trim().startsWith('```json')) {
+        const aiResponse = {
+          id: Date.now() + 1,
+          isAI: true,
+          content: explanation,
+          time: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+        };
+        setMessages(prev => [...prev, aiResponse]);
+      }
+
+      // Handle invoice emission action - extract from action or parsed JSON
       if (action?.type === 'emitir_nfse' && action?.data) {
         const invoiceData = action.data;
         const newInvoice = {
           cliente_nome: invoiceData.cliente_nome,
-          cliente_documento: invoiceData.cliente_documento,
-          descricao_servico: invoiceData.descricao_servico,
-          valor: invoiceData.valor,
-          aliquota_iss: invoiceData.aliquota_iss || 5,
-          valor_iss: (invoiceData.valor * (invoiceData.aliquota_iss || 5)) / 100,
+          cliente_documento: invoiceData.cliente_documento || '',
+          descricao_servico: invoiceData.descricao_servico || 'Serviço prestado',
+          valor: parseFloat(invoiceData.valor) || 0,
+          aliquota_iss: parseFloat(invoiceData.aliquota_iss) || 5,
+          valor_iss: (parseFloat(invoiceData.valor) || 0) * (parseFloat(invoiceData.aliquota_iss) || 5) / 100,
           status: "pendente_confirmacao",
-          municipio: invoiceData.municipio || "São Paulo - SP"
+          municipio: invoiceData.municipio || ""
+        };
+        setPendingInvoice(newInvoice);
+      } else if (parsedData?.action?.type === 'emitir_nfse' && parsedData?.action?.data) {
+        // Fallback: check parsed data directly
+        const invoiceData = parsedData.action.data;
+        const newInvoice = {
+          cliente_nome: invoiceData.cliente_nome,
+          cliente_documento: invoiceData.cliente_documento || '',
+          descricao_servico: invoiceData.descricao_servico || 'Serviço prestado',
+          valor: parseFloat(invoiceData.valor) || 0,
+          aliquota_iss: parseFloat(invoiceData.aliquota_iss) || 5,
+          valor_iss: (parseFloat(invoiceData.valor) || 0) * (parseFloat(invoiceData.aliquota_iss) || 5) / 100,
+          status: "pendente_confirmacao",
+          municipio: invoiceData.municipio || ""
         };
         setPendingInvoice(newInvoice);
       }
@@ -160,18 +202,24 @@ export default function Assistant() {
   };
 
   const handleVoiceInput = (text) => {
-    processMessage(text);
+    // Put transcribed text in the input box so user can review before sending
+    setInputValue(text);
   };
 
   const handleConfirmInvoice = async () => {
     if (!pendingInvoice) return;
     setIsProcessing(true);
     
+    // Get company first (outside try block for use in error handling)
+    let company = null;
     try {
-      // Get company
       const companies = await companiesService.list();
-      const company = companies[0];
-
+      company = companies[0];
+    } catch (e) {
+      console.error('Error fetching companies:', e);
+    }
+    
+    try {
       if (!company) {
         throw new Error('Empresa não configurada');
       }
@@ -225,10 +273,29 @@ export default function Assistant() {
         tipo: "erro"
       });
 
+      // Try to get AI explanation for the error
+      let aiExplanation = `❌ Erro ao emitir nota fiscal: ${error.message || 'Erro desconhecido'}. Por favor, tente novamente ou verifique os dados.`;
+      
+      try {
+        const errorExplainPrompt = `Explique de forma clara e em português brasileiro o seguinte erro de emissão de nota fiscal:\n\n"${error.message || 'Erro desconhecido'}"\n\nForneça:\n1. Uma explicação simples do problema\n2. Possíveis causas\n3. Passos para resolver\n\nSeja conciso e direto, em no máximo 3-4 linhas.`;
+        
+        const explainResponse = await assistantService.processCommand({
+          message: errorExplainPrompt,
+          companyId: company?.id
+        });
+        
+        if (explainResponse.explanation) {
+          aiExplanation = `❌ Erro na emissão:\n\n${explainResponse.explanation}`;
+        }
+      } catch (explainError) {
+        console.error('Error getting AI explanation:', explainError);
+        // Use the original error message
+      }
+
       const errorResponse = {
         id: Date.now(),
         isAI: true,
-        content: `❌ Erro ao emitir nota fiscal: ${error.message || 'Erro desconhecido'}. Por favor, tente novamente ou verifique os dados.`,
+        content: aiExplanation,
         time: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
       };
       setMessages(prev => [...prev, errorResponse]);
@@ -239,11 +306,18 @@ export default function Assistant() {
   };
 
   const handleEditInvoice = () => {
-    setPendingInvoice(null);
+    // This is called when user clicks edit - now handled internally by InvoicePreview
+    // Keep pendingInvoice to allow inline editing
+  };
+
+  const handleUpdateInvoice = (updatedInvoice) => {
+    // Called when user saves edits in the InvoicePreview component
+    setPendingInvoice(updatedInvoice);
+    
     const aiResponse = {
       id: Date.now(),
       isAI: true,
-      content: "Ok, vamos corrigir os dados. Por favor, me diga quais informações precisa alterar.",
+      content: `✏️ Dados atualizados!\n\n👤 Cliente: ${updatedInvoice.cliente_nome}\n💰 Valor: R$ ${updatedInvoice.valor?.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}\n📝 Serviço: ${updatedInvoice.descricao_servico || 'Serviço prestado'}\n\nConfira a prévia atualizada e confirme a emissão quando estiver correto.`,
       time: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
     };
     setMessages(prev => [...prev, aiResponse]);
@@ -321,6 +395,7 @@ export default function Assistant() {
               invoice={pendingInvoice}
               onConfirm={handleConfirmInvoice}
               onEdit={handleEditInvoice}
+              onUpdate={handleUpdateInvoice}
               isProcessing={isProcessing}
             />
           )}

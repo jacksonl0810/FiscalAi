@@ -7,7 +7,7 @@ import { prisma } from '../index.js';
 import { authenticate } from '../middleware/auth.js';
 import { asyncHandler, AppError } from '../middleware/errorHandler.js';
 import { requireActiveSubscription } from '../middleware/subscriptionAccess.js';
-import { emitNfse, checkNfseStatus } from '../services/nuvemFiscal.js';
+import { emitNfse, checkNfseStatus, isNuvemFiscalConfigured } from '../services/nuvemFiscal.js';
 import { sendSuccess } from '../utils/response.js';
 import { checkMEILimit } from '../services/meiLimitTracking.js';
 import { validateInvoiceForRegime, getRegimeRules, getRecommendedIssRate, getRegimeInvoiceDefaults } from '../services/regimeRules.js';
@@ -21,11 +21,14 @@ const upload = multer({
     fileSize: 25 * 1024 * 1024 // 25MB max (Whisper API limit)
   },
   fileFilter: (req, file, cb) => {
-    const allowedMimeTypes = ['audio/mpeg', 'audio/mp3', 'audio/wav', 'audio/webm', 'audio/ogg', 'audio/m4a', 'audio/x-m4a'];
-    if (allowedMimeTypes.includes(file.mimetype)) {
+    // More lenient MIME type checking - check if it starts with 'audio/'
+    // This handles cases like 'audio/webm;codecs=opus'
+    const mimeType = file.mimetype || '';
+    if (mimeType.startsWith('audio/')) {
       cb(null, true);
     } else {
-      cb(new Error(`Unsupported audio format: ${file.mimetype}`), false);
+      console.error('[Multer] Unsupported file type:', mimeType);
+      cb(new Error(`Unsupported audio format: ${mimeType}. Please use audio files only.`), false);
     }
   }
 });
@@ -339,7 +342,48 @@ router.get('/suggestions', asyncHandler(async (req, res) => {
  * POST /api/assistant/transcribe
  * Transcribe audio to text using OpenAI Whisper API
  */
-router.post('/transcribe', authenticate, requireActiveSubscription, upload.single('audio'), asyncHandler(async (req, res) => {
+// Multer error handler middleware
+const handleMulterError = (req, res, next) => {
+  upload.single('audio')(req, res, (err) => {
+    if (err) {
+      console.error('[Multer Error]', {
+        message: err.message,
+        code: err.code,
+        field: err.field,
+        name: err.name
+      });
+      
+      if (err instanceof multer.MulterError) {
+        if (err.code === 'LIMIT_FILE_SIZE') {
+          return res.status(400).json({
+            status: 'error',
+            message: 'Arquivo de áudio muito grande. O tamanho máximo é 25MB.',
+            code: 'FILE_TOO_LARGE'
+          });
+        }
+        return res.status(400).json({
+          status: 'error',
+          message: `Erro ao processar arquivo: ${err.message}`,
+          code: 'MULTER_ERROR'
+        });
+      }
+      
+      // File filter error or other errors
+      return res.status(400).json({
+        status: 'error',
+        message: err.message || 'Formato de áudio não suportado. Por favor, use um formato de áudio válido.',
+        code: 'UNSUPPORTED_AUDIO_FORMAT'
+      });
+    }
+    next();
+  });
+};
+
+/**
+ * POST /api/assistant/transcribe
+ * Transcribe audio to text using OpenAI Whisper API
+ */
+router.post('/transcribe', authenticate, requireActiveSubscription, handleMulterError, asyncHandler(async (req, res) => {
   const openaiApiKey = process.env.OPENAI_API_KEY;
   
   if (!openaiApiKey) {
@@ -352,6 +396,11 @@ router.post('/transcribe', authenticate, requireActiveSubscription, upload.singl
 
   // Check if file was uploaded
   if (!req.file) {
+    console.error('[Transcription] No file received:', {
+      body: req.body,
+      files: req.files,
+      headers: req.headers['content-type']
+    });
     throw new AppError(
       'Audio file is required. Please upload an audio file.',
       400,
@@ -373,9 +422,68 @@ router.post('/transcribe', authenticate, requireActiveSubscription, upload.singl
       );
     }
 
+    // Check minimum file size (at least 5KB to avoid empty/silent recordings)
+    // This helps prevent Whisper hallucinations on very short or silent audio
+    if (audioFile.buffer.length < 5120) {
+      throw new AppError(
+        'Gravação muito curta. Por favor, grave pelo menos 2 segundos de áudio falando claramente.',
+        400,
+        'AUDIO_TOO_SHORT'
+      );
+    }
+
+    // Known Whisper hallucinations that occur with silent/unclear audio
+    const KNOWN_HALLUCINATIONS = [
+      'legendas pela comunidade amara.org',
+      'legendas pela comunidade amara',
+      'subtitles by amara.org',
+      'subtítulos por amara.org',
+      'tradução por',
+      'obrigado por assistir',
+      'thanks for watching',
+      'please subscribe',
+      'inscreva-se',
+      'legendas em português',
+      'transcrição automática',
+      'música',
+      '[música]',
+      '[music]',
+      '...',
+      '♪',
+      '♫'
+    ];
+
+    // Map MIME type to file extension (OpenAI Whisper supported formats)
+    // Supported: flac, m4a, mp3, mp4, mpeg, mpga, oga, ogg, wav, webm
+    const mimeToExtension = {
+      'audio/webm': 'webm',
+      'audio/webm;codecs=opus': 'webm',
+      'audio/ogg': 'ogg',
+      'audio/ogg;codecs=opus': 'ogg',
+      'audio/oga': 'oga',
+      'audio/wav': 'wav',
+      'audio/wave': 'wav',
+      'audio/x-wav': 'wav',
+      'audio/mp3': 'mp3',
+      'audio/mpeg': 'mp3',
+      'audio/mp4': 'mp4',
+      'audio/m4a': 'm4a',
+      'audio/x-m4a': 'm4a',
+      'audio/flac': 'flac',
+      'audio/x-flac': 'flac'
+    };
+
+    // Get clean MIME type (remove codec info)
+    const cleanMimeType = (audioFile.mimetype || 'audio/webm').split(';')[0].trim();
+    const extension = mimeToExtension[audioFile.mimetype] || mimeToExtension[cleanMimeType] || 'webm';
+    const filename = `audio.${extension}`;
+
     console.log('[Transcription] Starting transcription:', {
-      filename: audioFile.originalname,
+      originalFilename: audioFile.originalname,
       mimetype: audioFile.mimetype,
+      cleanMimeType,
+      extension,
+      filename,
       size: audioFile.buffer.length,
       hasOpenAIKey: !!openaiApiKey
     });
@@ -383,8 +491,8 @@ router.post('/transcribe', authenticate, requireActiveSubscription, upload.singl
     // Create FormData for OpenAI Whisper API
     const formData = new FormDataLib();
     formData.append('file', audioFile.buffer, {
-      filename: audioFile.originalname || 'audio.webm',
-      contentType: audioFile.mimetype || 'audio/webm'
+      filename: filename,
+      contentType: cleanMimeType
     });
     formData.append('model', 'whisper-1');
     formData.append('language', 'pt'); // Portuguese
@@ -392,32 +500,145 @@ router.post('/transcribe', authenticate, requireActiveSubscription, upload.singl
     // Get form-data headers
     const formHeaders = formData.getHeaders();
 
-    console.log('[Transcription] Calling OpenAI Whisper API...');
+    // Retry logic for transient network errors
+    const maxRetries = 3;
+    let lastError = null;
+    let response = null;
 
-    // Call OpenAI Whisper API using axios (works better with form-data in Node.js)
-    const response = await axios.post('https://api.openai.com/v1/audio/transcriptions', formData, {
-      headers: {
-        'Authorization': `Bearer ${openaiApiKey}`,
-        ...formHeaders
-      },
-      timeout: timeoutMs,
-      maxContentLength: Infinity,
-      maxBodyLength: Infinity
-    });
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        console.log(`[Transcription] Calling OpenAI Whisper API (attempt ${attempt}/${maxRetries})...`);
+
+        // Recreate FormData for each attempt (streams can only be read once)
+        const retryFormData = new FormDataLib();
+        retryFormData.append('file', audioFile.buffer, {
+          filename: filename,
+          contentType: cleanMimeType
+        });
+        retryFormData.append('model', 'whisper-1');
+        retryFormData.append('language', 'pt');
+        // Add a prompt to guide Whisper towards business/fiscal content
+        // This helps reduce hallucinations and improves transcription accuracy
+        retryFormData.append('prompt', 'Transcrição de comandos de voz para sistema fiscal. Comandos comuns: emitir nota fiscal, consultar nota, verificar status, valor, cliente, serviço.');
+
+        response = await axios.post('https://api.openai.com/v1/audio/transcriptions', retryFormData, {
+          headers: {
+            'Authorization': `Bearer ${openaiApiKey}`,
+            ...retryFormData.getHeaders()
+          },
+          timeout: timeoutMs,
+          maxContentLength: Infinity,
+          maxBodyLength: Infinity
+        });
+
+        // Success - break out of retry loop
+        break;
+      } catch (err) {
+        lastError = err;
+        console.error(`[Transcription] Attempt ${attempt} failed:`, err.message);
+
+        // Don't retry for client errors (4xx) or if it's the last attempt
+        if (err.response?.status >= 400 && err.response?.status < 500) {
+          break;
+        }
+        
+        if (attempt < maxRetries) {
+          // Wait before retry (exponential backoff: 1s, 2s, 4s)
+          const waitTime = Math.pow(2, attempt - 1) * 1000;
+          console.log(`[Transcription] Waiting ${waitTime}ms before retry...`);
+          await new Promise(resolve => setTimeout(resolve, waitTime));
+        }
+      }
+    }
+
+    // If no successful response after all retries, throw the last error
+    if (!response) {
+      if (lastError?.response) {
+        const errorMessage = lastError.response.data?.error?.message || lastError.response.data?.message || 'Failed to transcribe audio';
+        throw new AppError(
+          errorMessage,
+          lastError.response.status || 500,
+          'WHISPER_API_ERROR'
+        );
+      }
+      
+      if (lastError?.code === 'ECONNABORTED' || lastError?.message?.includes('timeout')) {
+        throw new AppError(
+          'Tempo limite excedido ao transcrever áudio. Verifique sua conexão com a internet.',
+          408,
+          'TRANSCRIPTION_TIMEOUT'
+        );
+      }
+      
+      // Network errors (TLS, connection reset, etc.)
+      if (lastError?.code === 'ECONNRESET' || 
+          lastError?.code === 'ENOTFOUND' || 
+          lastError?.message?.includes('TLS') ||
+          lastError?.message?.includes('socket') ||
+          lastError?.message?.includes('network')) {
+        throw new AppError(
+          'Erro de conexão com o servidor de transcrição. Verifique sua conexão com a internet e tente novamente.',
+          503,
+          'NETWORK_ERROR'
+        );
+      }
+      
+      throw new AppError(
+        `Erro ao transcrever áudio: ${lastError?.message || 'Erro desconhecido'}`,
+        500,
+        'TRANSCRIPTION_ERROR'
+      );
+    }
 
     console.log('[Transcription] OpenAI response received:', {
       status: response.status,
-      hasText: !!response.data?.text
+      hasText: !!response.data?.text,
+      textLength: response.data?.text?.length || 0,
+      text: response.data?.text?.substring(0, 100) // Log first 100 chars for debugging
     });
 
-    const transcribedText = response.data?.text || '';
+    let transcribedText = response.data?.text || '';
 
+    // Check for empty transcription
     if (!transcribedText.trim()) {
-      throw new AppError(
-        'No speech detected in audio file',
-        400,
-        'NO_SPEECH_DETECTED'
-      );
+      // Return a helpful message instead of throwing an error
+      // This happens when there's no speech or the audio is too quiet
+      sendSuccess(res, 'Nenhuma fala detectada no áudio', {
+        text: '',
+        warning: 'NO_SPEECH_DETECTED'
+      });
+      return;
+    }
+
+    // Check for known Whisper hallucinations
+    const normalizedText = transcribedText.toLowerCase().trim();
+    const isHallucination = KNOWN_HALLUCINATIONS.some(hallucination => 
+      normalizedText.includes(hallucination.toLowerCase()) || 
+      normalizedText === hallucination.toLowerCase()
+    );
+
+    if (isHallucination) {
+      console.warn('[Transcription] Detected Whisper hallucination:', transcribedText);
+      sendSuccess(res, 'Não foi possível entender o áudio. Por favor, fale mais alto e claramente, ou tente novamente em um ambiente mais silencioso.', {
+        text: '',
+        warning: 'HALLUCINATION_DETECTED',
+        details: 'O modelo de transcrição não conseguiu identificar fala clara no áudio.'
+      });
+      return;
+    }
+
+    // Clean up common transcription artifacts
+    transcribedText = transcribedText
+      .replace(/^\s*\.+\s*/g, '') // Remove leading dots
+      .replace(/\s*\.+\s*$/g, '') // Remove trailing dots
+      .trim();
+
+    if (!transcribedText) {
+      sendSuccess(res, 'Nenhuma fala detectada no áudio', {
+        text: '',
+        warning: 'NO_SPEECH_DETECTED'
+      });
+      return;
     }
 
     sendSuccess(res, 'Audio transcrito com sucesso', {
@@ -426,25 +647,6 @@ router.post('/transcribe', authenticate, requireActiveSubscription, upload.singl
   } catch (error) {
     if (error instanceof AppError) {
       throw error;
-    }
-    
-    // Handle axios errors
-    if (error.response) {
-      const errorMessage = error.response.data?.error?.message || error.response.data?.message || 'Failed to transcribe audio';
-      throw new AppError(
-        errorMessage,
-        error.response.status || 500,
-        'WHISPER_API_ERROR'
-      );
-    }
-    
-    // Handle timeout errors
-    if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
-      throw new AppError(
-        'Timeout ao transcrever áudio. Por favor, tente novamente.',
-        408,
-        'TRANSCRIPTION_TIMEOUT'
-      );
     }
     
     throw new AppError(
@@ -563,6 +765,15 @@ async function executeActionHandler(req, res) {
  * Execute emitir_nfse action - Emit invoice via real Nuvem Fiscal API
  */
 async function executeEmitNfse(actionData, company, userId, res) {
+  // Check if Nuvem Fiscal is configured
+  if (!isNuvemFiscalConfigured()) {
+    throw new AppError(
+      'Integração fiscal não configurada. Para emitir notas fiscais, configure as credenciais da Nuvem Fiscal (NUVEM_FISCAL_CLIENT_ID e NUVEM_FISCAL_CLIENT_SECRET).',
+      503,
+      'SERVICE_NOT_CONFIGURED'
+    );
+  }
+
   // Validate required fields
   if (!actionData.cliente_nome) {
     throw new AppError('Nome do cliente é obrigatório', 400, 'VALIDATION_ERROR');
@@ -574,7 +785,7 @@ async function executeEmitNfse(actionData, company, userId, res) {
   // Check if company is registered in Nuvem Fiscal
   if (!company.nuvemFiscalId) {
     throw new AppError(
-      'Empresa não registrada na Nuvem Fiscal. Por favor, registre a empresa primeiro.',
+      'Empresa não registrada na Nuvem Fiscal. Por favor, registre a empresa primeiro usando o botão "Verificar conexão com prefeitura".',
       400,
       'COMPANY_NOT_REGISTERED'
     );
