@@ -3,6 +3,53 @@ import { Sparkles, User } from "lucide-react";
 import { motion } from "framer-motion";
 
 export default function ChatMessage({ message, isAI }) {
+  // Check if content is JSON and extract readable text
+  const getDisplayContent = (content) => {
+    if (!content || typeof content !== 'string') return content;
+
+    // Check if content is JSON wrapped in markdown code blocks
+    const jsonMatch = content.match(/```json\s*([\s\S]*?)\s*```/) || content.match(/```\s*([\s\S]*?)\s*```/);
+    if (jsonMatch) {
+      try {
+        const parsed = JSON.parse(jsonMatch[1]);
+        // If it's an action JSON, return only the explanation
+        if (parsed.explanation) {
+          return parsed.explanation;
+        }
+        // Otherwise return the original content but formatted better
+        return content.replace(jsonMatch[0], '').trim() || content;
+      } catch (e) {
+        // If parsing fails, return original
+        return content;
+      }
+    }
+
+    // Check if content is raw JSON (starts with {)
+    if (content.trim().startsWith('{') && content.trim().endsWith('}')) {
+      try {
+        const parsed = JSON.parse(content);
+        if (parsed.explanation) {
+          return parsed.explanation;
+        }
+        // If it's action JSON, don't show it (will be handled by preview)
+        if (parsed.action?.type === 'emitir_nfse') {
+          return parsed.explanation || 'Preparando nota fiscal...';
+        }
+      } catch (e) {
+        // Not valid JSON, return as is
+      }
+    }
+
+    return content;
+  };
+
+  const displayContent = getDisplayContent(message.content);
+
+  // Don't render if content is empty or just JSON structure
+  if (!displayContent || displayContent.trim() === '' || displayContent.trim() === '{}') {
+    return null;
+  }
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 10 }}
@@ -27,7 +74,7 @@ export default function ChatMessage({ message, isAI }) {
             ? 'glass-card text-gray-200' 
             : 'bg-gradient-to-r from-orange-500/20 to-purple-500/20 border border-orange-500/20 text-white'
         }`}>
-          <p className="text-sm leading-relaxed whitespace-pre-wrap">{message.content}</p>
+          <p className="text-sm leading-relaxed whitespace-pre-wrap">{displayContent}</p>
         </div>
         <p className="text-xs text-gray-600 mt-2 px-2">
           {message.time}

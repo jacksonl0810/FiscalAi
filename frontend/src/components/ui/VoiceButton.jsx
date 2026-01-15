@@ -21,9 +21,27 @@ export default function VoiceButton({ onVoiceInput, disabled }) {
   const startRecording = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(stream, {
-        mimeType: 'audio/webm;codecs=opus'
-      });
+      
+      // Try different MIME types for browser compatibility
+      let mimeType = 'audio/webm';
+      const mimeTypes = [
+        'audio/webm;codecs=opus',
+        'audio/webm',
+        'audio/ogg;codecs=opus',
+        'audio/mp4',
+        'audio/wav'
+      ];
+      
+      for (const type of mimeTypes) {
+        if (MediaRecorder.isTypeSupported(type)) {
+          mimeType = type;
+          break;
+        }
+      }
+      
+      console.log('[VoiceButton] Using MIME type:', mimeType);
+      
+      const mediaRecorder = new MediaRecorder(stream, { mimeType });
 
       mediaRecorderRef.current = mediaRecorder;
       audioChunksRef.current = [];
@@ -35,29 +53,87 @@ export default function VoiceButton({ onVoiceInput, disabled }) {
       };
 
       mediaRecorder.onstop = async () => {
+        console.log('[VoiceButton] Recording stopped, chunks:', audioChunksRef.current.length);
+        
         // Stop all tracks
         stream.getTracks().forEach(track => track.stop());
 
+        // Check if we have any audio chunks
+        if (audioChunksRef.current.length === 0) {
+          console.warn('[VoiceButton] No audio chunks recorded');
+          alert('Nenhum áudio gravado. Por favor, tente novamente.');
+          setIsRecording(false);
+          return;
+        }
+
         // Create audio blob
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        const audioBlob = new Blob(audioChunksRef.current, { 
+          type: mediaRecorder.mimeType || 'audio/webm' 
+        });
+        
+        console.log('[VoiceButton] Audio blob created:', {
+          size: audioBlob.size,
+          type: audioBlob.type,
+          chunks: audioChunksRef.current.length
+        });
+
+        // Validate blob size
+        if (audioBlob.size < 1024) {
+          console.warn('Audio recording too short:', audioBlob.size, 'bytes');
+          alert('Gravação muito curta. Por favor, grave pelo menos 1 segundo de áudio.');
+          setIsRecording(false);
+          return;
+        }
         
         // Transcribe audio
         setIsTranscribing(true);
         try {
           const result = await assistantService.transcribeAudio(audioBlob);
-          if (result.text) {
-            onVoiceInput?.(result.text);
+          
+          // Check for warnings (hallucination, no speech detected, etc.)
+          if (result.warning) {
+            console.log('[VoiceButton] Transcription warning:', result.warning);
+            if (result.warning === 'HALLUCINATION_DETECTED' || result.warning === 'NO_SPEECH_DETECTED') {
+              alert(result.message || 'Não foi possível entender o áudio. Por favor, fale mais alto e claramente.');
+              return;
+            }
+          }
+          
+          if (result.text && result.text.trim()) {
+            onVoiceInput?.(result.text.trim());
+          } else {
+            alert('Não foi possível transcrever o áudio. Por favor, fale mais alto e claramente, em um ambiente silencioso.');
           }
         } catch (error) {
           console.error('Error transcribing audio:', error);
-          alert('Erro ao transcrever áudio. Por favor, tente novamente.');
+          let errorMessage = 'Erro ao transcrever áudio. Por favor, tente novamente.';
+          
+          if (error?.message) {
+            errorMessage = error.message;
+          } else if (error?.response?.data?.message) {
+            errorMessage = error.response.data.message;
+          }
+          
+          // Show user-friendly error messages
+          if (errorMessage.includes('TLS') || errorMessage.includes('socket') || errorMessage.includes('network') || errorMessage.includes('conexão')) {
+            errorMessage = 'Erro de conexão. Verifique sua internet e tente novamente.';
+          } else if (errorMessage.includes('timeout') || errorMessage.includes('Timeout')) {
+            errorMessage = 'Tempo limite excedido. Tente novamente.';
+          } else if (errorMessage.includes('curta') || errorMessage.includes('short')) {
+            errorMessage = 'Gravação muito curta. Por favor, grave pelo menos 2 segundos de áudio.';
+          }
+          
+          alert(errorMessage);
         } finally {
           setIsTranscribing(false);
+          setIsRecording(false);
         }
       };
 
-      mediaRecorder.start();
+      // Start recording with 250ms timeslice to collect data regularly
+      mediaRecorder.start(250);
       setIsRecording(true);
+      console.log('[VoiceButton] Recording started');
     } catch (error) {
       console.error('Error accessing microphone:', error);
       alert('Não foi possível acessar o microfone. Por favor, verifique as permissões.');
@@ -66,8 +142,10 @@ export default function VoiceButton({ onVoiceInput, disabled }) {
 
   const stopRecording = () => {
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      // Request final data before stopping
+      mediaRecorderRef.current.requestData();
       mediaRecorderRef.current.stop();
-      setIsRecording(false);
+      // Don't set isRecording to false here - let onstop handle it
     }
   };
 

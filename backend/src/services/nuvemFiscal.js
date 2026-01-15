@@ -11,8 +11,10 @@
  * - Connection verification
  */
 
-const NUVEM_FISCAL_BASE_URL = process.env.NUVEM_FISCAL_BASE_URL || 'https://api.nuvemfiscal.com.br/v2';
-const NUVEM_FISCAL_SANDBOX_URL = process.env.NUVEM_FISCAL_SANDBOX_URL || 'https://sandbox.nuvemfiscal.com.br/v2';
+// Correct URLs from official documentation: https://dev.nuvemfiscal.com.br/docs/autenticacao
+const NUVEM_FISCAL_AUTH_URL = process.env.NUVEM_FISCAL_AUTH_URL || 'https://auth.nuvemfiscal.com.br/oauth/token';
+const NUVEM_FISCAL_BASE_URL = process.env.NUVEM_FISCAL_BASE_URL || 'https://api.nuvemfiscal.com.br';
+const NUVEM_FISCAL_SANDBOX_URL = process.env.NUVEM_FISCAL_SANDBOX_URL || 'https://api.sandbox.nuvemfiscal.com.br';
 const NUVEM_FISCAL_CLIENT_ID = process.env.NUVEM_FISCAL_CLIENT_ID;
 const NUVEM_FISCAL_CLIENT_SECRET = process.env.NUVEM_FISCAL_CLIENT_SECRET;
 const NUVEM_FISCAL_ENVIRONMENT = process.env.NUVEM_FISCAL_ENVIRONMENT || 'sandbox'; // 'sandbox' or 'production'
@@ -33,6 +35,24 @@ function getBaseUrl() {
 }
 
 /**
+ * Check if Nuvem Fiscal is configured with valid credentials
+ * @returns {boolean}
+ */
+export function isNuvemFiscalConfigured() {
+  // Placeholder values from .env.example that should not be considered valid
+  const placeholders = ['your-client-id', 'your-client-secret', 'your_client_id', 'your_client_secret', ''];
+  
+  // Check that credentials exist and are non-empty strings (and not placeholders)
+  const clientId = NUVEM_FISCAL_CLIENT_ID?.trim() || '';
+  const clientSecret = NUVEM_FISCAL_CLIENT_SECRET?.trim() || '';
+  
+  const hasValidClientId = clientId.length > 0 && !placeholders.includes(clientId.toLowerCase());
+  const hasValidClientSecret = clientSecret.length > 0 && !placeholders.includes(clientSecret.toLowerCase());
+  
+  return hasValidClientId && hasValidClientSecret;
+}
+
+/**
  * Get OAuth 2.0 access token using client_credentials flow
  * @returns {Promise<string>} Access token
  */
@@ -42,14 +62,16 @@ async function getAccessToken() {
     return accessTokenCache.token;
   }
 
-  if (!NUVEM_FISCAL_CLIENT_ID || !NUVEM_FISCAL_CLIENT_SECRET) {
+  if (!isNuvemFiscalConfigured()) {
     throw new Error('Nuvem Fiscal credentials not configured. Please set NUVEM_FISCAL_CLIENT_ID and NUVEM_FISCAL_CLIENT_SECRET environment variables.');
   }
 
-  const baseUrl = getBaseUrl();
-  const tokenUrl = `${baseUrl}/oauth/token`;
+  // Auth URL is separate from API URL (see https://dev.nuvemfiscal.com.br/docs/autenticacao)
+  const tokenUrl = NUVEM_FISCAL_AUTH_URL;
 
   try {
+    console.log('[NuvemFiscal] Requesting access token from:', tokenUrl);
+    
     const response = await fetch(tokenUrl, {
       method: 'POST',
       headers: {
@@ -59,7 +81,7 @@ async function getAccessToken() {
         grant_type: 'client_credentials',
         client_id: NUVEM_FISCAL_CLIENT_ID,
         client_secret: NUVEM_FISCAL_CLIENT_SECRET,
-        scope: 'nfe nfse cte mdfe nfcom'
+        scope: 'empresa nfe nfse cte mdfe nfcom cep cnpj'
       })
     });
 

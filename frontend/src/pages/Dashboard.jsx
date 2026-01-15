@@ -18,6 +18,7 @@ import AlertCard from "@/components/dashboard/AlertCard";
 import RevenueChart from "@/components/dashboard/RevenueChart";
 import MEILimitBar from "@/components/dashboard/MEILimitBar";
 import RegimeIndicator from "@/components/dashboard/RegimeIndicator";
+import FiscalStatusIndicator from "@/components/layout/FiscalStatusIndicator";
 
 export default function Dashboard() {
   const { data: invoices = [] } = useQuery({
@@ -162,6 +163,14 @@ export default function Dashboard() {
       {/* MEI Limit Bar */}
       {company?.regime_tributario === 'MEI' && (
         <MEILimitBar yearlyRevenue={yearlyRevenue} limit={meiLimit} />
+      )}
+
+      {/* Regime and Fiscal Status */}
+      {company && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <RegimeIndicator company={company} />
+          <FiscalStatusIndicator companyId={company.id} />
+        </div>
       )}
 
       {/* Charts and Alerts */}

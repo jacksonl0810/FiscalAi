@@ -201,8 +201,6 @@ cp .env.example .env
 | `DATABASE_URL` | PostgreSQL connection string | Your database provider |
 | `JWT_SECRET` | JWT signing secret | Generate with: `openssl rand -base64 32` |
 | `JWT_REFRESH_SECRET` | Refresh token secret | Generate with: `openssl rand -base64 32` |
-| `NUVEM_FISCAL_CLIENT_ID` | Nuvem Fiscal OAuth Client ID | [Nuvem Fiscal Dashboard](https://dev.nuvemfiscal.com.br/) |
-| `NUVEM_FISCAL_CLIENT_SECRET` | Nuvem Fiscal OAuth Client Secret | [Nuvem Fiscal Dashboard](https://dev.nuvemfiscal.com.br/) |
 | `PAGARME_API_KEY` | Pagar.me API Key | [Pagar.me Dashboard](https://dashboard.pagar.me/) |
 | `PAGARME_WEBHOOK_SECRET` | Pagar.me Webhook Secret | [Pagar.me Dashboard](https://dashboard.pagar.me/) |
 
@@ -217,11 +215,20 @@ cp .env.example .env
 | `JWT_REFRESH_EXPIRES_IN` | Refresh expiry | 7d |
 | `OPENAI_API_KEY` | OpenAI API key | Optional (fallback to pattern matching) |
 | `OPENAI_MODEL` | OpenAI model to use | gpt-4o-mini |
+| `PAGARME_ENCRYPTION_KEY` | Pagar.me Encryption Key | Optional, for card encryption |
+| `PAGARME_ENVIRONMENT` | Environment: 'sandbox' or 'production' | sandbox |
+
+### Nuvem Fiscal Integration (Optional)
+
+**Note:** Nuvem Fiscal is **completely optional**. The application works without it, but you won't be able to emit official NFS-e invoices. See [NUVEM_FISCAL_OPTIONAL.md](./NUVEM_FISCAL_OPTIONAL.md) for details.
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `NUVEM_FISCAL_CLIENT_ID` | OAuth Client ID | Not configured |
+| `NUVEM_FISCAL_CLIENT_SECRET` | OAuth Client Secret | Not configured |
 | `NUVEM_FISCAL_ENVIRONMENT` | Environment: 'sandbox' or 'production' | sandbox |
 | `NUVEM_FISCAL_BASE_URL` | Production API base URL | https://api.nuvemfiscal.com.br/v2 |
 | `NUVEM_FISCAL_SANDBOX_URL` | Sandbox API base URL | https://sandbox.nuvemfiscal.com.br/v2 |
-| `PAGARME_ENCRYPTION_KEY` | Pagar.me Encryption Key | Optional, for card encryption |
-| `PAGARME_ENVIRONMENT` | Environment: 'sandbox' or 'production' | sandbox |
 
 See `.env.example` for a complete template with all variables.
 

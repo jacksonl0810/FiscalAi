@@ -91,6 +91,10 @@ app.listen(PORT, () => {
   console.log(`🚀 Server running on http://localhost:${PORT}`);
   console.log(`📚 API available at http://localhost:${PORT}/api`);
   console.log(`🔧 Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`📝 Nuvem Fiscal: Check backend/NUVEM_FISCAL_OPTIONAL.md for setup`);
 });
 
 export default app;
+
+
+
