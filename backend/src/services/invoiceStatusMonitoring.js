@@ -18,6 +18,7 @@
 import { prisma } from '../index.js';
 import { checkNfseStatus } from './nuvemFiscal.js';
 import { translateErrorForUser } from './errorTranslationService.js';
+import { isDatabaseConnectionError } from '../utils/databaseConnection.js';
 
 const POLLING_INTERVAL_MS = 3 * 60 * 1000;
 const MAX_POLLING_ATTEMPTS = 24;
@@ -248,7 +249,9 @@ export async function pollInvoiceStatus(invoiceId) {
 export async function pollAllPendingInvoices() {
   console.log('[InvoiceStatusMonitoring] Starting polling cycle...');
 
-  const pendingInvoices = await prisma.invoice.findMany({
+  let pendingInvoices;
+  try {
+    pendingInvoices = await prisma.invoice.findMany({
     where: {
       status: {
         in: ['processando', 'rascunho']
@@ -272,7 +275,19 @@ export async function pollAllPendingInvoices() {
     },
     orderBy: { createdAt: 'asc' },
     take: BATCH_SIZE
-  });
+    });
+  } catch (error) {
+    if (isDatabaseConnectionError(error)) {
+      console.warn('[InvoiceStatusMonitoring] Database unavailable, skipping polling cycle');
+      return {
+        total: 0,
+        updated: 0,
+        errors: 0,
+        skipped: 0
+      };
+    }
+    throw error;
+  }
 
   console.log(`[InvoiceStatusMonitoring] Found ${pendingInvoices.length} pending invoices`);
 
@@ -316,17 +331,21 @@ export async function pollAllPendingInvoices() {
 export async function startBackgroundPolling() {
   console.log('[InvoiceStatusMonitoring] Background polling started');
   
-  // Poll immediately
-  await pollAllPendingInvoices();
-
-  // Set up interval for continuous polling
-  setInterval(async () => {
+  const pollWithErrorHandling = async () => {
     try {
       await pollAllPendingInvoices();
     } catch (error) {
-      console.error('[InvoiceStatusMonitoring] Background polling error:', error);
+      if (isDatabaseConnectionError(error)) {
+        console.warn('[InvoiceStatusMonitoring] Database unavailable, will retry on next cycle');
+      } else {
+        console.error('[InvoiceStatusMonitoring] Background polling error:', error);
+      }
     }
-  }, POLLING_INTERVAL_MS);
+  };
+  
+  await pollWithErrorHandling();
+
+  setInterval(pollWithErrorHandling, POLLING_INTERVAL_MS);
 }
 
 /**

@@ -5,6 +5,7 @@
 
 import { prisma } from '../index.js';
 import { getCredentialStatus } from './fiscalCredentialService.js';
+import { isDatabaseConnectionError } from '../utils/databaseConnection.js';
 
 // Notification thresholds (days before expiration)
 const EXPIRATION_WARNINGS = [30, 15, 7, 3, 1]; // Warn at 30, 15, 7, 3, and 1 days before expiration
@@ -129,8 +130,9 @@ export async function sendExpirationNotificationIfNeeded(companyId) {
 export async function checkAllCertificates() {
   console.log('[CertificateLifecycle] Checking all certificates...');
 
-  // Find all companies with certificates
-  const companiesWithCertificates = await prisma.company.findMany({
+  let companiesWithCertificates;
+  try {
+    companiesWithCertificates = await prisma.company.findMany({
     where: {
       fiscalCredential: {
         type: 'certificate',
@@ -142,7 +144,20 @@ export async function checkAllCertificates() {
     select: {
       id: true
     }
-  });
+    });
+  } catch (error) {
+    if (isDatabaseConnectionError(error)) {
+      console.warn('[CertificateLifecycle] Database unavailable, skipping certificate check');
+      return {
+        total: 0,
+        expired: 0,
+        expiringSoon: 0,
+        notificationsSent: 0,
+        errors: 0
+      };
+    }
+    throw error;
+  }
 
   console.log(`[CertificateLifecycle] Found ${companiesWithCertificates.length} companies with certificates`);
 
@@ -203,33 +218,32 @@ export async function validateCertificateNotExpired(companyId) {
 export async function startCertificateMonitoring() {
   console.log('[CertificateLifecycle] Starting certificate monitoring...');
   
-  // Check immediately
-  await checkAllCertificates();
+  const checkWithErrorHandling = async () => {
+    try {
+      await checkAllCertificates();
+    } catch (error) {
+      if (isDatabaseConnectionError(error)) {
+        console.warn('[CertificateLifecycle] Database unavailable, will retry later');
+      } else {
+        console.error('[CertificateLifecycle] Certificate check error:', error);
+      }
+    }
+  };
+  
+  await checkWithErrorHandling();
 
-  // Set up daily check (run once per day)
   const dailyCheck = () => {
     const now = new Date();
     const tomorrow = new Date(now);
     tomorrow.setDate(tomorrow.getDate() + 1);
-    tomorrow.setHours(9, 0, 0, 0); // 9 AM
+    tomorrow.setHours(9, 0, 0, 0);
 
     const msUntilTomorrow = tomorrow.getTime() - now.getTime();
 
     setTimeout(async () => {
-      try {
-        await checkAllCertificates();
-      } catch (error) {
-        console.error('[CertificateLifecycle] Daily check error:', error);
-      }
+      await checkWithErrorHandling();
       
-      // Schedule next day
-      setInterval(async () => {
-        try {
-          await checkAllCertificates();
-        } catch (error) {
-          console.error('[CertificateLifecycle] Daily check error:', error);
-        }
-      }, 24 * 60 * 60 * 1000); // 24 hours
+      setInterval(checkWithErrorHandling, 24 * 60 * 60 * 1000);
     }, msUntilTomorrow);
   };
 

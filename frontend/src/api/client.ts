@@ -6,7 +6,15 @@ interface ImportMetaEnv {
   VITE_API_URL?: string;
 }
 
-const API_BASE_URL = ((import.meta as unknown as { env: ImportMetaEnv }).env?.VITE_API_URL) || '/api';
+const getApiBaseUrl = () => {
+  const envUrl = ((import.meta as unknown as { env: ImportMetaEnv }).env?.VITE_API_URL);
+  if (envUrl && !envUrl.startsWith('/')) {
+    return envUrl.endsWith('/api') ? envUrl : `${envUrl}/api`;
+  }
+  return '/api';
+};
+
+const API_BASE_URL = getApiBaseUrl();
 
 // Create axios instance
 const apiClient: AxiosInstance = axios.create({

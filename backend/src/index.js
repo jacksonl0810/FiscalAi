@@ -35,21 +35,38 @@ const PORT = process.env.PORT || 3000;
 
 // CORS configuration - Enhanced for Pagar.me checkout flow
 const corsOrigins = process.env.CORS_ORIGIN?.split(',') || ['http://localhost:5173'];
+const isDevelopment = process.env.NODE_ENV !== 'production';
+
 app.use(cors({
   origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin) return callback(null, true);
-    if (corsOrigins.indexOf(origin) !== -1 || corsOrigins.includes('*')) {
-      callback(null, true);
-    } else {
-      callback(null, true); // Allow all origins in development
+    
+    if (corsOrigins.includes('*')) {
+      return callback(null, true);
     }
+    
+    if (corsOrigins.indexOf(origin) !== -1) {
+      return callback(null, true);
+    }
+    
+    if (isDevelopment) {
+      return callback(null, true);
+    }
+    
+    const originHost = origin.replace(/^https?:\/\//, '').split(':')[0];
+    const allowedHosts = corsOrigins.map(o => o.replace(/^https?:\/\//, '').split(':')[0]);
+    
+    if (allowedHosts.some(host => originHost.includes(host) || host.includes(originHost))) {
+      return callback(null, true);
+    }
+    
+    callback(null, true);
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
   exposedHeaders: ['Content-Length', 'Content-Type'],
-  maxAge: 86400 // 24 hours
+  maxAge: 86400
 }));
 
 // Body parser middleware
