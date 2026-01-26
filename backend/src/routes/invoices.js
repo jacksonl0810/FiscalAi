@@ -5,19 +5,31 @@ import { authenticate } from '../middleware/auth.js';
 import { asyncHandler, AppError } from '../middleware/errorHandler.js';
 import { requireActiveSubscription } from '../middleware/subscriptionAccess.js';
 import { emitNfse, checkNfseStatus, cancelNfse } from '../services/nuvemFiscal.js';
+import { sendSuccess } from '../utils/response.js';
 
 const router = express.Router();
 
 // All routes require authentication and active subscription
 router.use(authenticate);
-router.use(requireActiveSubscription);
+router.use(asyncHandler(requireActiveSubscription));
 
 /**
  * GET /api/invoices
  * List all invoices for the user's companies
+ * Supports filtering by: status, companyId, cliente_nome, cliente_documento, date range
  */
 router.get('/', asyncHandler(async (req, res) => {
-  const { status, companyId, sort = '-created_at', limit, page } = req.query;
+  const { 
+    status, 
+    companyId, 
+    cliente_nome, 
+    cliente_documento,
+    startDate,
+    endDate,
+    sort = '-created_at', 
+    limit, 
+    page 
+  } = req.query;
 
   // Get user's company IDs
   const companies = await prisma.company.findMany({
@@ -28,18 +40,45 @@ router.get('/', asyncHandler(async (req, res) => {
 
   // Build where clause
   const where = { companyId: { in: companyIds } };
-  if (status) where.status = status;
+  
+  if (status) {
+    where.status = status;
+  }
+  
   if (companyId && companyIds.includes(companyId)) {
     where.companyId = companyId;
+  }
+  
+  if (cliente_nome) {
+    where.clienteNome = { contains: cliente_nome, mode: 'insensitive' };
+  }
+  
+  if (cliente_documento) {
+    where.clienteDocumento = { contains: cliente_documento.replace(/[^\d]/g, ''), mode: 'insensitive' };
+  }
+  
+  // Date range filtering
+  if (startDate || endDate) {
+    where.dataEmissao = {};
+    if (startDate) {
+      const start = new Date(startDate);
+      start.setHours(0, 0, 0, 0);
+      where.dataEmissao.gte = start;
+    }
+    if (endDate) {
+      const end = new Date(endDate);
+      end.setHours(23, 59, 59, 999);
+      where.dataEmissao.lte = end;
+    }
   }
 
   // Build order by
   const orderBy = {};
   if (sort.startsWith('-')) {
     const field = sort.substring(1);
-    orderBy[field === 'created_at' ? 'createdAt' : field] = 'desc';
+    orderBy[field === 'created_at' ? 'createdAt' : (field === 'data_emissao' ? 'dataEmissao' : field)] = 'desc';
   } else {
-    orderBy[sort === 'created_at' ? 'createdAt' : sort] = 'asc';
+    orderBy[sort === 'created_at' ? 'createdAt' : (sort === 'data_emissao' ? 'dataEmissao' : sort)] = 'asc';
   }
 
   // Pagination
@@ -277,14 +316,14 @@ router.post('/issue', [
       data: {
         companyId,
         clienteNome: cliente_nome,
-        clienteDocumento: cliente_documento,
+        clienteDocumento: cliente_documento || '',
         descricaoServico: descricao_servico,
         valor: parseFloat(valor),
         aliquotaIss: parseFloat(aliquota_iss),
         valorIss,
         municipio: municipio || company.cidade,
         status: nfseResult.nfse.status || 'autorizada',
-        numero: nfseResult.nfse.numero,
+        numero: nfseResult.nfse.numero ? String(nfseResult.nfse.numero) : null,
         codigoVerificacao: nfseResult.nfse.codigo_verificacao,
         dataEmissao: new Date(),
         dataPrestacao: data_prestacao ? new Date(data_prestacao) : new Date(),
@@ -411,8 +450,52 @@ router.post('/:id/check-status', asyncHandler(async (req, res) => {
 }));
 
 /**
+ * GET /api/invoices/:id/cancellation-info
+ * Check if an invoice can be cancelled and get deadline info
+ */
+router.get('/:id/cancellation-info', asyncHandler(async (req, res) => {
+  // Get user's company IDs
+  const companies = await prisma.company.findMany({
+    where: { userId: req.user.id },
+    select: { id: true }
+  });
+  const companyIds = companies.map(c => c.id);
+
+  const invoice = await prisma.invoice.findFirst({
+    where: {
+      id: req.params.id,
+      companyId: { in: companyIds }
+    }
+  });
+
+  if (!invoice) {
+    throw new AppError('Invoice not found', 404, 'NOT_FOUND');
+  }
+
+  const company = await prisma.company.findFirst({
+    where: { id: invoice.companyId }
+  });
+
+  // Import cancellation service
+  const { validateCancellation, getCancellationDeadline } = await import('../services/cancellationService.js');
+
+  // Validate cancellation (without justification for info check)
+  const validation = await validateCancellation(invoice, company, '');
+  const deadline = getCancellationDeadline(invoice, company);
+
+  sendSuccess(res, 'Cancellation info retrieved', {
+    canCancel: validation.canCancel || (validation.errors.length === 1 && validation.errors[0].code === 'JUSTIFICATION_REQUIRED'),
+    deadline: deadline.formattedDeadline,
+    hoursRemaining: deadline.hoursRemaining,
+    isExpired: deadline.isExpired,
+    rules: validation.rules,
+    warnings: validation.warnings
+  });
+}));
+
+/**
  * POST /api/invoices/:id/cancel
- * Cancel an invoice
+ * Cancel an invoice with municipality time limit validation
  */
 router.post('/:id/cancel', [
   body('reason').notEmpty().withMessage('Cancellation reason is required')
@@ -422,6 +505,8 @@ router.post('/:id/cancel', [
     return res.status(400).json({ status: 'error', message: 'Validation failed', errors: errors.array() });
   }
 
+  const { reason } = req.body;
+
   // Get user's company IDs
   const companies = await prisma.company.findMany({
     where: { userId: req.user.id },
@@ -440,20 +525,45 @@ router.post('/:id/cancel', [
     throw new AppError('Invoice not found', 404, 'NOT_FOUND');
   }
 
-  if (invoice.status === 'cancelada') {
-    throw new AppError('Invoice is already cancelled', 400, 'ALREADY_CANCELLED');
-  }
-
-  // Get company to access nuvemFiscalId
+  // Get company to access nuvemFiscalId and codigoMunicipio
   const company = await prisma.company.findFirst({
     where: { id: invoice.companyId }
   });
 
+  // Import cancellation service
+  const { validateCancellation, logCancellationAttempt } = await import('../services/cancellationService.js');
+
+  // Validate cancellation with municipality rules
+  const validation = await validateCancellation(invoice, company, reason);
+
+  if (!validation.canCancel) {
+    // Log failed attempt
+    await logCancellationAttempt(invoice, req.user.id, false, validation.summary);
+
+    // Return detailed error
+    throw new AppError(
+      validation.summary,
+      400,
+      'CANCELLATION_NOT_ALLOWED',
+      {
+        errors: validation.errors,
+        rules: validation.rules
+      }
+    );
+  }
+
+  // Warn about approaching deadline
+  if (validation.warnings.length > 0) {
+    console.log('[Invoice] Cancellation warnings:', validation.warnings);
+  }
+
   try {
+    // Import cancelNfse function
+    const { cancelNfse } = await import('../services/nuvemFiscal.js');
+    
     // Cancel with Nuvem Fiscal API if invoice has nuvemFiscalId
     if (invoice.nuvemFiscalId && company?.nuvemFiscalId) {
-      const { reason } = req.body;
-      await cancelNfse(company.nuvemFiscalId, invoice.nuvemFiscalId, reason || 'Cancelamento solicitado pelo usuário');
+      await cancelNfse(company.nuvemFiscalId, invoice.nuvemFiscalId, reason);
     }
 
     // Update invoice status in database
@@ -462,23 +572,55 @@ router.post('/:id/cancel', [
       data: { status: 'cancelada' }
     });
 
-    // Create notification
-    await prisma.notification.create({
-      data: {
-        userId: req.user.id,
-        titulo: 'Nota Fiscal Cancelada',
-        mensagem: `Nota fiscal ${invoice.numero || invoice.id} foi cancelada`,
-        tipo: 'info',
-        invoiceId: invoice.id
-      }
-    });
+    // Log successful cancellation
+    await logCancellationAttempt(invoice, req.user.id, true, reason);
 
-    sendSuccess(res, 'Nota fiscal cancelada com sucesso');
+    // Create AI-generated notification
+    const { createAINotification } = await import('../services/aiNotificationService.js');
+    await createAINotification(
+      req.user.id,
+      'invoice_cancelled',
+      {
+        numero: invoice.numero || invoice.id,
+        cliente: invoice.clienteNome
+      },
+      { invoiceId: invoice.id }
+    );
+
+    sendSuccess(res, 'Nota fiscal cancelada com sucesso', {
+      invoice_id: invoice.id,
+      numero: invoice.numero,
+      status: 'cancelada',
+      warnings: validation.warnings
+    });
   } catch (error) {
     console.error('Error canceling invoice:', error);
+    
+    // Log failed attempt
+    await logCancellationAttempt(invoice, req.user.id, false, error.message);
+    
+    // Create AI-generated cancellation failure notification
+    const { createAINotification } = await import('../services/aiNotificationService.js');
+    const { translateErrorForUser } = await import('../services/errorTranslationService.js');
+    const translatedError = translateErrorForUser(error, { 
+      municipality: company?.cidade || 'desconhecido',
+      operation: 'cancel_invoice'
+    });
+    
+    await createAINotification(
+      req.user.id,
+      'invoice_cancellation_failed',
+      {
+        numero: invoice.numero || invoice.id,
+        cliente: invoice.clienteNome,
+        reason: translatedError
+      },
+      { invoiceId: invoice.id }
+    );
+    
     throw new AppError(
-      error.message || 'Falha ao cancelar nota fiscal',
-      500,
+      translatedError,
+      error.status || 500,
       'INVOICE_CANCEL_ERROR'
     );
   }
@@ -488,34 +630,6 @@ router.post('/:id/cancel', [
  * GET /api/invoices/:id/pdf
  * Download invoice PDF
  */
-router.get('/:id/pdf', asyncHandler(async (req, res) => {
-  // Get user's company IDs
-  const companies = await prisma.company.findMany({
-    where: { userId: req.user.id },
-    select: { id: true }
-  });
-  const companyIds = companies.map(c => c.id);
-
-  const invoice = await prisma.invoice.findFirst({
-    where: {
-      id: req.params.id,
-      companyId: { in: companyIds }
-    }
-  });
-
-  if (!invoice) {
-    throw new AppError('Invoice not found', 404, 'NOT_FOUND');
-  }
-
-  // TODO: Return actual PDF from storage or generate it
-  // For now, return a placeholder response
-  res.status(501).json({
-    status: 'error',
-    message: 'PDF download not implemented yet',
-    pdfUrl: invoice.pdfUrl
-  });
-}));
-
 /**
  * GET /api/invoices/:id/xml
  * Download invoice XML
@@ -539,12 +653,225 @@ router.get('/:id/xml', asyncHandler(async (req, res) => {
     throw new AppError('Invoice not found', 404, 'NOT_FOUND');
   }
 
-  // TODO: Return actual XML from storage
-  res.status(501).json({
-    status: 'error',
-    message: 'XML download not implemented yet',
-    xmlUrl: invoice.xmlUrl
+  // Download XML from Nuvem Fiscal
+  if (invoice.xmlUrl) {
+    try {
+      // Fetch XML from Nuvem Fiscal
+      const response = await fetch(invoice.xmlUrl);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch XML: ${response.status}`);
+      }
+
+      const xmlContent = await response.text();
+      
+      res.setHeader('Content-Type', 'application/xml');
+      res.setHeader('Content-Disposition', `attachment; filename="nfse-${invoice.numero || invoice.id}.xml"`);
+      res.send(xmlContent);
+    } catch (error) {
+      console.error('[Invoice] Error downloading XML:', error);
+      throw new AppError(
+        `Erro ao baixar XML: ${error.message}`,
+        500,
+        'XML_DOWNLOAD_ERROR'
+      );
+    }
+  } else {
+    throw new AppError('XML não disponível para esta nota fiscal', 404, 'XML_NOT_AVAILABLE');
+  }
+}));
+
+/**
+ * GET /api/invoices/:id/pdf
+ * Download invoice PDF (from Nuvem Fiscal or generate locally)
+ */
+router.get('/:id/pdf', asyncHandler(async (req, res) => {
+  // Get user's company IDs
+  const companies = await prisma.company.findMany({
+    where: { userId: req.user.id },
+    select: { id: true }
   });
+  const companyIds = companies.map(c => c.id);
+
+  const invoice = await prisma.invoice.findFirst({
+    where: {
+      id: req.params.id,
+      companyId: { in: companyIds }
+    }
+  });
+
+  if (!invoice) {
+    throw new AppError('Invoice not found', 404, 'NOT_FOUND');
+  }
+
+  // Get company data for PDF generation
+  const company = await prisma.company.findUnique({
+    where: { id: invoice.companyId }
+  });
+
+  // Try Nuvem Fiscal URL first
+  if (invoice.pdfUrl) {
+    try {
+      const response = await fetch(invoice.pdfUrl);
+      if (response.ok) {
+        const pdfBuffer = await response.arrayBuffer();
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename="nfse-${invoice.numero || invoice.id}.pdf"`);
+        return res.send(Buffer.from(pdfBuffer));
+      }
+    } catch (error) {
+      console.warn('[Invoice] Nuvem Fiscal PDF unavailable, generating locally:', error.message);
+    }
+  }
+
+  // Generate PDF locally
+  try {
+    const { generateInvoicePDF } = await import('../services/pdfService.js');
+    const pdfBuffer = await generateInvoicePDF(invoice, company);
+    
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="nfse-${invoice.numero || invoice.id}.pdf"`);
+    res.send(pdfBuffer);
+  } catch (error) {
+    console.error('[Invoice] Error generating PDF:', error);
+    throw new AppError(
+      `Erro ao gerar PDF: ${error.message}`,
+      500,
+      'PDF_GENERATION_ERROR'
+    );
+  }
+}));
+
+/**
+ * POST /api/invoices/pay-per-use
+ * Create invoice with pay-per-use payment (R$9 per invoice)
+ * This endpoint handles the pay-per-use flow where user pays R$9 before invoice is issued
+ * Note: This endpoint doesn't require active subscription (pay-per-use is the default)
+ */
+router.post('/pay-per-use', authenticate, [
+  body('company_id').notEmpty().withMessage('Company ID is required'),
+  body('invoice_data').isObject().withMessage('Invoice data is required'),
+  body('payment_method').isIn(['credit_card', 'boleto']).withMessage('Payment method must be credit_card or boleto'),
+  body('card').optional().isObject().withMessage('Card details must be an object'),
+  body('card.number').optional().trim().notEmpty().withMessage('Card number is required for credit card'),
+  body('card.holder_name').optional().trim().notEmpty().withMessage('Card holder name is required'),
+  body('card.exp_month').optional().isInt({ min: 1, max: 12 }).withMessage('Valid expiration month is required'),
+  body('card.exp_year').optional().isInt({ min: 20 }).withMessage('Valid expiration year is required'),
+  body('card.cvv').optional().trim().notEmpty().withMessage('CVV is required'),
+], asyncHandler(async (req, res, next) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({
+      status: 'error',
+      message: 'Validation failed',
+      errors: errors.array()
+    });
+  }
+  next();
+}), asyncHandler(async (req, res) => {
+  const { company_id, invoice_data, payment_method, card } = req.body;
+  const userId = req.user.id;
+
+  // Verify company belongs to user
+  const company = await prisma.company.findFirst({
+    where: {
+      id: company_id,
+      userId: userId
+    }
+  });
+
+  if (!company) {
+    throw new AppError('Company not found', 404, 'COMPANY_NOT_FOUND');
+  }
+
+  // Validate payment details
+  if (payment_method === 'credit_card' && !card) {
+    throw new AppError('Card details are required for credit card payment', 400, 'MISSING_CARD_DETAILS');
+  }
+
+  // Import pay-per-use service
+  const { createInvoiceUsage, processPayPerUsePayment } = await import('../services/payPerUseService.js');
+
+  try {
+    // Create invoice usage record
+    const invoiceUsage = await createInvoiceUsage(userId, company_id);
+
+    // Prepare payment data
+    const paymentData = {
+      method: payment_method
+    };
+
+    if (payment_method === 'credit_card') {
+      paymentData.card = {
+        number: card.number.replace(/\s/g, ''),
+        holder_name: card.holder_name,
+        exp_month: parseInt(card.exp_month),
+        exp_year: parseInt(card.exp_year),
+        cvv: card.cvv
+      };
+    }
+
+    // Process payment
+    const paymentResult = await processPayPerUsePayment(invoiceUsage.id, paymentData);
+
+    // If payment succeeded immediately, create invoice
+    if (paymentResult.orderResult.status === 'paid') {
+      // Import invoice emission service
+      const { emitNfse } = await import('../services/nuvemFiscal.js');
+      const { completeInvoiceAfterPayment } = await import('../services/payPerUseService.js');
+
+      // Emit invoice via Nuvem Fiscal
+      const nfseResult = await emitNfse(invoice_data, company);
+
+      // Calculate ISS
+      const valorIss = (parseFloat(invoice_data.valor) * parseFloat(invoice_data.aliquota_iss || 5)) / 100;
+
+      // Complete invoice creation
+      const invoice = await completeInvoiceAfterPayment(invoiceUsage.id, {
+        companyId: company_id,
+        clienteNome: invoice_data.cliente_nome,
+        clienteDocumento: invoice_data.cliente_documento || '',
+        descricaoServico: invoice_data.descricao_servico || 'Serviço prestado',
+        valor: parseFloat(invoice_data.valor),
+        aliquotaIss: parseFloat(invoice_data.aliquota_iss || 5),
+        valorIss: valorIss,
+        municipio: invoice_data.municipio || company.cidade,
+        status: nfseResult.nfse.status || 'autorizada',
+        numero: nfseResult.nfse.numero ? String(nfseResult.nfse.numero) : null,
+        codigoVerificacao: nfseResult.nfse.codigo_verificacao,
+        dataEmissao: new Date(),
+        dataPrestacao: invoice_data.data_prestacao ? new Date(invoice_data.data_prestacao) : new Date(),
+        codigoServico: invoice_data.codigo_servico,
+        pdfUrl: nfseResult.nfse.pdf_url,
+        xmlUrl: nfseResult.nfse.xml_url,
+        nuvemFiscalId: nfseResult.nfse.nuvem_fiscal_id
+      });
+
+      const { sendSuccess } = await import('../utils/response.js');
+      sendSuccess(res, 'Pagamento processado e nota fiscal emitida com sucesso', {
+        invoice_usage_id: invoiceUsage.id,
+        payment_order_id: paymentResult.orderResult.orderId,
+        payment_status: 'paid',
+        invoice: invoice
+      });
+    } else {
+      // Payment pending - invoice will be created via webhook
+      const { sendSuccess } = await import('../utils/response.js');
+      sendSuccess(res, 'Pagamento processado. Nota fiscal será emitida após confirmação do pagamento.', {
+        invoice_usage_id: invoiceUsage.id,
+        payment_order_id: paymentResult.orderResult.orderId,
+        payment_status: 'pending',
+        invoice: null
+      });
+    }
+  } catch (error) {
+    console.error('[Pay Per Use] Error processing payment:', error);
+    throw new AppError(
+      `Erro ao processar pagamento: ${error.message}`,
+      500,
+      'PAYMENT_PROCESSING_ERROR',
+      { originalError: error.message }
+    );
+  }
 }));
 
 export default router;

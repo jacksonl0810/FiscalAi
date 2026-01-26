@@ -53,6 +53,7 @@ const Button = React.forwardRef(({ className, variant, size, asChild = false, ch
     <Comp
       className={cn(buttonVariants({ variant, size, className }))}
       ref={ref}
+      translate="no"
       {...props}
     >
       {children}

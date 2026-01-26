@@ -6,6 +6,8 @@ import InvoiceConfirmation from './pages/InvoiceConfirmation';
 import Notifications from './pages/Notifications';
 import Settings from './pages/Settings';
 import Taxes from './pages/Taxes';
+import Admin from './pages/Admin';
+import AccountantReview from './pages/AccountantReview';
 import __Layout from './Layout.jsx';
 
 
@@ -18,6 +20,8 @@ export const PAGES = {
     "Notifications": Notifications,
     "Settings": Settings,
     "Taxes": Taxes,
+    "Admin": Admin,
+    "AccountantReview": AccountantReview,
 }
 
 export const pagesConfig = {

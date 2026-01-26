@@ -1,6 +1,6 @@
 import React from "react";
 import { useQuery } from "@tanstack/react-query";
-import { invoicesService, companiesService } from "@/api/services";
+import { invoicesService, companiesService, settingsService } from "@/api/services";
 import { motion } from "framer-motion";
 import { Link } from "react-router-dom";
 import { createPageUrl } from "@/utils";
@@ -13,6 +13,7 @@ import {
   Sparkles
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import StatCard from "@/components/dashboard/StatCard";
 import AlertCard from "@/components/dashboard/AlertCard";
 import RevenueChart from "@/components/dashboard/RevenueChart";
@@ -20,18 +21,49 @@ import MEILimitBar from "@/components/dashboard/MEILimitBar";
 import RegimeIndicator from "@/components/dashboard/RegimeIndicator";
 import FiscalStatusIndicator from "@/components/layout/FiscalStatusIndicator";
 
+function normalizeStatus(status) {
+  if (status === 'autorizada') return 'autorizada';
+  if (status === 'rejeitada') return 'rejeitada';
+  return 'processando';
+}
+
+function getStatusDisplay(status) {
+  const normalized = normalizeStatus(status);
+  const config = {
+    processando: { label: 'Processando', bg: 'bg-yellow-500/20', text: 'text-yellow-400' },
+    autorizada: { label: 'Autorizada', bg: 'bg-green-500/20', text: 'text-green-400' },
+    rejeitada: { label: 'Rejeitada', bg: 'bg-red-500/20', text: 'text-red-400' },
+  };
+  return config[normalized] || config.processando;
+}
+
 export default function Dashboard() {
   const { data: invoices = [] } = useQuery({
     queryKey: ['invoices'],
     queryFn: () => invoicesService.list({ sort: '-created_at' }),
   });
 
+  // Get user settings to find active company
+  const { data: settings } = useQuery({
+    queryKey: ['userSettings'],
+    queryFn: () => settingsService.get(),
+  });
+
   const { data: company } = useQuery({
-    queryKey: ['company'],
+    queryKey: ['company', settings?.active_company_id || 'default'],
     queryFn: async () => {
       const companies = await companiesService.list();
-      return companies[0];
+      
+      // If there's an active company ID in settings, find that company
+      if (settings?.active_company_id) {
+        const activeCompany = companies.find(c => c.id === settings.active_company_id);
+        if (activeCompany) return activeCompany;
+      }
+      
+      // Fallback to first company or null
+      return companies[0] || null;
     },
+    enabled: settings !== undefined,
   });
 
   // Calculate stats
@@ -96,11 +128,16 @@ export default function Dashboard() {
     <div className="space-y-8">
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
+        <motion.div
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="relative"
+        >
+          <div className="absolute inset-0 bg-gradient-to-r from-orange-500/20 via-orange-600/10 to-transparent blur-3xl -z-10" />
           <motion.h1 
             initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
-            className="text-3xl font-bold text-white"
+            className="text-4xl font-bold bg-gradient-to-r from-white via-orange-50 to-white bg-clip-text text-transparent"
           >
             Dashboard
           </motion.h1>
@@ -108,20 +145,31 @@ export default function Dashboard() {
             initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.1 }}
-            className="text-gray-400 mt-1"
+            className="text-gray-400 mt-2 text-sm"
           >
             Bem-vindo de volta, {company?.nome_fantasia || 'Empresa'}
           </motion.p>
-        </div>
+        </motion.div>
         <motion.div
           initial={{ opacity: 0, scale: 0.9 }}
           animate={{ opacity: 1, scale: 1 }}
           transition={{ delay: 0.2 }}
         >
           <Link to={createPageUrl("Assistant")}>
-            <Button className="bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white border-0">
-              <Sparkles className="w-4 h-4 mr-2" />
-              Emitir nota com IA
+            <Button className={cn(
+              "relative overflow-hidden",
+              "bg-gradient-to-r from-orange-500 via-orange-600 to-orange-500",
+              "hover:from-orange-600 hover:via-orange-500 hover:to-orange-600",
+              "text-white border-0",
+              "shadow-xl shadow-orange-500/30",
+              "hover:shadow-2xl hover:shadow-orange-500/40",
+              "transition-all duration-300",
+              "before:absolute before:inset-0 before:bg-gradient-to-r before:from-transparent before:via-white/20 before:to-transparent",
+              "before:translate-x-[-100%] hover:before:translate-x-[100%] before:transition-transform before:duration-700",
+              "rounded-xl px-6 py-3 h-auto font-semibold"
+            )}>
+              <Sparkles className="w-4 h-4 mr-2 relative z-10" />
+              <span className="relative z-10">Emitir nota com IA</span>
             </Button>
           </Link>
         </motion.div>
@@ -168,7 +216,7 @@ export default function Dashboard() {
       {/* Regime and Fiscal Status */}
       {company && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <RegimeIndicator company={company} />
+          <RegimeIndicator companyId={company.id} />
           <FiscalStatusIndicator companyId={company.id} />
         </div>
       )}
@@ -186,10 +234,18 @@ export default function Dashboard() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             transition={{ delay: 0.3 }}
-            className="text-lg font-semibold text-white"
+            className="text-xl font-bold text-white mb-1"
           >
             Alertas e Avisos
           </motion.h3>
+          <motion.p
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.35 }}
+            className="text-sm text-gray-400 mb-4"
+          >
+            Notificações importantes do sistema
+          </motion.p>
 
           {meiPercentage >= 80 && (
             <AlertCard
@@ -226,27 +282,37 @@ export default function Dashboard() {
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.4 }}
-        className="glass-card rounded-2xl p-6"
+        className="relative rounded-2xl p-6 overflow-hidden bg-gradient-to-br from-slate-900/80 via-slate-800/60 to-slate-900/80 backdrop-blur-xl border border-white/10 shadow-2xl shadow-black/50 before:absolute before:inset-0 before:bg-gradient-to-br before:from-orange-500/5 before:via-transparent before:to-transparent before:pointer-events-none"
       >
-        <div className="flex items-center justify-between mb-6">
-          <h3 className="text-lg font-semibold text-white">Últimas Notas Emitidas</h3>
+        <div className="flex items-center justify-between mb-6 relative z-10">
+          <div>
+            <h3 className="text-xl font-bold text-white mb-1">Últimas Notas Emitidas</h3>
+            <p className="text-sm text-gray-400">Histórico recente de emissões</p>
+          </div>
           <Link to={createPageUrl("Documents")}>
-            <Button variant="ghost" className="text-orange-400 hover:text-orange-300 hover:bg-orange-500/10">
+            <Button variant="ghost" className={cn(
+              "text-orange-400 hover:text-orange-300",
+              "hover:bg-gradient-to-r hover:from-orange-500/10 hover:to-orange-600/5",
+              "border border-transparent hover:border-orange-500/30",
+              "rounded-xl px-4 py-2",
+              "transition-all duration-200",
+              "shadow-md hover:shadow-lg hover:shadow-orange-500/20"
+            )}>
               Ver todas
               <ArrowRight className="w-4 h-4 ml-2" />
             </Button>
           </Link>
         </div>
 
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto relative z-10">
           <table className="w-full">
             <thead>
-              <tr className="text-left border-b border-white/5">
-                <th className="pb-4 text-sm font-medium text-gray-500">Número</th>
-                <th className="pb-4 text-sm font-medium text-gray-500">Cliente</th>
-                <th className="pb-4 text-sm font-medium text-gray-500">Valor</th>
-                <th className="pb-4 text-sm font-medium text-gray-500">Status</th>
-                <th className="pb-4 text-sm font-medium text-gray-500">Data</th>
+              <tr className="text-left border-b border-white/10">
+                <th className="pb-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Número</th>
+                <th className="pb-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Cliente</th>
+                <th className="pb-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Valor</th>
+                <th className="pb-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Status</th>
+                <th className="pb-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Data</th>
               </tr>
             </thead>
             <tbody>
@@ -256,41 +322,44 @@ export default function Dashboard() {
                   initial={{ opacity: 0, x: -20 }}
                   animate={{ opacity: 1, x: 0 }}
                   transition={{ delay: 0.5 + index * 0.1 }}
-                  className="border-b border-white/5 hover:bg-white/5 transition-colors"
+                  className="border-b border-white/5 hover:bg-gradient-to-r hover:from-white/5 hover:to-transparent transition-all duration-200 group"
                 >
-                  <td className="py-4 text-white font-medium">{invoice.numero || '---'}</td>
-                  <td className="py-4 text-gray-300">{invoice.cliente_nome}</td>
-                  <td className="py-4 text-white font-medium">
+                  <td className="py-4 text-white font-semibold group-hover:text-orange-300 transition-colors">{invoice.numero || '---'}</td>
+                  <td className="py-4 text-gray-300 group-hover:text-white transition-colors">{invoice.cliente_nome}</td>
+                  <td className="py-4 text-white font-semibold group-hover:text-orange-300 transition-colors">
                     R$ {invoice.valor?.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                   </td>
                   <td className="py-4">
-                    <span className={`px-3 py-1 rounded-full text-xs font-medium ${
-                      invoice.status === 'autorizada' 
-                        ? 'bg-green-500/20 text-green-400'
-                        : invoice.status === 'enviada'
-                        ? 'bg-blue-500/20 text-blue-400'
-                        : invoice.status === 'pendente_confirmacao'
-                        ? 'bg-yellow-500/20 text-yellow-400'
-                        : invoice.status === 'rejeitada'
-                        ? 'bg-red-500/20 text-red-400'
-                        : invoice.status === 'cancelada'
-                        ? 'bg-gray-500/20 text-gray-400'
-                        : 'bg-gray-500/20 text-gray-400'
-                    }`}>
-                      {invoice.status === 'autorizada' ? 'Autorizada' :
-                       invoice.status === 'enviada' ? 'Enviada' :
-                       invoice.status === 'pendente_confirmacao' ? 'Pendente' :
-                       invoice.status === 'rejeitada' ? 'Rejeitada' :
-                       invoice.status === 'cancelada' ? 'Cancelada' : 'Rascunho'}
-                    </span>
+                    {(() => {
+                      const statusDisplay = getStatusDisplay(invoice.status);
+                      return (
+                        <span className={cn(
+                          "px-3 py-1.5 rounded-lg text-xs font-semibold",
+                          "border backdrop-blur-sm shadow-md",
+                          statusDisplay.bg,
+                          statusDisplay.text,
+                          statusDisplay.text === 'text-yellow-400' && "border-yellow-500/30 shadow-yellow-500/20",
+                          statusDisplay.text === 'text-green-400' && "border-green-500/30 shadow-green-500/20",
+                          statusDisplay.text === 'text-red-400' && "border-red-500/30 shadow-red-500/20"
+                        )}>
+                          {statusDisplay.label}
+                        </span>
+                      );
+                    })()}
                   </td>
-                  <td className="py-4 text-gray-400">{invoice.data_emissao || '---'}</td>
+                  <td className="py-4 text-gray-400 group-hover:text-gray-300 transition-colors">{invoice.data_emissao || '---'}</td>
                 </motion.tr>
               ))}
               {invoices.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="py-8 text-center text-gray-500">
-                    Nenhuma nota fiscal emitida ainda
+                  <td colSpan={5} className="py-12 text-center">
+                    <div className="flex flex-col items-center gap-3">
+                      <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-white/5 to-white/0 border border-white/10 flex items-center justify-center">
+                        <FileText className="w-8 h-8 text-gray-500" />
+                      </div>
+                      <p className="text-gray-400 font-medium">Nenhuma nota fiscal emitida ainda</p>
+                      <p className="text-sm text-gray-500">Use o assistente IA para emitir sua primeira nota</p>
+                    </div>
                   </td>
                 </tr>
               )}

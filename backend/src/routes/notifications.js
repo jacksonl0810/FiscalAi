@@ -3,6 +3,7 @@ import { body, validationResult } from 'express-validator';
 import { prisma } from '../index.js';
 import { authenticate } from '../middleware/auth.js';
 import { asyncHandler, AppError } from '../middleware/errorHandler.js';
+import { sendSuccess } from '../utils/response.js';
 
 const router = express.Router();
 
@@ -179,6 +180,69 @@ router.post('/mark-all-read', asyncHandler(async (req, res) => {
   });
 
   sendSuccess(res, 'All notifications marked as read');
+}));
+
+/**
+ * DELETE /api/notifications/delete-all
+ * Delete all notifications for the current user
+ * NOTE: This route must come before DELETE /:id to avoid route conflicts
+ */
+router.delete('/delete-all', asyncHandler(async (req, res) => {
+  const userId = req.user.id;
+  console.log('[Notifications] Delete all request from user:', userId);
+  
+  try {
+    // Count notifications before deletion for verification
+    const countBefore = await prisma.notification.count({
+      where: {
+        userId: userId
+      }
+    });
+    console.log('[Notifications] Notifications count before deletion:', countBefore);
+    
+    if (countBefore === 0) {
+      return sendSuccess(res, 'No notifications to delete', { 
+        deletedCount: 0,
+        countBefore: 0,
+        countAfter: 0
+      });
+    }
+    
+    // Delete all notifications for the user
+    const deletedCount = await prisma.notification.deleteMany({
+      where: {
+        userId: userId
+      }
+    });
+
+    console.log('[Notifications] Deleted count:', deletedCount.count);
+    
+    // Verify deletion by counting again
+    const countAfter = await prisma.notification.count({
+      where: {
+        userId: userId
+      }
+    });
+    console.log('[Notifications] Notifications count after deletion:', countAfter);
+
+    if (deletedCount.count === 0 && countBefore > 0) {
+      console.warn('[Notifications] Warning: No notifications were deleted despite countBefore > 0');
+      throw new AppError('Failed to delete notifications', 500, 'DELETE_FAILED');
+    }
+
+    if (countAfter > 0) {
+      console.warn('[Notifications] Warning: Some notifications may not have been deleted. countAfter:', countAfter);
+    }
+
+    sendSuccess(res, `All notifications deleted successfully`, { 
+      deletedCount: deletedCount.count,
+      countBefore,
+      countAfter
+    });
+  } catch (error) {
+    console.error('[Notifications] Error deleting all notifications:', error);
+    throw error;
+  }
 }));
 
 /**

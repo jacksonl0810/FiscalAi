@@ -1,5 +1,5 @@
 import React, { createContext, useState, useContext, useEffect, useCallback } from 'react';
-import { authService, getToken } from '@/api/services';
+import { authService, getToken, setToken, setRefreshToken } from '@/api/services';
 
 const AuthContext = createContext(undefined);
 
@@ -28,6 +28,7 @@ export const AuthProvider = ({ children }) => {
       }
 
       // Validate token by getting current user
+      // 👉 This call returns subscription_status from backend
       const currentUser = await authService.me();
       setUser(currentUser);
       setIsAuthenticated(true);
@@ -62,6 +63,10 @@ export const AuthProvider = ({ children }) => {
       const response = await authService.login({ email, password });
       setUser(response.user);
       setIsAuthenticated(true);
+      
+      // Refresh to get subscription status
+      await checkAuth();
+      
       return response;
     } catch (error) {
       setAuthError({
@@ -82,6 +87,10 @@ export const AuthProvider = ({ children }) => {
       const response = await authService.register({ name, email, password });
       setUser(response.user);
       setIsAuthenticated(true);
+      
+      // Refresh to get subscription status
+      await checkAuth();
+      
       return response;
     } catch (error) {
       setAuthError({
@@ -104,12 +113,47 @@ export const AuthProvider = ({ children }) => {
     }
   }, []);
 
+  // Login with Google credential (for Google Sign-In button)
+  const loginWithGoogle = async (credential) => {
+    try {
+      setIsLoadingAuth(true);
+      setAuthError(null);
+
+      const response = await authService.googleLogin(credential);
+      
+      // Store tokens
+      setToken(response.token);
+      setRefreshToken(response.refreshToken);
+      
+      setUser(response.user);
+      setIsAuthenticated(true);
+      
+      // Refresh to get subscription status
+      await checkAuth();
+      
+      return response;
+    } catch (error) {
+      setAuthError({
+        type: 'google_login_failed',
+        message: error.message || 'Falha ao fazer login com Google',
+      });
+      throw error;
+    } finally {
+      setIsLoadingAuth(false);
+    }
+  };
+
   const navigateToLogin = useCallback(() => {
     window.location.href = '/login';
   }, []);
 
   const clearError = useCallback(() => {
     setAuthError(null);
+  }, []);
+
+  // 👉 Expose refreshUser method for components to call after subscription changes
+  const refreshUser = useCallback(async () => {
+    await checkAuth();
   }, []);
 
   const value = {
@@ -121,9 +165,11 @@ export const AuthProvider = ({ children }) => {
     login,
     register,
     logout,
+    loginWithGoogle,
     navigateToLogin,
     checkAuth,
     clearError,
+    refreshUser, // New method to refresh user data
   };
 
   return (

@@ -59,6 +59,13 @@ export const notificationsService = {
   },
 
   /**
+   * Delete all notifications
+   */
+  async deleteAll(): Promise<void> {
+    await apiClient.delete('/notifications/delete-all');
+  },
+
+  /**
    * Get unread count
    */
   async getUnreadCount(): Promise<number> {

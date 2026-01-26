@@ -104,9 +104,6 @@ export const assistantService = {
     await apiClient.delete('/assistant/history');
   },
 
-  /**
-   * Execute an AI action (e.g., emit invoice)
-   */
   async executeAction(data: {
     action_type: string;
     action_data: any;
@@ -117,6 +114,34 @@ export const assistantService = {
       data
     );
     return response.data;
+  },
+
+  async translateError(error: string | object, context?: object): Promise<{
+    message: string;
+    explanation: string;
+    action: string;
+    category: string;
+    ai_explanation: string;
+  }> {
+    const response = await apiClient.post<{ status: string; data: any }>('/assistant/translate-error', {
+      error,
+      context
+    });
+    return response.data.data || response.data;
+  },
+
+  async validateIssuance(companyId: string, invoiceData: object): Promise<{
+    valid: boolean;
+    errors: Array<{ code: string; message: string }>;
+    warnings: Array<{ code: string; message: string }>;
+    company: object;
+    limits: object;
+  }> {
+    const response = await apiClient.post<{ status: string; data: any }>('/assistant/validate-issuance', {
+      company_id: companyId,
+      invoice_data: invoiceData
+    });
+    return response.data.data || response.data;
   },
 };
 

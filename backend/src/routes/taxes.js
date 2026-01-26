@@ -10,7 +10,7 @@ const router = express.Router();
 
 // All routes require authentication and active subscription
 router.use(authenticate);
-router.use(requireActiveSubscription);
+router.use(asyncHandler(requireActiveSubscription));
 
 /**
  * GET /api/taxes/das

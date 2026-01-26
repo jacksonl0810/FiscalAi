@@ -12,6 +12,13 @@ export default defineConfig({
   },
   server: {
     port: 5173,
+    host: true, // Listen on all addresses
+    hmr: {
+      // Use WebSocket protocol matching the page
+      protocol: 'ws',
+      host: 'localhost',
+      port: 5173,
+    },
     proxy: {
       '/api': {
         target: process.env.VITE_API_URL || 'http://localhost:3000',

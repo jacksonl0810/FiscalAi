@@ -1,6 +1,7 @@
 import React from "react";
 import { Sparkles, User } from "lucide-react";
 import { motion } from "framer-motion";
+import { cn } from "@/lib/utils";
 
 export default function ChatMessage({ message, isAI }) {
   // Check if content is JSON and extract readable text
@@ -56,27 +57,51 @@ export default function ChatMessage({ message, isAI }) {
       animate={{ opacity: 1, y: 0 }}
       className={`flex gap-4 ${isAI ? '' : 'flex-row-reverse'}`}
     >
-      <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${
+      <div className={cn(
+        "w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0",
         isAI 
-          ? 'bg-gradient-to-br from-orange-500 to-orange-600 glow-orange' 
-          : 'bg-white/10 border border-white/10'
-      }`}>
+          ? cn(
+              "bg-gradient-to-br from-orange-500 via-orange-600 to-orange-500",
+              "shadow-lg shadow-orange-500/30",
+              "border border-orange-400/30"
+            )
+          : cn(
+              "bg-gradient-to-br from-white/10 via-white/5 to-white/10",
+              "border border-white/10",
+              "backdrop-blur-sm"
+            )
+      )}>
         {isAI ? (
-          <Sparkles className="w-5 h-5 text-white" />
+          <Sparkles className="w-6 h-6 text-white" />
         ) : (
-          <User className="w-5 h-5 text-gray-400" />
+          <User className="w-6 h-6 text-gray-300" />
         )}
       </div>
       
       <div className={`flex-1 max-w-[80%] ${isAI ? '' : 'text-right'}`}>
-        <div className={`inline-block px-5 py-4 rounded-2xl ${
+        <div className={cn(
+          "inline-block px-6 py-4 rounded-2xl",
+          "backdrop-blur-xl shadow-xl",
           isAI 
-            ? 'glass-card text-gray-200' 
-            : 'bg-gradient-to-r from-orange-500/20 to-purple-500/20 border border-orange-500/20 text-white'
-        }`}>
-          <p className="text-sm leading-relaxed whitespace-pre-wrap">{displayContent}</p>
+            ? cn(
+                "bg-gradient-to-br from-slate-800/90 via-slate-700/80 to-slate-800/90",
+                "border border-white/10",
+                "text-gray-100",
+                "shadow-black/30"
+              )
+            : cn(
+                "bg-gradient-to-r from-orange-500/30 via-orange-600/20 to-purple-500/20",
+                "border border-orange-500/30",
+                "text-white",
+                "shadow-orange-500/20"
+              )
+        )}>
+          <p className="text-sm leading-relaxed whitespace-pre-wrap font-medium">{displayContent}</p>
         </div>
-        <p className="text-xs text-gray-600 mt-2 px-2">
+        <p className={cn(
+          "text-xs mt-2 px-2",
+          isAI ? "text-gray-500" : "text-gray-400"
+        )}>
           {message.time}
         </p>
       </div>

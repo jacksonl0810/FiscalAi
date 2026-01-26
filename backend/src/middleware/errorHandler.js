@@ -59,12 +59,23 @@ export const errorHandler = (err, req, res, next) => {
   const statusCode = err.statusCode || 500;
   const message = err.message || 'Internal server error';
 
-  res.status(statusCode).json({
+  const errorResponse = {
     status: 'error',
     message,
-    code: err.code || 'INTERNAL_ERROR',
-    ...(process.env.NODE_ENV === 'development' && { stack: err.stack })
-  });
+    code: err.code || 'INTERNAL_ERROR'
+  };
+
+  // Include additional error data if available (e.g., upgradeOptions for limit errors)
+  if (err.data) {
+    errorResponse.data = err.data;
+  }
+
+  // Include stack trace in development
+  if (process.env.NODE_ENV === 'development') {
+    errorResponse.stack = err.stack;
+  }
+
+  res.status(statusCode).json(errorResponse);
 };
 
 /**
@@ -78,10 +89,11 @@ export const asyncHandler = (fn) => (req, res, next) => {
  * Custom error class
  */
 export class AppError extends Error {
-  constructor(message, statusCode = 500, code = 'INTERNAL_ERROR') {
+  constructor(message, statusCode = 500, code = 'INTERNAL_ERROR', data = null) {
     super(message);
     this.statusCode = statusCode;
     this.code = code;
+    this.data = data; // Additional error data (e.g., upgradeOptions, limitCheck)
     Error.captureStackTrace(this, this.constructor);
   }
 }

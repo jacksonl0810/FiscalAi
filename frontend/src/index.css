@@ -80,9 +80,159 @@
 @layer base {
   * {
     @apply border-border outline-ring/50;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+
+  *::-webkit-scrollbar {
+    display: none;
+    width: 0;
+    height: 0;
   }
 
   body {
     @apply bg-background text-foreground;
+  }
+
+  html, body, #root {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+
+  html::-webkit-scrollbar,
+  body::-webkit-scrollbar,
+  #root::-webkit-scrollbar {
+    display: none;
+    width: 0;
+    height: 0;
+  }
+
+  input, textarea, select {
+    pointer-events: auto !important;
+    user-select: text !important;
+  }
+
+  input::placeholder,
+  textarea::placeholder {
+    color: rgb(156, 163, 175) !important;
+    opacity: 1 !important;
+  }
+
+  input:focus::placeholder,
+  textarea:focus::placeholder {
+    color: rgb(156, 163, 175) !important;
+    opacity: 0.8 !important;
+  }
+}
+
+@layer components {
+  .luxury-error-toast,
+  [data-sonner-toast][data-type="error"] {
+    background: linear-gradient(135deg, rgba(127, 29, 29, 0.98) 0%, rgba(153, 27, 27, 0.98) 50%, rgba(127, 29, 29, 0.98) 100%) !important;
+    backdrop-filter: blur(20px) !important;
+    -webkit-backdrop-filter: blur(20px) !important;
+    border: 2px solid rgba(239, 68, 68, 0.6) !important;
+    border-radius: 16px !important;
+    box-shadow: 
+      0 20px 60px rgba(239, 68, 68, 0.4),
+      0 0 0 1px rgba(255, 255, 255, 0.1) inset,
+      0 0 40px rgba(239, 68, 68, 0.2) !important;
+    color: #ffffff !important;
+    padding: 20px 24px !important;
+    min-width: 400px !important;
+    max-width: 520px !important;
+    font-weight: 500 !important;
+  }
+
+  .luxury-error-toast [data-title],
+  [data-sonner-toast][data-type="error"] [data-title] {
+    color: #ffffff !important;
+    font-size: 16px !important;
+    font-weight: 600 !important;
+    line-height: 1.5 !important;
+    margin-bottom: 8px !important;
+    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3) !important;
+  }
+
+  .luxury-error-toast [data-description],
+  [data-sonner-toast][data-type="error"] [data-description] {
+    color: #f3f4f6 !important;
+    font-size: 14px !important;
+    font-weight: 400 !important;
+    line-height: 1.6 !important;
+    margin-top: 8px !important;
+    opacity: 0.95 !important;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2) !important;
+  }
+
+  [data-sonner-toast][data-type="success"] {
+    background: linear-gradient(135deg, rgba(5, 46, 22, 0.98) 0%, rgba(6, 78, 59, 0.98) 50%, rgba(5, 46, 22, 0.98) 100%) !important;
+    backdrop-filter: blur(20px) !important;
+    -webkit-backdrop-filter: blur(20px) !important;
+    border: 2px solid rgba(34, 197, 94, 0.6) !important;
+    box-shadow: 
+      0 20px 60px rgba(34, 197, 94, 0.3),
+      0 0 0 1px rgba(255, 255, 255, 0.1) inset,
+      0 0 40px rgba(34, 197, 94, 0.15) !important;
+  }
+
+  [data-sonner-toast][data-type="warning"] {
+    background: linear-gradient(135deg, rgba(113, 63, 18, 0.98) 0%, rgba(146, 64, 14, 0.98) 50%, rgba(113, 63, 18, 0.98) 100%) !important;
+    backdrop-filter: blur(20px) !important;
+    -webkit-backdrop-filter: blur(20px) !important;
+    border: 2px solid rgba(251, 191, 36, 0.6) !important;
+    box-shadow: 
+      0 20px 60px rgba(251, 191, 36, 0.3),
+      0 0 0 1px rgba(255, 255, 255, 0.1) inset,
+      0 0 40px rgba(251, 191, 36, 0.15) !important;
+  }
+
+  [data-sonner-toast][data-type="info"] {
+    background: linear-gradient(135deg, rgba(30, 58, 138, 0.98) 0%, rgba(30, 64, 175, 0.98) 50%, rgba(30, 58, 138, 0.98) 100%) !important;
+    backdrop-filter: blur(20px) !important;
+    -webkit-backdrop-filter: blur(20px) !important;
+    border: 2px solid rgba(59, 130, 246, 0.6) !important;
+    box-shadow: 
+      0 20px 60px rgba(59, 130, 246, 0.3),
+      0 0 0 1px rgba(255, 255, 255, 0.1) inset,
+      0 0 40px rgba(59, 130, 246, 0.15) !important;
+  }
+
+  [data-sonner-toast] {
+    border-radius: 16px !important;
+    padding: 20px 24px !important;
+    min-width: 380px !important;
+    max-width: 520px !important;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif !important;
+  }
+
+  [data-sonner-toast] [data-title] {
+    font-size: 16px !important;
+    font-weight: 600 !important;
+    line-height: 1.5 !important;
+    color: #ffffff !important;
+    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3) !important;
+  }
+
+  [data-sonner-toast] [data-description] {
+    font-size: 14px !important;
+    font-weight: 400 !important;
+    line-height: 1.6 !important;
+    color: rgba(255, 255, 255, 0.95) !important;
+    margin-top: 8px !important;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2) !important;
+    white-space: pre-line !important;
+  }
+
+  [data-sonner-toast] [data-close-button] {
+    color: rgba(255, 255, 255, 0.8) !important;
+    background: rgba(255, 255, 255, 0.1) !important;
+    border-radius: 8px !important;
+    transition: all 0.2s ease !important;
+  }
+
+  [data-sonner-toast] [data-close-button]:hover {
+    color: #ffffff !important;
+    background: rgba(255, 255, 255, 0.2) !important;
   }
 }

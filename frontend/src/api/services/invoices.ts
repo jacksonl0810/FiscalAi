@@ -10,6 +10,10 @@ export const invoicesService = {
     limit?: number;
     status?: string;
     companyId?: string;
+    cliente_nome?: string;
+    cliente_documento?: string;
+    startDate?: string;
+    endDate?: string;
     sort?: string;
   }): Promise<Invoice[]> {
     const response = await apiClient.get<Invoice[]>('/invoices', { params });
@@ -90,6 +94,21 @@ export const invoicesService = {
       `/invoices/${invoiceId}/check-status`
     );
     return response.data;
+  },
+
+  /**
+   * Get cancellation info for an invoice
+   */
+  async getCancellationInfo(id: string): Promise<{
+    canCancel: boolean;
+    deadline: string;
+    hoursRemaining: number;
+    isExpired: boolean;
+    rules: any;
+    warnings: any[];
+  }> {
+    const response = await apiClient.get(`/invoices/${id}/cancellation-info`);
+    return response.data.data || response.data;
   },
 
   /**

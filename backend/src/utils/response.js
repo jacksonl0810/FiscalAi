@@ -55,6 +55,13 @@ export function errorResponse(message, error = null) {
  * @param {number} statusCode - HTTP status code (default: 200)
  */
 export function sendSuccess(res, message, data = null, statusCode = 200) {
+  // Ensure CORS headers are set explicitly
+  const origin = res.req.headers.origin;
+  if (origin) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+  }
+  
   const response = successResponse(message, data);
   return res.status(statusCode).json(response);
 }
