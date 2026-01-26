@@ -5,6 +5,7 @@ import cookieParser from 'cookie-parser';
 import { PrismaClient } from '@prisma/client';
 import multer from 'multer';
 import path from 'path';
+import { fileURLToPath } from 'url';
 
 // Import routes
 import authRoutes from './routes/auth.js';
@@ -26,6 +27,11 @@ import { errorHandler } from './middleware/errorHandler.js';
 
 // Load environment variables
 dotenv.config();
+
+// Get directory paths (ES modules don't have __dirname)
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const frontendBuildDir = path.join(__dirname, '..', 'dist');
 
 // Initialize Prisma client
 export const prisma = new PrismaClient();
@@ -81,11 +87,6 @@ app.use(cookieParser());
 import { apiLimiter } from './middleware/rateLimiter.js';
 app.use('/api', apiLimiter);
 
-app.use(express.static(path.join(__dirname, '../frontend/dist')));
-app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, '../frontend/dist', 'index.html'));
-});
-
 // Multer configuration for file uploads (memory storage for audio)
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -114,9 +115,34 @@ app.use('/api/monitoring', monitoringRoutes);
 app.use('/api/accountant-review', accountantReviewRoutes);
 app.use('/api/admin', adminRoutes);
 
-// 404 handler
+// Serve static files from frontend build (must be AFTER API routes)
+app.use(express.static(frontendBuildDir, {
+  maxAge: '1y',
+  etag: true,
+  lastModified: true
+}));
+
+// Catch-all handler for SPA routing (must be AFTER API routes and static files)
+// This sends index.html for all non-API routes to support client-side routing
+app.get('*', (req, res, next) => {
+  // Skip if it's an API route (should have been handled above)
+  if (req.path.startsWith('/api')) {
+    return next();
+  }
+  res.sendFile(path.join(frontendBuildDir, 'index.html'), (err) => {
+    if (err) {
+      next(err);
+    }
+  });
+});
+
+// 404 handler for API routes
 app.use((req, res) => {
-  res.status(404).json({ message: 'Route not found' });
+  if (req.path.startsWith('/api')) {
+    res.status(404).json({ message: 'Route not found' });
+  } else {
+    res.status(404).json({ message: 'Route not found' });
+  }
 });
 
 // Error handler middleware
