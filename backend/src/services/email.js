@@ -1,5 +1,5 @@
 /**
- * Email Service for FiscalAI
+ * Email Service for MAY
  * 
  * Handles sending notification emails for:
  * - User registration
@@ -15,7 +15,7 @@ const EMAIL_HOST = process.env.EMAIL_HOST || 'smtp.gmail.com';
 const EMAIL_PORT = parseInt(process.env.EMAIL_PORT || '587');
 const EMAIL_USER = process.env.EMAIL_USER;
 const EMAIL_PASS = process.env.EMAIL_PASS;
-const EMAIL_FROM = process.env.EMAIL_FROM || 'FiscalAI <noreply@fiscalai.com.br>';
+const EMAIL_FROM = process.env.EMAIL_FROM || 'MAY <noreply@may.com.br>';
 const EMAIL_ENABLED = process.env.EMAIL_ENABLED === 'true';
 
 // Create transporter (reusable)
@@ -81,7 +81,7 @@ export async function sendEmail({ to, subject, html, text }) {
 /**
  * Email template wrapper
  */
-function emailTemplate(content, title = 'FiscalAI') {
+function emailTemplate(content, title = 'MAY') {
   return `
 <!DOCTYPE html>
 <html>
@@ -109,15 +109,15 @@ function emailTemplate(content, title = 'FiscalAI') {
 <body>
   <div class="container">
     <div class="header">
-      <div class="logo">🚀 FiscalAI</div>
-      <p style="color: #888; margin: 5px 0;">Assistente Fiscal Inteligente</p>
+      <div class="logo">🚀 MAY</div>
+      <p style="color: #888; margin: 5px 0;">Assistente Fiscal IA</p>
     </div>
     <div class="content">
       ${content}
     </div>
     <div class="footer">
-      <p>Este é um email automático do FiscalAI.</p>
-      <p>© ${new Date().getFullYear()} FiscalAI - Todos os direitos reservados.</p>
+      <p>Este é um email automático da MAY.</p>
+      <p>© ${new Date().getFullYear()} MAY - Todos os direitos reservados.</p>
     </div>
   </div>
 </body>
@@ -129,7 +129,7 @@ function emailTemplate(content, title = 'FiscalAI') {
  */
 export async function sendWelcomeEmail(user) {
   const content = `
-    <h2>Bem-vindo ao FiscalAI! 🎉</h2>
+    <h2>Bem-vindo à MAY! 🎉</h2>
     <p>Olá <strong>${user.name || 'Usuário'}</strong>,</p>
     <p>Sua conta foi criada com sucesso! Estamos muito felizes em tê-lo conosco.</p>
     
@@ -138,7 +138,7 @@ export async function sendWelcomeEmail(user) {
       <p style="margin: 5px 0 0 0;">Durante o teste, você tem acesso completo a todas as funcionalidades.</p>
     </div>
     
-    <p>Com o FiscalAI você pode:</p>
+    <p>Com a MAY você pode:</p>
     <ul>
       <li>✅ Emitir notas fiscais por comando de voz ou texto</li>
       <li>✅ Consultar seu faturamento em tempo real</li>
@@ -147,15 +147,15 @@ export async function sendWelcomeEmail(user) {
     </ul>
     
     <p>Para começar, acesse o sistema e cadastre sua primeira empresa:</p>
-    <a href="${process.env.FRONTEND_URL || 'http://localhost:5173'}" class="button">Acessar FiscalAI</a>
+    <a href="${process.env.FRONTEND_URL || 'http://localhost:5173'}" class="button">Acessar MAY</a>
     
-    <p>Precisa de ajuda? Nosso assistente de IA está sempre disponível para guiá-lo.</p>
+    <p>Precisa de ajuda? Eu estou sempre disponível para ajudá-lo.</p>
   `;
 
   return sendEmail({
     to: user.email,
-    subject: '🎉 Bem-vindo ao FiscalAI - Sua conta foi criada!',
-    html: emailTemplate(content, 'Bem-vindo ao FiscalAI')
+    subject: '🎉 Bem-vindo à MAY - Sua conta foi criada!',
+    html: emailTemplate(content, 'Bem-vindo à MAY')
   });
 }
 
@@ -175,7 +175,7 @@ export async function sendPaymentConfirmationEmail(user, payment) {
       </div>
       <div class="details-row">
         <span class="details-label">Plano:</span>
-        <span class="details-value">${payment.planName || 'FiscalAI Pro'}</span>
+        <span class="details-value">${payment.planName || 'MAY Pro'}</span>
       </div>
       <div class="details-row">
         <span class="details-label">Data:</span>
@@ -189,15 +189,15 @@ export async function sendPaymentConfirmationEmail(user, payment) {
     
     <div class="highlight success">
       <strong>Sua assinatura está ativa!</strong>
-      <p style="margin: 5px 0 0 0;">Você tem acesso completo a todas as funcionalidades do FiscalAI.</p>
+      <p style="margin: 5px 0 0 0;">Você tem acesso completo a todas as funcionalidades da MAY.</p>
     </div>
     
-    <a href="${process.env.FRONTEND_URL || 'http://localhost:5173'}" class="button">Acessar FiscalAI</a>
+    <a href="${process.env.FRONTEND_URL || 'http://localhost:5173'}" class="button">Acessar MAY</a>
   `;
 
   return sendEmail({
     to: user.email,
-    subject: '✅ Pagamento Confirmado - FiscalAI',
+    subject: '✅ Pagamento Confirmado - MAY',
     html: emailTemplate(content, 'Pagamento Confirmado')
   });
 }
@@ -291,7 +291,7 @@ export async function sendInvoiceRejectedEmail(user, invoice, error, company) {
 
   return sendEmail({
     to: user.email,
-    subject: '⚠️ Problema na Emissão de Nota Fiscal - FiscalAI',
+    subject: '⚠️ Problema na Emissão de Nota Fiscal - MAY',
     html: emailTemplate(content, 'Erro na Emissão')
   });
 }
@@ -305,38 +305,38 @@ export async function sendSubscriptionStatusEmail(user, status, details = {}) {
 
   switch (status) {
     case 'ativo':
-      subject = '✅ Assinatura Ativada - FiscalAI';
+      subject = '✅ Assinatura Ativada - MAY';
       content = `
         <h2>Assinatura Ativada! 🎉</h2>
         <p>Olá <strong>${user.name || 'Usuário'}</strong>,</p>
-        <p>Sua assinatura do FiscalAI está ativa!</p>
+        <p>Sua assinatura da MAY está ativa!</p>
         <div class="highlight success">
           <strong>Você tem acesso completo a todas as funcionalidades.</strong>
         </div>
-        <a href="${process.env.FRONTEND_URL || 'http://localhost:5173'}" class="button">Acessar FiscalAI</a>
+        <a href="${process.env.FRONTEND_URL || 'http://localhost:5173'}" class="button">Acessar MAY</a>
       `;
       break;
 
     case 'inadimplente':
-      subject = '⚠️ Problema com sua Assinatura - FiscalAI';
+      subject = '⚠️ Problema com sua Assinatura - MAY';
       content = `
         <h2>Atenção: Pagamento Pendente ⚠️</h2>
         <p>Olá <strong>${user.name || 'Usuário'}</strong>,</p>
         <p>Identificamos um problema com o pagamento da sua assinatura.</p>
         <div class="highlight error">
           <strong>Seu acesso pode ser suspenso em breve.</strong>
-          <p style="margin: 5px 0 0 0;">Por favor, atualize seus dados de pagamento para continuar usando o FiscalAI.</p>
+          <p style="margin: 5px 0 0 0;">Por favor, atualize seus dados de pagamento para continuar usando a MAY.</p>
         </div>
         <a href="${process.env.FRONTEND_URL || 'http://localhost:5173'}/settings" class="button">Atualizar Pagamento</a>
       `;
       break;
 
     case 'cancelado':
-      subject = '😢 Assinatura Cancelada - FiscalAI';
+      subject = '😢 Assinatura Cancelada - MAY';
       content = `
         <h2>Assinatura Cancelada</h2>
         <p>Olá <strong>${user.name || 'Usuário'}</strong>,</p>
-        <p>Sua assinatura do FiscalAI foi cancelada.</p>
+        <p>Sua assinatura da MAY foi cancelada.</p>
         <p>Sentiremos sua falta! Se mudar de ideia, você pode reativar sua assinatura a qualquer momento.</p>
         <div class="highlight">
           <strong>Seus dados foram preservados.</strong>

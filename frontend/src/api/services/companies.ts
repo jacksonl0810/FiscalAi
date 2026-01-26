@@ -44,32 +44,26 @@ export const companiesService = {
   /**
    * Register company in fiscal cloud (Nuvem Fiscal)
    */
-  async registerInFiscalCloud(companyId: string): Promise<{ status: string; message: string }> {
-    const response = await apiClient.post<{ status: string; message: string }>(
+  async registerInFiscalCloud(companyId: string): Promise<{ status?: string; message?: string; nuvemFiscalId?: string }> {
+    const response = await apiClient.post<{ status?: string; message?: string; nuvemFiscalId?: string }>(
       `/companies/${companyId}/register-fiscal`
     );
     return response.data;
   },
 
-  /**
-   * Get fiscal integration status for a company
-   */
   async getFiscalStatus(companyId: string): Promise<FiscalIntegrationStatus | null> {
     try {
-      const response = await apiClient.get<FiscalIntegrationStatus>(
+      const response = await apiClient.get<{ status: string; message: string; data: FiscalIntegrationStatus }>(
         `/companies/${companyId}/fiscal-status`
       );
-      return response.data;
+      return response.data.data || response.data;
     } catch (error) {
       return null;
     }
   },
 
-  /**
-   * Check/verify fiscal connection
-   */
-  async checkFiscalConnection(companyId: string): Promise<{ status: string; message: string }> {
-    const response = await apiClient.post<{ status: string; message: string }>(
+  async checkFiscalConnection(companyId: string): Promise<{ status: string; message: string; data?: unknown }> {
+    const response = await apiClient.post<{ status: string; message: string; data: unknown }>(
       `/companies/${companyId}/check-fiscal-connection`
     );
     return response.data;
@@ -102,19 +96,24 @@ export const companiesService = {
     return response.data.data;
   },
 
-  /**
-   * Upload digital certificate
-   */
-  async uploadCertificate(companyId: string, file: File, password: string): Promise<void> {
+  async uploadCertificate(companyId: string, file: File, password: string): Promise<{
+    credential_id?: string;
+    expires_at?: string;
+    nuvem_fiscal?: {
+      status: string;
+      message: string;
+    };
+  }> {
     const formData = new FormData();
     formData.append('certificate', file);
     formData.append('password', password);
 
-    await apiClient.post(`/companies/${companyId}/certificate`, formData, {
+    const response = await apiClient.post(`/companies/${companyId}/certificate`, formData, {
       headers: {
         'Content-Type': 'multipart/form-data',
       },
     });
+    return response.data.data;
   },
 };
 

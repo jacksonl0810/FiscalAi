@@ -8,11 +8,11 @@ import rateLimit from 'express-rate-limit';
 
 /**
  * General API rate limiter
- * 100 requests per 15 minutes per IP
+ * 300 requests per 15 minutes per IP (increased from 100)
  */
 export const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // Limit each IP to 100 requests per windowMs
+  max: 300, // Limit each IP to 300 requests per windowMs
   message: {
     status: 'error',
     message: 'Muitas requisições deste IP. Por favor, tente novamente em alguns minutos.',
@@ -21,8 +21,8 @@ export const apiLimiter = rateLimit({
   standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
   legacyHeaders: false, // Disable the `X-RateLimit-*` headers
   skip: (req) => {
-    // Skip rate limiting in test environment
-    return process.env.NODE_ENV === 'test';
+    // Skip rate limiting in test/development environment
+    return process.env.NODE_ENV === 'test' || process.env.NODE_ENV === 'development';
   }
 });
 
@@ -133,4 +133,28 @@ export const webhookLimiter = rateLimit({
   skip: (req) => {
     return process.env.NODE_ENV === 'test';
   }
+});
+
+/**
+ * Rate limiter for company fiscal connection checks
+ * 10 requests per minute per user (prevents excessive polling)
+ */
+export const fiscalConnectionLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 10, // Limit to 10 connection checks per minute
+  message: {
+    status: 'error',
+    message: 'Muitas verificações de conexão fiscal. Aguarde 1 minuto antes de tentar novamente.',
+    code: 'FISCAL_CONNECTION_RATE_LIMIT_EXCEEDED'
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => {
+    // Rate limit per user instead of IP
+    return req.user?.id || 'anonymous';
+  },
+  skip: (req) => {
+    return process.env.NODE_ENV === 'test' || process.env.NODE_ENV === 'development';
+  },
+  validate: false // Disable all validations
 });

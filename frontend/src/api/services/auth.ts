@@ -88,6 +88,29 @@ export const authService = {
   async changePassword(currentPassword: string, newPassword: string): Promise<void> {
     await apiClient.post('/auth/change-password', { currentPassword, newPassword });
   },
+
+  /**
+   * Login with Google credential
+   */
+  async googleLogin(credential: string): Promise<AuthResponse> {
+    const response = await apiClient.post<AuthResponse>('/auth/google/token', { credential });
+    const { token, refreshToken } = response.data;
+    
+    setToken(token);
+    if (refreshToken) {
+      setRefreshToken(refreshToken);
+    }
+    
+    return response.data;
+  },
+
+  /**
+   * Check if Google OAuth is configured
+   */
+  async checkGoogleConfig(): Promise<{ configured: boolean }> {
+    const response = await apiClient.get<{ configured: boolean }>('/auth/google/check');
+    return response.data;
+  },
 };
 
 export default authService;

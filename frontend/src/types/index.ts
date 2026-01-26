@@ -1,11 +1,18 @@
 // User & Authentication Types
+export type SubscriptionStatus = 'trial' | 'ativo' | 'pending' | 'inadimplente' | 'cancelado';
+
 export interface User {
   id: string;
   email: string;
   name: string;
   avatar?: string;
+  cpf_cnpj?: string;
   created_at: string;
   updated_at: string;
+  subscription_status?: SubscriptionStatus;
+  plan?: string;
+  days_remaining?: number;
+  current_period_end?: string;
 }
 
 export interface AuthResponse {
@@ -40,6 +47,11 @@ export interface Company {
   email: string;
   telefone: string;
   inscricao_municipal: string;
+  cep?: string;
+  logradouro?: string;
+  numero?: string;
+  bairro?: string;
+  codigo_municipio?: string;
   nuvem_fiscal_id?: string;
   created_at: string;
   updated_at: string;
@@ -57,6 +69,11 @@ export interface CreateCompanyData {
   email: string;
   telefone: string;
   inscricao_municipal: string;
+  cep?: string;
+  logradouro?: string;
+  numero?: string;
+  bairro?: string;
+  codigo_municipio?: string;
 }
 
 export interface UpdateCompanyData extends Partial<CreateCompanyData> {}

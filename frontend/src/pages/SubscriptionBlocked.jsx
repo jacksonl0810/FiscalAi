@@ -52,7 +52,7 @@ export default function SubscriptionBlocked() {
               <span className="font-semibold">Período de teste encerrado</span>
             </div>
             <p className="text-sm text-gray-400">
-              Para continuar usando o FiscalAI e emitir notas fiscais, 
+              Para continuar usando a MAY e emitir notas fiscais, 
               escolha um plano de assinatura.
             </p>
           </div>

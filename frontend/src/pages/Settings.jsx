@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { settingsService } from "@/api/services";
+import { settingsService, authService } from "@/api/services";
 import { motion } from "framer-motion";
 import {
   Palette,
@@ -8,8 +8,13 @@ import {
   HelpCircle,
   Check,
   ChevronDown,
-  ChevronUp
+  ChevronUp,
+  User,
+  Save
 } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import { toast } from "sonner";
 
 export default function Settings() {
   const queryClient = useQueryClient();
@@ -20,10 +25,17 @@ export default function Settings() {
     queryFn: () => settingsService.get(),
   });
 
+  const { data: user } = useQuery({
+    queryKey: ['user'],
+    queryFn: () => authService.me(),
+  });
+
   const [localSettings, setLocalSettings] = useState({
     theme: 'dark',
     font_size: 'medium'
   });
+
+  const [cpfCnpj, setCpfCnpj] = useState('');
 
   useEffect(() => {
     if (settings) {
@@ -34,12 +46,75 @@ export default function Settings() {
     }
   }, [settings]);
 
+  useEffect(() => {
+    if (user?.cpf_cnpj) {
+      // Format CPF/CNPJ for display
+      const formatted = user.cpf_cnpj.replace(/\D/g, '');
+      if (formatted.length === 11) {
+        // CPF: 000.000.000-00
+        setCpfCnpj(formatted.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4'));
+      } else if (formatted.length === 14) {
+        // CNPJ: 00.000.000/0000-00
+        setCpfCnpj(formatted.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, '$1.$2.$3/$4-$5'));
+      } else {
+        setCpfCnpj(formatted);
+      }
+    }
+  }, [user]);
+
   const updateSettingsMutation = useMutation({
     mutationFn: (data) => settingsService.save(data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['userSettings'] });
     }
   });
+
+  const updateProfileMutation = useMutation({
+    mutationFn: (data) => authService.updateProfile(data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['user'] });
+      toast.success('CPF/CNPJ atualizado com sucesso');
+    },
+    onError: async (error) => {
+      const { handleApiError } = await import('@/utils/errorHandler');
+      await handleApiError(error, { operation: 'update_cpf_cnpj' });
+    }
+  });
+
+  const handleCpfCnpjChange = (value) => {
+    // Remove non-digits
+    const digits = value.replace(/\D/g, '');
+    
+    // Format based on length
+    let formatted = digits;
+    if (digits.length <= 11) {
+      // CPF: 000.000.000-00
+      formatted = digits.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4');
+      if (digits.length < 11) {
+        formatted = digits.replace(/(\d{0,3})(\d{0,3})(\d{0,3})(\d{0,2})/, (_, a, b, c, d) => {
+          let result = a;
+          if (b) result += '.' + b;
+          if (c) result += '.' + c;
+          if (d) result += '-' + d;
+          return result;
+        });
+      }
+    } else {
+      // CNPJ: 00.000.000/0000-00
+      formatted = digits.substring(0, 14).replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, '$1.$2.$3/$4-$5');
+    }
+    
+    setCpfCnpj(formatted);
+  };
+
+  const handleSaveCpfCnpj = async () => {
+    const digits = cpfCnpj.replace(/\D/g, '');
+    if (digits.length !== 11 && digits.length !== 14) {
+      toast.error('CPF deve ter 11 dígitos ou CNPJ deve ter 14 dígitos');
+      return;
+    }
+    await updateProfileMutation.mutateAsync({ cpf_cnpj: digits });
+  };
 
   const handleThemeChange = async (theme) => {
     setLocalSettings(prev => ({ ...prev, theme }));
@@ -90,7 +165,7 @@ export default function Settings() {
         animate={{ opacity: 1, y: 0 }}
       >
         <h1 className="text-3xl font-bold text-white">Configurações</h1>
-        <p className="text-gray-400 mt-1">Personalize sua experiência no FiscalAI</p>
+        <p className="text-gray-400 mt-1">Personalize sua experiência na MAY</p>
       </motion.div>
 
       {/* Theme */}
@@ -184,6 +259,71 @@ export default function Settings() {
         </div>
       </motion.div>
 
+      {/* Profile - CPF/CNPJ */}
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.25 }}
+        className="glass-card rounded-2xl p-6"
+      >
+        <div className="flex items-center gap-3 mb-6">
+          <div className="w-10 h-10 rounded-xl bg-orange-500/20 flex items-center justify-center">
+            <User className="w-5 h-5 text-orange-400" />
+          </div>
+          <div>
+            <h2 className="text-lg font-semibold text-white">Dados Pessoais</h2>
+            <p className="text-sm text-gray-500">CPF/CNPJ necessário para assinaturas</p>
+          </div>
+        </div>
+
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-2">
+              CPF ou CNPJ
+            </label>
+            <div className="flex gap-3">
+              <Input
+                type="text"
+                value={cpfCnpj}
+                onChange={(e) => handleCpfCnpjChange(e.target.value)}
+                placeholder="000.000.000-00 ou 00.000.000/0000-00"
+                className="flex-1 bg-white/5 border-white/10 text-white placeholder:text-gray-500"
+                maxLength={18}
+              />
+              <Button
+                onClick={handleSaveCpfCnpj}
+                disabled={updateProfileMutation.isPending || !cpfCnpj}
+                className="bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white"
+              >
+                {updateProfileMutation.isPending ? (
+                  <span className="flex items-center gap-2">
+                    <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    Salvando...
+                  </span>
+                ) : (
+                  <span className="flex items-center gap-2">
+                    <Save className="w-4 h-4" />
+                    Salvar
+                  </span>
+                )}
+              </Button>
+            </div>
+            <p className="text-xs text-gray-500 mt-2">
+              {!cpfCnpj && (
+                <span className="text-yellow-400">
+                  ⚠️ CPF/CNPJ é necessário para criar assinaturas. Por favor, complete seu cadastro.
+                </span>
+              )}
+              {cpfCnpj && (
+                <span className="text-green-400">
+                  ✓ CPF/CNPJ cadastrado. Você pode criar assinaturas.
+                </span>
+              )}
+            </p>
+          </div>
+        </div>
+      </motion.div>
+
       {/* FAQ */}
       <motion.div
         initial={{ opacity: 0, y: 20 }}
@@ -240,7 +380,7 @@ export default function Settings() {
         transition={{ delay: 0.4 }}
         className="text-center text-sm text-gray-500"
       >
-        <p>FiscalAI • Versão 1.0 • © 2025</p>
+        <p>MAY • Versão 1.0 • © 2025</p>
       </motion.div>
     </div>
   );

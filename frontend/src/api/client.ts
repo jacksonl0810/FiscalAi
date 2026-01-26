@@ -1,6 +1,12 @@
 import axios, { AxiosInstance, AxiosError, InternalAxiosRequestConfig } from 'axios';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || '/api';
+// Vite provides import.meta.env at runtime, but TypeScript needs type definitions
+// The vite-env.d.ts file should provide these, but as a fallback we use type assertion
+interface ImportMetaEnv {
+  VITE_API_URL?: string;
+}
+
+const API_BASE_URL = ((import.meta as unknown as { env: ImportMetaEnv }).env?.VITE_API_URL) || '/api';
 
 // Create axios instance
 const apiClient: AxiosInstance = axios.create({
@@ -40,8 +46,22 @@ export const clearTokens = (): void => {
 // Request interceptor - add auth token and set Content-Type appropriately
 apiClient.interceptors.request.use(
   (config: InternalAxiosRequestConfig) => {
+    // Skip Authorization header for public endpoints
+    const publicEndpoints = [
+      '/subscriptions/tokenize-card',
+      '/auth/register',
+      '/auth/login',
+      '/auth/refresh',
+      '/auth/google/check',
+      '/auth/google',
+    ];
+    
+    const isPublicEndpoint = publicEndpoints.some(endpoint => 
+      config.url?.includes(endpoint)
+    );
+    
     const token = getToken();
-    if (token && config.headers) {
+    if (token && config.headers && !isPublicEndpoint) {
       config.headers.Authorization = `Bearer ${token}`;
     }
     
@@ -70,6 +90,27 @@ apiClient.interceptors.response.use(
     if (error.response?.status === 401 && !originalRequest._retry) {
       originalRequest._retry = true;
 
+      // For public endpoints, NEVER try to refresh token - just reject immediately
+      const publicEndpoints = [
+        '/subscriptions/tokenize-card',
+        '/auth/register',
+        '/auth/login',
+        '/auth/refresh',
+      ];
+      
+      const isPublicEndpoint = publicEndpoints.some(endpoint => 
+        originalRequest.url?.includes(endpoint)
+      );
+      
+      // For public endpoints, don't try to refresh - just reject
+      if (isPublicEndpoint) {
+        return Promise.reject({
+          message: error.response?.data?.message || 'Not authenticated',
+          status: 401,
+          code: error.response?.data?.code || 'NOT_AUTHENTICATED',
+        });
+      }
+      
       // For /auth/me endpoint, if there's no token, this is expected - don't try to refresh
       const isAuthMeEndpoint = originalRequest.url?.includes('/auth/me');
       const token = getToken();

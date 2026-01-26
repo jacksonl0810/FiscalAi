@@ -37,7 +37,7 @@ const router = express.Router();
 
 // All routes require authentication and active subscription
 router.use(authenticate);
-router.use(requireActiveSubscription);
+router.use(asyncHandler(requireActiveSubscription));
 
 /**
  * POST /api/assistant/process
@@ -217,11 +217,328 @@ router.post('/process', assistantLimiter, [
 
 /**
  * Pattern matching fallback when OpenAI is not available
+ * Enhanced with comprehensive AI query handlers
  */
 async function processWithPatternMatching(message, userId, companyId, res) {
   const lowerMessage = message.toLowerCase();
 
-  // Pattern: Issue invoice
+  // Get user's companies for queries
+  const companies = await prisma.company.findMany({
+    where: { userId },
+    select: { id: true, razaoSocial: true, cidade: true }
+  });
+  const companyIds = companies.map(c => c.id);
+
+  // ========================================
+  // QUERY: Last invoice / Última nota
+  // ========================================
+  if (lowerMessage.includes('última nota') || lowerMessage.includes('ultima nota') || 
+      lowerMessage.includes('last invoice') || lowerMessage.includes('minha última') ||
+      lowerMessage.includes('nota mais recente')) {
+    
+    const lastInvoice = await prisma.invoice.findFirst({
+      where: { companyId: { in: companyIds } },
+      orderBy: { dataEmissao: 'desc' },
+      include: { company: { select: { razaoSocial: true } } }
+    });
+
+    if (!lastInvoice) {
+      const responseData = {
+        success: true,
+        action: { type: 'consultar_ultima_nota', data: null },
+        explanation: 'Você ainda não emitiu nenhuma nota fiscal. Diga "Emitir nota de R$ [valor] para [cliente]" para emitir sua primeira nota.',
+        requiresConfirmation: false
+      };
+      res.json(responseData);
+      return responseData;
+    }
+
+    const responseData = {
+      success: true,
+      action: { 
+        type: 'consultar_ultima_nota', 
+        data: {
+          id: lastInvoice.id,
+          numero: lastInvoice.numero,
+          cliente: lastInvoice.clienteNome,
+          valor: parseFloat(lastInvoice.valor),
+          status: lastInvoice.status,
+          data: lastInvoice.dataEmissao
+        }
+      },
+      explanation: `📄 **Sua última nota fiscal:**\n\n` +
+        `• **Número:** ${lastInvoice.numero || 'Processando'}\n` +
+        `• **Cliente:** ${lastInvoice.clienteNome}\n` +
+        `• **Valor:** R$ ${parseFloat(lastInvoice.valor).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}\n` +
+        `• **Status:** ${formatStatus(lastInvoice.status)}\n` +
+        `• **Data:** ${lastInvoice.dataEmissao.toLocaleDateString('pt-BR')}\n` +
+        (lastInvoice.pdfUrl ? `\n📥 [Baixar PDF](${lastInvoice.pdfUrl})` : ''),
+      requiresConfirmation: false
+    };
+    res.json(responseData);
+    return responseData;
+  }
+
+  // ========================================
+  // QUERY: Rejected invoices / Notas rejeitadas
+  // ========================================
+  if ((lowerMessage.includes('rejeitada') || lowerMessage.includes('rejeitadas') || 
+       lowerMessage.includes('rejected')) && 
+      (lowerMessage.includes('nota') || lowerMessage.includes('invoice') || lowerMessage.includes('mês') || lowerMessage.includes('mes'))) {
+    
+    const currentMonth = new Date().getMonth();
+    const currentYear = new Date().getFullYear();
+    
+    const rejectedInvoices = await prisma.invoice.findMany({
+      where: {
+        companyId: { in: companyIds },
+        status: 'rejeitada',
+        dataEmissao: {
+          gte: new Date(currentYear, currentMonth, 1),
+          lt: new Date(currentYear, currentMonth + 1, 1)
+        }
+      },
+      orderBy: { dataEmissao: 'desc' },
+      take: 10
+    });
+
+    if (rejectedInvoices.length === 0) {
+      const responseData = {
+        success: true,
+        action: { type: 'consultar_notas_rejeitadas', data: { count: 0, invoices: [] } },
+        explanation: '✅ Ótimo! Você não tem nenhuma nota fiscal rejeitada este mês.',
+        requiresConfirmation: false
+      };
+      res.json(responseData);
+      return responseData;
+    }
+
+    let explanation = `⚠️ **Notas fiscais rejeitadas este mês:** ${rejectedInvoices.length}\n\n`;
+    rejectedInvoices.forEach((inv, index) => {
+      explanation += `${index + 1}. **${inv.clienteNome}** - R$ ${parseFloat(inv.valor).toLocaleString('pt-BR', { minimumFractionDigits: 2 })} (${inv.dataEmissao.toLocaleDateString('pt-BR')})\n`;
+    });
+    explanation += '\nAcesse a seção "Notas Fiscais" para ver os detalhes e corrigir os problemas.';
+
+    const responseData = {
+      success: true,
+      action: { 
+        type: 'consultar_notas_rejeitadas', 
+        data: { 
+          count: rejectedInvoices.length, 
+          invoices: rejectedInvoices.map(inv => ({
+            id: inv.id,
+            cliente: inv.clienteNome,
+            valor: parseFloat(inv.valor),
+            data: inv.dataEmissao
+          }))
+        }
+      },
+      explanation: explanation,
+      requiresConfirmation: false
+    };
+    res.json(responseData);
+    return responseData;
+  }
+
+  // ========================================
+  // QUERY: Pending invoices / Notas pendentes
+  // ========================================
+  if ((lowerMessage.includes('pendente') || lowerMessage.includes('pendentes') || 
+       lowerMessage.includes('processando') || lowerMessage.includes('pending')) && 
+      (lowerMessage.includes('nota') || lowerMessage.includes('notas'))) {
+    
+    const pendingInvoices = await prisma.invoice.findMany({
+      where: {
+        companyId: { in: companyIds },
+        status: { in: ['processando', 'rascunho', 'pendente'] }
+      },
+      orderBy: { dataEmissao: 'desc' },
+      take: 10
+    });
+
+    if (pendingInvoices.length === 0) {
+      const responseData = {
+        success: true,
+        action: { type: 'consultar_notas_pendentes', data: { count: 0 } },
+        explanation: '✅ Você não tem notas fiscais pendentes ou processando.',
+        requiresConfirmation: false
+      };
+      res.json(responseData);
+      return responseData;
+    }
+
+    let explanation = `⏳ **Notas fiscais pendentes/processando:** ${pendingInvoices.length}\n\n`;
+    pendingInvoices.forEach((inv, index) => {
+      explanation += `${index + 1}. **${inv.clienteNome}** - R$ ${parseFloat(inv.valor).toLocaleString('pt-BR', { minimumFractionDigits: 2 })} - Status: ${formatStatus(inv.status)}\n`;
+    });
+
+    const responseData = {
+      success: true,
+      action: { type: 'consultar_notas_pendentes', data: { count: pendingInvoices.length } },
+      explanation: explanation,
+      requiresConfirmation: false
+    };
+    res.json(responseData);
+    return responseData;
+  }
+
+  // ========================================
+  // QUERY: Invoice by client name
+  // ========================================
+  const clientSearchPattern = /nota(?:s)?\s+(?:de|do|da|para)\s+(.+)/i;
+  const clientSearchMatch = message.match(clientSearchPattern);
+  if (clientSearchMatch && !lowerMessage.includes('emitir')) {
+    const clientName = clientSearchMatch[1].trim();
+    
+    const clientInvoices = await prisma.invoice.findMany({
+      where: {
+        companyId: { in: companyIds },
+        clienteNome: { contains: clientName, mode: 'insensitive' }
+      },
+      orderBy: { dataEmissao: 'desc' },
+      take: 5
+    });
+
+    if (clientInvoices.length === 0) {
+      const responseData = {
+        success: true,
+        action: { type: 'buscar_notas_cliente', data: { cliente: clientName, count: 0 } },
+        explanation: `Não encontrei notas fiscais para "${clientName}". Verifique o nome do cliente ou acesse a seção "Notas Fiscais" para buscar.`,
+        requiresConfirmation: false
+      };
+      res.json(responseData);
+      return responseData;
+    }
+
+    let explanation = `📄 **Notas fiscais de "${clientName}":** ${clientInvoices.length} encontrada(s)\n\n`;
+    clientInvoices.forEach((inv, index) => {
+      explanation += `${index + 1}. R$ ${parseFloat(inv.valor).toLocaleString('pt-BR', { minimumFractionDigits: 2 })} - ${formatStatus(inv.status)} (${inv.dataEmissao.toLocaleDateString('pt-BR')})\n`;
+    });
+
+    const responseData = {
+      success: true,
+      action: { 
+        type: 'buscar_notas_cliente', 
+        data: { 
+          cliente: clientName, 
+          count: clientInvoices.length,
+          invoices: clientInvoices.map(inv => ({
+            id: inv.id,
+            valor: parseFloat(inv.valor),
+            status: inv.status,
+            data: inv.dataEmissao
+          }))
+        }
+      },
+      explanation: explanation,
+      requiresConfirmation: false
+    };
+    res.json(responseData);
+    return responseData;
+  }
+
+  // ========================================
+  // QUERY: Total invoices count / Quantas notas
+  // ========================================
+  if ((lowerMessage.includes('quantas') || lowerMessage.includes('total')) && 
+      (lowerMessage.includes('nota') || lowerMessage.includes('notas'))) {
+    
+    const currentMonth = new Date().getMonth();
+    const currentYear = new Date().getFullYear();
+
+    const [monthCount, yearCount, totalCount] = await Promise.all([
+      prisma.invoice.count({
+        where: {
+          companyId: { in: companyIds },
+          status: 'autorizada',
+          dataEmissao: {
+            gte: new Date(currentYear, currentMonth, 1),
+            lt: new Date(currentYear, currentMonth + 1, 1)
+          }
+        }
+      }),
+      prisma.invoice.count({
+        where: {
+          companyId: { in: companyIds },
+          status: 'autorizada',
+          dataEmissao: {
+            gte: new Date(currentYear, 0, 1),
+            lt: new Date(currentYear + 1, 0, 1)
+          }
+        }
+      }),
+      prisma.invoice.count({
+        where: {
+          companyId: { in: companyIds },
+          status: 'autorizada'
+        }
+      })
+    ]);
+
+    const responseData = {
+      success: true,
+      action: { type: 'consultar_total_notas', data: { month: monthCount, year: yearCount, total: totalCount } },
+      explanation: `📊 **Total de notas fiscais emitidas:**\n\n` +
+        `• Este mês: ${monthCount} notas\n` +
+        `• Este ano: ${yearCount} notas\n` +
+        `• Total geral: ${totalCount} notas`,
+      requiresConfirmation: false
+    };
+    res.json(responseData);
+    return responseData;
+  }
+
+  // ========================================
+  // QUERY: Check invoice status by number
+  // ========================================
+  const statusPattern = /status\s+(?:da\s+)?nota\s+(?:número\s+)?(\d+)/i;
+  const statusMatch = message.match(statusPattern);
+  if (statusMatch || (lowerMessage.includes('status') && lowerMessage.includes('nota'))) {
+    const invoiceNumber = statusMatch ? statusMatch[1] : null;
+    
+    if (invoiceNumber) {
+      const invoice = await prisma.invoice.findFirst({
+        where: {
+          companyId: { in: companyIds },
+          numero: invoiceNumber
+        }
+      });
+
+      if (invoice) {
+        const responseData = {
+          success: true,
+          action: { 
+            type: 'consultar_status_nota', 
+            data: { 
+              numero: invoice.numero,
+              status: invoice.status,
+              cliente: invoice.clienteNome
+            }
+          },
+          explanation: `📋 **Status da nota ${invoice.numero}:**\n\n` +
+            `• Cliente: ${invoice.clienteNome}\n` +
+            `• Status: ${formatStatus(invoice.status)}\n` +
+            `• Valor: R$ ${parseFloat(invoice.valor).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`,
+          requiresConfirmation: false
+        };
+        res.json(responseData);
+        return responseData;
+      }
+    }
+
+    const responseData = {
+      success: true,
+      action: null,
+      explanation: 'Para consultar o status de uma nota específica, diga o número da nota. Por exemplo: "Status da nota 12345"',
+      requiresConfirmation: false
+    };
+    res.json(responseData);
+    return responseData;
+  }
+
+  // ========================================
+  // PATTERN: Issue invoice (existing)
+  // ========================================
   const invoicePattern = /emitir\s+nota\s+(?:de\s+)?r?\$?\s*(\d+(?:[.,]\d+)?)\s+(?:para|para\s+o?\s*)?(.+)/i;
   const invoiceMatch = message.match(invoicePattern);
 
@@ -255,14 +572,10 @@ async function processWithPatternMatching(message, userId, companyId, res) {
     }
   }
 
-  // Pattern: Check revenue
+  // ========================================
+  // PATTERN: Check revenue
+  // ========================================
   if (lowerMessage.includes('faturamento') || lowerMessage.includes('quanto faturei')) {
-    const companies = await prisma.company.findMany({
-      where: { userId },
-      select: { id: true }
-    });
-    const companyIds = companies.map(c => c.id);
-
     const currentMonth = new Date().getMonth();
     const currentYear = new Date().getFullYear();
 
@@ -290,7 +603,9 @@ async function processWithPatternMatching(message, userId, companyId, res) {
     return responseData;
   }
 
-  // Pattern: List invoices
+  // ========================================
+  // PATTERN: List invoices
+  // ========================================
   if (lowerMessage.includes('listar') && (lowerMessage.includes('nota') || lowerMessage.includes('notas'))) {
     const responseData = {
       success: true,
@@ -302,7 +617,9 @@ async function processWithPatternMatching(message, userId, companyId, res) {
     return responseData;
   }
 
-  // Pattern: Check taxes
+  // ========================================
+  // PATTERN: Check taxes
+  // ========================================
   if (lowerMessage.includes('imposto') || lowerMessage.includes('das') || lowerMessage.includes('tributo')) {
     const responseData = {
       success: true,
@@ -314,15 +631,95 @@ async function processWithPatternMatching(message, userId, companyId, res) {
     return responseData;
   }
 
-  // Default response
+  // ========================================
+  // PATTERN: Cancel invoice
+  // ========================================
+  if (lowerMessage.includes('cancelar') && lowerMessage.includes('nota')) {
+    // Extract invoice number if mentioned
+    const numeroMatch = message.match(/(?:nota|nfse|fiscal)\s*(?:n[úu]mero|#|n[º°])?\s*(\d+)/i);
+    const numero = numeroMatch ? numeroMatch[1] : null;
+    
+    if (numero) {
+      // If invoice number is provided, try to execute cancellation
+      // But still require reason from user
+      const responseData = {
+        success: true,
+        action: {
+          type: 'cancelar_nfse',
+          data: {
+            numero: numero,
+            reason: null // Will be requested
+          }
+        },
+        explanation: `Para cancelar a nota fiscal #${numero}, preciso que você informe o motivo do cancelamento (mínimo 15 caracteres). Por favor, descreva o motivo.`,
+        requiresConfirmation: true
+      };
+      res.json(responseData);
+      return responseData;
+    } else {
+      // No invoice number - guide user to UI
+    const responseData = {
+      success: true,
+      action: null,
+        explanation: 'Para cancelar uma nota fiscal, você pode:\n\n1. Acessar a seção "Notas Fiscais", encontrar a nota desejada e clicar no botão "Cancelar"\n\n2. Ou me informar o número da nota e o motivo do cancelamento\n\n⚠️ Lembre-se: algumas prefeituras têm prazo limite para cancelamento (geralmente 24-48 horas após a emissão).',
+      requiresConfirmation: false
+    };
+    res.json(responseData);
+    return responseData;
+    }
+  }
+
+  // ========================================
+  // PATTERN: Help
+  // ========================================
+  if (lowerMessage.includes('ajuda') || lowerMessage.includes('help') || lowerMessage === 'oi' || lowerMessage === 'olá') {
+    const responseData = {
+      success: true,
+      action: null,
+      explanation: `Olá! Sou sua assistente fiscal MAY. Posso ajudá-lo com:\n\n` +
+        `📄 **Emitir notas:**\n• "Emitir nota de R$ 1.500 para João Silva"\n\n` +
+        `🔍 **Consultar notas:**\n• "Mostre minha última nota"\n• "Notas rejeitadas este mês"\n• "Notas de [nome do cliente]"\n• "Status da nota 12345"\n\n` +
+        `📊 **Faturamento:**\n• "Qual meu faturamento este mês?"\n• "Quantas notas emiti?"\n\n` +
+        `💰 **Impostos:**\n• "Quais meus impostos pendentes?"\n\n` +
+        `Como posso ajudar?`,
+      requiresConfirmation: false
+    };
+    res.json(responseData);
+    return responseData;
+  }
+
+  // ========================================
+  // DEFAULT: Suggest options
+  // ========================================
   const responseData = {
     success: true,
     action: null,
-    explanation: `Olá! Sou seu assistente fiscal. Posso ajudá-lo com:\n\n• **Emitir notas fiscais** - Diga "Emitir nota de R$ [valor] para [cliente]"\n• **Consultar faturamento** - Pergunte "Qual meu faturamento este mês?"\n• **Ver impostos** - Pergunte "Quais meus impostos pendentes?"\n• **Listar notas** - Diga "Listar minhas notas fiscais"\n\nComo posso ajudar?`,
+    explanation: `Não entendi completamente. Posso ajudá-lo com:\n\n` +
+      `• **Emitir nota** - "Emitir nota de R$ [valor] para [cliente]"\n` +
+      `• **Última nota** - "Mostre minha última nota"\n` +
+      `• **Notas rejeitadas** - "Notas rejeitadas este mês"\n` +
+      `• **Faturamento** - "Qual meu faturamento?"\n` +
+      `• **Impostos** - "Impostos pendentes"\n\n` +
+      `Diga "ajuda" para ver todas as opções.`,
     requiresConfirmation: false
   };
   res.json(responseData);
   return responseData;
+}
+
+/**
+ * Format invoice status for display
+ */
+function formatStatus(status) {
+  const statusMap = {
+    'autorizada': '✅ Autorizada',
+    'rejeitada': '❌ Rejeitada',
+    'cancelada': '🚫 Cancelada',
+    'processando': '⏳ Processando',
+    'rascunho': '📝 Rascunho',
+    'pendente': '⏳ Pendente'
+  };
+  return statusMap[status] || status;
 }
 
 /**
@@ -383,7 +780,7 @@ const handleMulterError = (req, res, next) => {
  * POST /api/assistant/transcribe
  * Transcribe audio to text using OpenAI Whisper API
  */
-router.post('/transcribe', authenticate, requireActiveSubscription, handleMulterError, asyncHandler(async (req, res) => {
+router.post('/transcribe', authenticate, asyncHandler(requireActiveSubscription), handleMulterError, asyncHandler(async (req, res) => {
   const openaiApiKey = process.env.OPENAI_API_KEY;
   
   if (!openaiApiKey) {
@@ -702,6 +1099,155 @@ router.delete('/history', asyncHandler(async (req, res) => {
 }));
 
 /**
+ * POST /api/assistant/translate-error
+ * Translate technical errors to user-friendly Portuguese messages
+ * Used by AI to explain errors in a conversational way
+ */
+router.post('/translate-error', [
+  body('error').notEmpty().withMessage('Error message or object is required')
+], asyncHandler(async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({ status: 'error', message: 'Validation failed', errors: errors.array() });
+  }
+
+  const { error, context = {} } = req.body;
+  
+  const { translateError, translateErrorForAI } = await import('../services/errorTranslationService.js');
+  
+  const translation = translateError(error, context);
+  const aiExplanation = translateErrorForAI(error, context);
+  
+  sendSuccess(res, 'Erro traduzido com sucesso', {
+    message: translation.message,
+    explanation: translation.explanation,
+    action: translation.action,
+    category: translation.category,
+    ai_explanation: aiExplanation
+  });
+}));
+
+/**
+ * POST /api/assistant/validate-issuance
+ * Pre-validate all conditions before invoice issuance
+ * AI should call this before confirming invoice emission
+ */
+router.post('/validate-issuance', [
+  body('company_id').notEmpty().withMessage('Company ID is required'),
+  body('invoice_data').isObject().withMessage('Invoice data is required')
+], asyncHandler(async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({ status: 'error', message: 'Validation failed', errors: errors.array() });
+  }
+
+  const { company_id, invoice_data } = req.body;
+  const validationErrors = [];
+  const warnings = [];
+
+  const company = await prisma.company.findFirst({
+    where: { id: company_id, userId: req.user.id },
+    include: { fiscalCredential: true }
+  });
+
+  if (!company) {
+    return res.status(404).json({
+      status: 'error',
+      valid: false,
+      errors: [{ code: 'COMPANY_NOT_FOUND', message: 'Empresa não encontrada' }]
+    });
+  }
+
+  const { checkInvoiceLimit } = await import('../services/planService.js');
+  const limitCheck = await checkInvoiceLimit(req.user.id);
+  if (!limitCheck.allowed) {
+    validationErrors.push({
+      code: 'INVOICE_LIMIT_REACHED',
+      message: `Limite de ${limitCheck.max} notas atingido. ${limitCheck.used}/${limitCheck.max} usadas.`
+    });
+  }
+
+  if (!isNuvemFiscalConfigured()) {
+    validationErrors.push({
+      code: 'NUVEM_FISCAL_NOT_CONFIGURED',
+      message: 'Integração fiscal não configurada no servidor.'
+    });
+  }
+
+  if (!company.nuvemFiscalId) {
+    validationErrors.push({
+      code: 'COMPANY_NOT_REGISTERED',
+      message: 'Empresa não registrada na Nuvem Fiscal.'
+    });
+  }
+
+  if (!company.fiscalCredential) {
+    validationErrors.push({
+      code: 'NO_CREDENTIAL',
+      message: 'Certificado digital ou credenciais municipais não configurados.'
+    });
+  } else if (company.fiscalCredential.type === 'certificate' && company.fiscalCredential.expiresAt) {
+    if (new Date(company.fiscalCredential.expiresAt) < new Date()) {
+      validationErrors.push({
+        code: 'CERTIFICATE_EXPIRED',
+        message: 'Certificado digital expirado.'
+      });
+    }
+  }
+
+  const { validateMunicipalitySupport } = await import('../services/municipalityService.js');
+  try {
+    await validateMunicipalitySupport(company);
+  } catch (e) {
+    validationErrors.push({
+      code: 'MUNICIPALITY_NOT_SUPPORTED',
+      message: e.message || 'Município não suportado.'
+    });
+  }
+
+  if (company.fiscalConnectionStatus === 'failed') {
+    validationErrors.push({
+      code: 'CONNECTION_FAILED',
+      message: company.fiscalConnectionError || 'Conexão fiscal com falha.'
+    });
+  }
+
+  if (!invoice_data.cliente_nome) {
+    validationErrors.push({ code: 'MISSING_CLIENT_NAME', message: 'Nome do cliente é obrigatório.' });
+  }
+  if (!invoice_data.valor || parseFloat(invoice_data.valor) <= 0) {
+    validationErrors.push({ code: 'INVALID_VALUE', message: 'Valor deve ser maior que zero.' });
+  }
+
+  if (company.regimeTributario === 'MEI') {
+    const meiCheck = await checkMEILimit(company.id);
+    if (!meiCheck.withinLimit) {
+      validationErrors.push({
+        code: 'MEI_LIMIT_EXCEEDED',
+        message: `Limite anual MEI excedido. Faturamento: R$ ${meiCheck.currentRevenue?.toFixed(2)} / R$ ${meiCheck.limit?.toFixed(2)}`
+      });
+    }
+  }
+
+  const isValid = validationErrors.length === 0;
+  
+  sendSuccess(res, isValid ? 'Validação aprovada' : 'Validação falhou', {
+    valid: isValid,
+    errors: validationErrors,
+    warnings,
+    company: {
+      id: company.id,
+      razaoSocial: company.razaoSocial,
+      regime: company.regimeTributario,
+      nuvemFiscalId: company.nuvemFiscalId,
+      hasCredential: !!company.fiscalCredential,
+      connectionStatus: company.fiscalConnectionStatus
+    },
+    limits: limitCheck
+  });
+}));
+
+/**
  * POST /api/assistant/execute-action
  * Execute an AI action (e.g., emit invoice)
  * This endpoint is called when user confirms an AI action
@@ -710,15 +1256,25 @@ router.post('/execute-action', [
   body('action_type').notEmpty().withMessage('Action type is required'),
   body('action_data').isObject().withMessage('Action data is required'),
   body('company_id').notEmpty().withMessage('Company ID is required')
-], asyncHandler(async (req, res) => {
-  // Apply invoice emission limiter only for emitir_nfse action
+], (req, res, next) => {
   if (req.body.action_type === 'emitir_nfse') {
-    return invoiceEmissionLimiter(req, res, async () => {
+    return invoiceEmissionLimiter(req, res, next);
+  }
+  next();
+}, asyncHandler(async (req, res, next) => {
+  try {
       await executeActionHandler(req, res);
+  } catch (error) {
+    const { translateErrorForUser } = await import('../services/errorTranslationService.js');
+    const translatedMessage = translateErrorForUser(error, {});
+    
+    return res.status(error.statusCode || 500).json({
+      status: 'error',
+      message: translatedMessage,
+      code: error.code || 'ACTION_ERROR',
+      data: error.data || null
     });
   }
-  
-  await executeActionHandler(req, res);
 }));
 
 async function executeActionHandler(req, res) {
@@ -733,19 +1289,25 @@ async function executeActionHandler(req, res) {
 
   const { action_type, action_data, company_id } = req.body;
 
-  // Verify company ownership
   const company = await prisma.company.findFirst({
     where: {
       id: company_id,
       userId: req.user.id
+    },
+    include: {
+      fiscalCredential: true
     }
   });
 
   if (!company) {
-    throw new AppError('Company not found', 404, 'NOT_FOUND');
+    return res.status(404).json({
+      status: 'error',
+      message: 'Empresa não encontrada',
+      code: 'NOT_FOUND'
+    });
   }
 
-  // Handle different action types
+  try {
   switch (action_type) {
     case 'emitir_nfse':
       return await executeEmitNfse(action_data, company, req.user.id, res);
@@ -756,8 +1318,42 @@ async function executeActionHandler(req, res) {
     case 'verificar_conexao':
       return await executeCheckConnection(company, res);
 
+      case 'cancelar_nfse':
+        return await executeCancelNfse(action_data, company, req.user.id, res);
+
+      case 'listar_notas':
+        return await executeListInvoices(action_data, company, res);
+
+      case 'consultar_faturamento':
+        return await executeGetRevenue(action_data, company, res);
+
+      case 'ultima_nota':
+        return await executeGetLastInvoice(action_data, company, res);
+
+      case 'notas_rejeitadas':
+        return await executeGetRejectedInvoices(action_data, company, res);
+
     default:
-      throw new AppError(`Action type '${action_type}' is not supported`, 400, 'UNSUPPORTED_ACTION');
+        return res.status(400).json({
+          status: 'error',
+          message: `Tipo de ação '${action_type}' não suportado`,
+          code: 'UNSUPPORTED_ACTION'
+        });
+    }
+  } catch (error) {
+    console.error(`[ExecuteAction] Error in ${action_type}:`, error.message);
+    
+    const { translateErrorForUser } = await import('../services/errorTranslationService.js');
+    const translatedMessage = translateErrorForUser(error, {
+      municipality: company.cidade,
+      companyName: company.razaoSocial
+    });
+    
+    return res.status(error.statusCode || 500).json({
+      status: 'error',
+      message: translatedMessage,
+      code: error.code || 'INVOICE_EMISSION_ERROR'
+    });
   }
 }
 
@@ -765,6 +1361,83 @@ async function executeActionHandler(req, res) {
  * Execute emitir_nfse action - Emit invoice via real Nuvem Fiscal API
  */
 async function executeEmitNfse(actionData, company, userId, res) {
+  // Comprehensive plan limits validation
+  const { validatePlanLimitsForIssuance } = await import('../services/planService.js');
+  const limitsValidation = await validatePlanLimitsForIssuance(userId, company.id);
+  
+  // Log validation result for debugging
+  console.log('[Invoice] Plan limits validation:', {
+    valid: limitsValidation.valid,
+    planId: limitsValidation.planId,
+    planName: limitsValidation.planName,
+    invoiceLimit: limitsValidation.invoiceLimit,
+    errors: limitsValidation.errors,
+    warnings: limitsValidation.warnings
+  });
+  
+  if (!limitsValidation.valid) {
+    // Build comprehensive error message with suggestions
+    let errorMessage = '';
+    const errorDetails = [];
+    
+    limitsValidation.errors.forEach((error, index) => {
+      if (index > 0) errorMessage += '\n\n';
+      
+      errorMessage += `❌ ${error.message}`;
+      
+      if (error.details) {
+        errorDetails.push({
+          code: error.code,
+          current: error.details.current,
+          max: error.details.max,
+          remaining: error.details.remaining
+        });
+        
+        // Add detailed information about current usage
+        errorMessage += `\n\n📊 Uso atual: ${error.details.current}/${error.details.max} notas emitidas este mês.`;
+        if (error.details.remaining !== undefined) {
+          errorMessage += `\n📈 Restantes: ${error.details.remaining} nota${error.details.remaining !== 1 ? 's' : ''}.`;
+        }
+      }
+      
+      // Add suggestions
+      if (error.suggestions && error.suggestions.length > 0) {
+        errorMessage += '\n\n💡 Opções disponíveis:';
+        error.suggestions.forEach((suggestion, sugIndex) => {
+          errorMessage += `\n${sugIndex + 1}. ${suggestion.message}`;
+        });
+      }
+    });
+    
+    // Add warnings if any
+    if (limitsValidation.warnings && limitsValidation.warnings.length > 0) {
+      errorMessage += '\n\n⚠️ Avisos:';
+      limitsValidation.warnings.forEach(warning => {
+        errorMessage += `\n• ${warning.message}`;
+      });
+    }
+    
+    console.log('[Invoice] Blocking invoice issuance due to plan limits:', {
+      errorCode: limitsValidation.errors[0].code,
+      errorMessage: errorMessage.substring(0, 200) + '...'
+    });
+    
+    throw new AppError(
+      errorMessage,
+      403,
+      limitsValidation.errors[0].code,
+      {
+        validation: limitsValidation,
+        errorDetails
+      }
+    );
+  }
+  
+  // Show warnings if any (non-blocking)
+  if (limitsValidation.warnings && limitsValidation.warnings.length > 0) {
+    console.warn('[Invoice] Plan limit warnings:', limitsValidation.warnings);
+  }
+
   // Check if Nuvem Fiscal is configured
   if (!isNuvemFiscalConfigured()) {
     throw new AppError(
@@ -788,6 +1461,59 @@ async function executeEmitNfse(actionData, company, userId, res) {
       'Empresa não registrada na Nuvem Fiscal. Por favor, registre a empresa primeiro usando o botão "Verificar conexão com prefeitura".',
       400,
       'COMPANY_NOT_REGISTERED'
+    );
+  }
+
+  // Validate municipality support before issuance (non-blocking)
+  const { validateMunicipalitySupport } = await import('../services/municipalityService.js');
+  try {
+    await validateMunicipalitySupport(company);
+  } catch (municipalityError) {
+    if (!company.codigoMunicipio || company.codigoMunicipio.replace(/\D/g, '').length !== 7) {
+    throw new AppError(
+        'Código do município (IBGE) não configurado ou inválido. Acesse "Minha Empresa" e preencha o CEP para obter o código automaticamente.',
+      400,
+        'MUNICIPALITY_NOT_CONFIGURED',
+      { codigo_municipio: company.codigoMunicipio }
+    );
+    }
+    console.warn(`[Invoice] Municipality validation warning: ${municipalityError.message}. Proceeding anyway.`);
+  }
+
+  // Validate fiscal connection before issuance (non-blocking for testing)
+  const { validateFiscalConnection } = await import('../services/fiscalConnectionService.js');
+  let fiscalConnectionValid = true;
+  try {
+    await validateFiscalConnection(company);
+  } catch (connectionError) {
+    fiscalConnectionValid = false;
+    console.warn(`[Invoice] Fiscal connection warning: ${connectionError.message}. Proceeding to let Nuvem Fiscal validate.`);
+    
+    if (connectionError.code === 'FISCAL_NOT_CONNECTED' && !company.fiscalCredential) {
+    throw new AppError(
+        'Certificado digital não configurado.\n\nPara emitir notas fiscais, você precisa:\n1. Ir em "Minha Empresa"\n2. Na aba "Integração Fiscal", fazer upload do certificado digital (.pfx)\n3. Informar a senha do certificado\n\nSe você não possui um certificado digital, adquira um e-CNPJ A1 ou A3.',
+      400,
+        'CERTIFICATE_REQUIRED',
+        { step: 'upload_certificate' }
+    );
+    }
+  }
+
+  // Validate certificate not expired
+  const { validateCertificateNotExpired } = await import('../services/certificateLifecycleService.js');
+  try {
+    await validateCertificateNotExpired(company.id);
+  } catch (certError) {
+    const { translateErrorForUser } = await import('../services/errorTranslationService.js');
+    const translatedError = translateErrorForUser(certError, {
+      municipality: company.cidade
+    });
+    
+    throw new AppError(
+      translatedError,
+      400,
+      'CERTIFICATE_EXPIRED',
+      { companyId: company.id }
     );
   }
 
@@ -830,14 +1556,14 @@ async function executeEmitNfse(actionData, company, userId, res) {
       data: {
         companyId: company.id,
         clienteNome: invoiceData.cliente_nome,
-        clienteDocumento: invoiceData.cliente_documento,
+        clienteDocumento: invoiceData.cliente_documento || '',
         descricaoServico: invoiceData.descricao_servico,
         valor: invoiceData.valor,
         aliquotaIss: invoiceData.aliquota_iss,
         valorIss: valorIss,
         municipio: invoiceData.municipio,
-        status: nfseResult.nfse.status || 'autorizada',
-        numero: nfseResult.nfse.numero,
+        status: nfseResult.nfse.status || 'processando',
+        numero: nfseResult.nfse.numero ? String(nfseResult.nfse.numero) : null,
         codigoVerificacao: nfseResult.nfse.codigo_verificacao,
         dataEmissao: new Date(),
         dataPrestacao: new Date(invoiceData.data_prestacao),
@@ -847,6 +1573,25 @@ async function executeEmitNfse(actionData, company, userId, res) {
         nuvemFiscalId: nfseResult.nfse.nuvem_fiscal_id
       }
     });
+
+    // Create initial status history entry
+    await prisma.invoiceStatusHistory.create({
+      data: {
+        invoiceId: invoice.id,
+        status: invoice.status,
+        message: 'Nota fiscal criada e enviada para processamento',
+        source: 'api',
+        metadata: {
+          nuvem_fiscal_id: nfseResult.nfse.nuvem_fiscal_id,
+          initial_status: invoice.status
+        }
+      }
+    });
+
+    // If status is 'processando', it will be polled automatically by background service
+    if (invoice.status === 'processando' || invoice.status === 'pendente') {
+      console.log(`[Invoice] Invoice ${invoice.id} is processing, will be polled automatically`);
+    }
 
     // Create success notification
     await prisma.notification.create({
@@ -873,21 +1618,38 @@ async function executeEmitNfse(actionData, company, userId, res) {
     }, 201);
   } catch (error) {
     console.error('[AI Action] Error emitting invoice:', error);
+    console.error('[AI Action] Error status:', error.status);
+    console.error('[AI Action] Error code:', error.code);
 
-    // Create error notification
+    // Translate error to user-friendly Portuguese
+    const { translateErrorForUser } = await import('../services/errorTranslationService.js');
+    const translatedError = translateErrorForUser(error, {
+      municipality: company.cidade,
+      companyName: company.razaoSocial || company.nomeFantasia,
+      includeTechnicalDetails: false
+    });
+
+    // Create error notification with translated message
     await prisma.notification.create({
       data: {
         userId: userId,
         titulo: 'Erro ao Emitir Nota Fiscal',
-        mensagem: `Falha ao emitir nota fiscal via IA: ${error.message}`,
+        mensagem: translatedError,
         tipo: 'erro'
       }
     });
 
+    // Preserve the error code from Nuvem Fiscal API (especially for 403 permission errors)
+    // This ensures we show the correct error type (municipality permission vs plan limit)
+    const errorCode = error.code || (error.status === 403 ? 'MUNICIPALITY_PERMISSION_DENIED' : (error.status === 401 ? 'MUNICIPALITY_AUTH_ERROR' : 'INVOICE_EMISSION_ERROR'));
+    const statusCode = error.status || 500;
+
+    // Throw translated error with correct code
     throw new AppError(
-      error.message || 'Falha ao emitir nota fiscal na Nuvem Fiscal',
-      500,
-      'INVOICE_EMISSION_ERROR'
+      translatedError,
+      statusCode,
+      errorCode,
+      { originalError: error.message } // Keep original for debugging
     );
   }
 }
@@ -967,7 +1729,6 @@ async function executeCheckConnection(company, res) {
     const { checkConnection } = await import('../services/nuvemFiscal.js');
     const connectionResult = await checkConnection(company.nuvemFiscalId);
 
-    // Update fiscal integration status
     await prisma.fiscalIntegrationStatus.upsert({
       where: { companyId: company.id },
       update: {
@@ -1000,6 +1761,298 @@ async function executeCheckConnection(company, res) {
 }
 
 /**
+ * Execute cancelar_nfse action - Cancel invoice
+ */
+async function executeCancelNfse(actionData, company, userId, res) {
+  const { invoice_id, numero, reason } = actionData;
+
+  if (!invoice_id && !numero) {
+    throw new AppError('ID ou número da nota fiscal é obrigatório', 400, 'VALIDATION_ERROR');
+  }
+  if (!reason || reason.trim().length < 15) {
+    throw new AppError('Motivo do cancelamento é obrigatório (mínimo 15 caracteres)', 400, 'VALIDATION_ERROR');
+  }
+
+  const invoice = await prisma.invoice.findFirst({
+    where: {
+      companyId: company.id,
+      ...(invoice_id ? { id: invoice_id } : { numero: numero })
+    }
+  });
+
+  if (!invoice) {
+    throw new AppError('Nota fiscal não encontrada', 404, 'NOT_FOUND');
+  }
+
+  const { validateCancellation, logCancellationAttempt } = await import('../services/cancellationService.js');
+  const validation = await validateCancellation(invoice, company, reason);
+
+  if (!validation.canCancel) {
+    await logCancellationAttempt(invoice, userId, false, validation.errors.map(e => e.message).join('; '));
+    
+    const { translateErrorForAI } = await import('../services/errorTranslationService.js');
+    const errorExplanation = translateErrorForAI(
+      { message: validation.summary, code: validation.errors[0]?.code },
+      { municipality: company.cidade }
+    );
+    
+    throw new AppError(errorExplanation, 400, validation.errors[0]?.code || 'CANCELLATION_NOT_ALLOWED', {
+      errors: validation.errors,
+      rules: validation.rules
+    });
+  }
+
+  try {
+    const { cancelNfse } = await import('../services/nuvemFiscal.js');
+    const cancelResult = await cancelNfse(company.nuvemFiscalId, invoice.nuvemFiscalId, reason);
+
+    await prisma.invoice.update({
+      where: { id: invoice.id },
+      data: {
+        status: 'cancelada',
+        updatedAt: new Date()
+      }
+    });
+
+    await logCancellationAttempt(invoice, userId, true, reason);
+
+    await prisma.notification.create({
+      data: {
+        userId: userId,
+        titulo: 'Nota Fiscal Cancelada',
+        mensagem: `Nota fiscal ${invoice.numero} cancelada com sucesso. Motivo: ${reason}`,
+        tipo: 'info',
+        invoiceId: invoice.id
+      }
+    });
+
+    return sendSuccess(res, 'Nota fiscal cancelada com sucesso', {
+      invoice_id: invoice.id,
+      numero: invoice.numero,
+      status: 'cancelada',
+      cancellation_reason: reason,
+      cancelled_at: new Date().toISOString()
+    });
+  } catch (error) {
+    await logCancellationAttempt(invoice, userId, false, error.message);
+    
+    const { translateErrorForUser } = await import('../services/errorTranslationService.js');
+    const translatedError = translateErrorForUser(error, { municipality: company.cidade });
+    
+    throw new AppError(translatedError, error.status || 500, 'CANCELLATION_ERROR');
+  }
+}
+
+/**
+ * Execute listar_notas action - List invoices with filters
+ */
+async function executeListInvoices(actionData, company, res) {
+  const { status, periodo, cliente, limit = 10 } = actionData;
+  
+  const where = { companyId: company.id };
+  
+  if (status) {
+    where.status = status;
+  }
+  
+  if (cliente) {
+    where.clienteNome = { contains: cliente, mode: 'insensitive' };
+  }
+  
+  if (periodo) {
+    const now = new Date();
+    if (periodo === 'hoje') {
+      where.dataEmissao = { gte: new Date(now.setHours(0, 0, 0, 0)) };
+    } else if (periodo === 'semana') {
+      const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+      where.dataEmissao = { gte: weekAgo };
+    } else if (periodo === 'mes' || periodo === 'mes_atual') {
+      where.dataEmissao = { gte: new Date(now.getFullYear(), now.getMonth(), 1) };
+    }
+  }
+  
+  const invoices = await prisma.invoice.findMany({
+    where,
+    orderBy: { dataEmissao: 'desc' },
+    take: Math.min(parseInt(limit), 50),
+    select: {
+      id: true,
+      numero: true,
+      clienteNome: true,
+      valor: true,
+      status: true,
+      dataEmissao: true,
+      pdfUrl: true
+    }
+  });
+  
+  return sendSuccess(res, `Encontradas ${invoices.length} notas fiscais`, {
+    invoices: invoices.map(inv => ({
+      id: inv.id,
+      numero: inv.numero,
+      cliente: inv.clienteNome,
+      valor: parseFloat(inv.valor),
+      status: inv.status,
+      data_emissao: inv.dataEmissao,
+      pdf_url: inv.pdfUrl
+    })),
+    total: invoices.length
+  });
+}
+
+/**
+ * Execute consultar_faturamento action - Get revenue summary
+ */
+async function executeGetRevenue(actionData, company, res) {
+  const { periodo = 'mes_atual' } = actionData;
+  const now = new Date();
+  let startDate;
+  
+  if (periodo === 'hoje') {
+    startDate = new Date(now.setHours(0, 0, 0, 0));
+  } else if (periodo === 'semana') {
+    startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+  } else if (periodo === 'mes' || periodo === 'mes_atual') {
+    startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+  } else if (periodo === 'ano') {
+    startDate = new Date(now.getFullYear(), 0, 1);
+  } else {
+    startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+  }
+  
+  const invoices = await prisma.invoice.findMany({
+    where: {
+      companyId: company.id,
+      status: 'autorizada',
+      dataEmissao: { gte: startDate }
+    },
+    select: { valor: true }
+  });
+  
+  const totalRevenue = invoices.reduce((sum, inv) => sum + parseFloat(inv.valor), 0);
+  const invoiceCount = invoices.length;
+  
+  let meiInfo = null;
+  if (company.regimeTributario === 'MEI') {
+    const meiCheck = await checkMEILimit(company.id);
+    meiInfo = {
+      limite_anual: meiCheck.limit,
+      faturamento_atual: meiCheck.currentRevenue,
+      percentual_usado: meiCheck.percentUsed,
+      dentro_limite: meiCheck.withinLimit
+    };
+  }
+  
+  return sendSuccess(res, 'Faturamento consultado com sucesso', {
+    periodo,
+    data_inicio: startDate.toISOString(),
+    faturamento_total: totalRevenue,
+    quantidade_notas: invoiceCount,
+    media_por_nota: invoiceCount > 0 ? totalRevenue / invoiceCount : 0,
+    mei: meiInfo
+  });
+}
+
+/**
+ * Execute ultima_nota action - Get the last invoice
+ */
+async function executeGetLastInvoice(actionData, company, res) {
+  const lastInvoice = await prisma.invoice.findFirst({
+    where: { companyId: company.id },
+    orderBy: { dataEmissao: 'desc' },
+    select: {
+      id: true,
+      numero: true,
+      clienteNome: true,
+      valor: true,
+      status: true,
+      dataEmissao: true,
+      pdfUrl: true,
+      xmlUrl: true,
+      codigoVerificacao: true
+    }
+  });
+
+  if (!lastInvoice) {
+    return sendSuccess(res, 'Nenhuma nota fiscal encontrada', {
+      invoice: null,
+      message: 'Você ainda não emitiu nenhuma nota fiscal.'
+    });
+  }
+
+  return sendSuccess(res, 'Última nota fiscal encontrada', {
+    invoice: {
+      id: lastInvoice.id,
+      numero: lastInvoice.numero,
+      cliente: lastInvoice.clienteNome,
+      valor: parseFloat(lastInvoice.valor),
+      status: lastInvoice.status,
+      data_emissao: lastInvoice.dataEmissao,
+      codigo_verificacao: lastInvoice.codigoVerificacao,
+      pdf_url: lastInvoice.pdfUrl,
+      xml_url: lastInvoice.xmlUrl
+    }
+  });
+}
+
+/**
+ * Execute notas_rejeitadas action - Get rejected invoices
+ */
+async function executeGetRejectedInvoices(actionData, company, res) {
+  const { periodo } = actionData;
+  const now = new Date();
+  let startDate = null;
+  
+  if (periodo === 'hoje') {
+    startDate = new Date(now.setHours(0, 0, 0, 0));
+  } else if (periodo === 'semana') {
+    startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+  } else if (periodo === 'mes' || periodo === 'mes_atual') {
+    startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+  } else if (periodo === 'ano') {
+    startDate = new Date(now.getFullYear(), 0, 1);
+  }
+  
+  const where = {
+    companyId: company.id,
+    status: 'rejeitada'
+  };
+  
+  if (startDate) {
+    where.dataEmissao = { gte: startDate };
+  }
+  
+  const rejectedInvoices = await prisma.invoice.findMany({
+    where,
+    orderBy: { dataEmissao: 'desc' },
+    take: 50,
+    select: {
+      id: true,
+      numero: true,
+      clienteNome: true,
+      valor: true,
+      status: true,
+      dataEmissao: true,
+      descricaoServico: true
+    }
+  });
+
+  return sendSuccess(res, `Encontradas ${rejectedInvoices.length} notas rejeitadas${periodo ? ` no período: ${periodo}` : ''}`, {
+    invoices: rejectedInvoices.map(inv => ({
+      id: inv.id,
+      numero: inv.numero,
+      cliente: inv.clienteNome,
+      valor: parseFloat(inv.valor),
+      status: inv.status,
+      data_emissao: inv.dataEmissao,
+      descricao: inv.descricaoServico
+    })),
+    total: rejectedInvoices.length,
+    periodo: periodo || 'todos'
+  });
+}
+
+/**
  * Get the system prompt for OpenAI
  * @param {object} company - Company data (optional, for regime-specific prompts)
  */
@@ -1027,76 +2080,197 @@ function getSystemPrompt(company = null) {
     }
   }
   
-  return `Você é um assistente fiscal especializado em ajudar empresas brasileiras a emitir notas fiscais de serviços (NFS-e).
+  return `Você é MAY, uma assistente fiscal IA especializada em ajudar empresas brasileiras (MEI e Simples Nacional) a emitir e gerenciar notas fiscais de serviços (NFS-e).
 
-Sua função é:
-1. Entender comandos em português brasileiro
-2. Retornar ações estruturadas em JSON
-3. Explicar processos em linguagem natural
+PAPEL:
+Interpretar comandos do usuário, validar regras fiscais e de negócio, orquestrar ações no backend, e explicar resultados em português claro.
+NUNCA faça chamadas diretas a APIs externas - apenas orquestre endpoints do backend.
 
-Ações disponíveis:
-- emitir_nfse: Emitir uma nota fiscal de serviço (SEMPRE requer confirmação)
-- consultar_status: Consultar status de uma nota fiscal
-- listar_notas: Listar notas fiscais emitidas
-- verificar_conexao: Verificar conexão com a prefeitura
-- explicar: Apenas explicar algo sem executar ação
+CAPACIDADES:
+1. Emitir notas fiscais (com validação prévia completa)
+2. Cancelar notas fiscais (respeitando regras do município)
+3. Consultar notas (última, rejeitadas, pendentes, por cliente, por status, por período)
+4. Verificar faturamento e limites MEI
+5. Explicar questões fiscais em linguagem simples
+6. Traduzir erros técnicos para o usuário
+7. Responder perguntas sobre histórico de notas fiscais
 
-IMPORTANTE:
-- Você NUNCA deve chamar APIs fiscais diretamente
-- Você apenas retorna JSON estruturado com a ação
-- O backend executará a ação real através da API Nuvem Fiscal
-- Sempre retorne JSON válido
-- Use português brasileiro para todas as explicações
-- Para emitir_nfse, SEMPRE defina requiresConfirmation: true${regimeContext}
+AÇÕES DISPONÍVEIS:
+- emitir_nfse: Emitir nota fiscal (SEMPRE requer confirmação)
+- cancelar_nfse: Cancelar nota fiscal (requer motivo com 15+ caracteres)
+- listar_notas: Listar notas com filtros (status, período, cliente, empresa)
+- consultar_status: Verificar status de uma nota específica
+- consultar_faturamento: Verificar faturamento do período
+- verificar_conexao: Verificar conexão com prefeitura
+- ultima_nota: Buscar a última nota fiscal emitida
+- notas_rejeitadas: Listar notas rejeitadas (com filtro de período opcional)
 
-Formato de resposta (sempre JSON válido):
+CONSULTAS DE HISTÓRICO:
+Quando o usuário perguntar sobre histórico de notas, use as ações apropriadas:
+
+1. "Mostre minha última nota" / "Show my last invoice" → Use ação: ultima_nota
+2. "Quais notas foram rejeitadas este mês?" / "Which invoices were rejected this month?" → Use ação: notas_rejeitadas com período: "mes_atual"
+3. "Notas do cliente X" → Use ação: listar_notas com cliente: "X"
+4. "Notas de janeiro" → Use ação: listar_notas com período apropriado
+5. "Notas processando" → Use ação: listar_notas com status: "processando"
+
+PERÍODOS SUPORTADOS:
+- "hoje" → Notas de hoje
+- "semana" → Últimos 7 dias
+- "mes" ou "mes_atual" → Mês atual
+- "ano" → Ano atual
+- Datas específicas: Use formato YYYY-MM-DD
+
+VALIDAÇÕES OBRIGATÓRIAS ANTES DE EMITIR:
+Antes de emitir qualquer nota, você DEVE confirmar:
+1. Status do plano (ativo, trial, inadimplente, cancelado)
+2. Limite de notas do plano (verificar se atingiu o limite mensal)
+3. Limite de empresas (se aplicável)
+4. Saldo Pay per Use (se no plano pay-per-use, verificar pagamentos pendentes)
+5. Empresa registrada na Nuvem Fiscal
+6. Conexão fiscal estabelecida
+7. Município suportado
+8. Certificado digital ou credenciais configurados
+9. Certificado não expirado
+
+Se QUALQUER validação falhar, BLOQUEIE a emissão e explique o motivo.
+
+QUANDO LIMITES SÃO ATINGIDOS:
+Se o usuário atingir limites do plano:
+1. Explique claramente qual limite foi atingido (notas, empresas, etc.)
+2. Informe o plano atual e os limites
+3. Sugira opções de upgrade com detalhes dos planos disponíveis
+4. Se aplicável, sugira Pay per Use como alternativa
+5. Seja educado e ofereça ajuda para escolher a melhor opção
+
+NUNCA exponha erros técnicos - sempre traduza para linguagem simples.
+
+EXTRAÇÃO DE DADOS (IMPORTANTE):
+Ao processar comandos de emissão, extraia TODOS os dados possíveis:
+
+1. VALOR: Extraia números de qualquer formato:
+   - "R$ 1.500,00" → 1500.00
+   - "1500 reais" → 1500.00
+   - "mil e quinhentos" → 1500.00
+   - "2k" → 2000.00
+
+2. CLIENTE: Extraia nome e documento se mencionado:
+   - "João Silva" → cliente_nome
+   - "CNPJ 12.345.678/0001-00" → cliente_documento
+   - "CPF 123.456.789-00" → cliente_documento
+
+3. SERVIÇO: Infira o tipo de serviço e código apropriado:
+   - "consultoria" → codigo_servico: "1701", descricao: "Consultoria..."
+   - "desenvolvimento de sistema" → codigo_servico: "0101"
+   - "design" → codigo_servico: "1706"
+   - "treinamento/curso" → codigo_servico: "0802"
+   - Se não especificado: codigo_servico: "1701" (consultoria genérica)
+
+4. DATA: Extraia datas mencionadas:
+   - "ontem" → data_prestacao: (data de ontem no formato YYYY-MM-DD)
+   - "dia 15" → data_prestacao do dia 15 do mês atual
+
+CÓDIGOS DE SERVIÇO COMUNS (LC 116):
+- 0101: Desenvolvimento de sistemas/software
+- 0108: Criação de sites/websites
+- 0802: Treinamento/curso/capacitação
+- 1401: Medicina/consulta médica
+- 1701: Consultoria/assessoria geral
+- 1706: Marketing/design
+
+${regimeContext}
+
+FORMATO DE RESPOSTA (JSON VÁLIDO):
 {
   "action": {
-    "type": "tipo_da_acao" | null,
+    "type": "tipo_da_acao",
     "data": {
-      // Dados específicos da ação
-      // Para emitir_nfse (OBRIGATÓRIO):
-      "cliente_nome": "string (obrigatório)",
-      "cliente_documento": "string (CPF ou CNPJ, opcional mas recomendado)",
-      "descricao_servico": "string (obrigatório)",
-      "valor": number (obrigatório, em reais, ex: 1500.00),
-      "aliquota_iss": number (percentual, padrão 5),
-      "municipio": "string (opcional, será usado o da empresa se não informado)",
-      "codigo_servico": "string (opcional, padrão '1401')",
-      "data_prestacao": "string (opcional, formato YYYY-MM-DD)"
+      "cliente_nome": "Nome Completo",
+      "cliente_documento": "CPF ou CNPJ (limpo, só números)",
+      "descricao_servico": "Descrição detalhada do serviço",
+      "valor": 1500.00,
+      "aliquota_iss": 5,
+      "codigo_servico": "1701",
+      "data_prestacao": "2025-01-21"
     }
   },
-  "explanation": "Explicação em português brasileiro",
-  "requiresConfirmation": true/false
+  "explanation": "Explicação clara em português",
+  "requiresConfirmation": true
 }
 
-Para emitir_nfse, SEMPRE inclua:
-- requiresConfirmation: true
-- Todos os campos obrigatórios no data
-- Explicação clara do que será emitido
+REGRAS:
+- Sempre retorne JSON válido
+- Para emitir_nfse: SEMPRE requiresConfirmation: true
+- Use português brasileiro
+- Seja conciso mas completo nas explicações
+- Se faltarem dados essenciais (valor ou cliente), pergunte
 
-Exemplo de resposta para "Emitir nota de R$ 1500 para João Silva":
+EXEMPLOS:
+
+Entrada: "Emitir nota de 2 mil para Empresa ABC por consultoria de TI"
 {
   "action": {
     "type": "emitir_nfse",
     "data": {
-      "cliente_nome": "João Silva",
+      "cliente_nome": "Empresa ABC",
       "cliente_documento": "",
-      "descricao_servico": "Serviço prestado",
-      "valor": 1500.00,
+      "descricao_servico": "Consultoria de TI",
+      "valor": 2000.00,
       "aliquota_iss": 5,
-      "municipio": "",
-      "codigo_servico": "1401"
+      "codigo_servico": "0106"
     }
   },
-  "explanation": "Entendi! Vou preparar uma nota fiscal de R$ 1.500,00 para João Silva. Por favor, confirme os dados antes de emitir.",
+  "explanation": "Vou preparar uma nota de R$ 2.000,00 para Empresa ABC referente a Consultoria de TI. Confirme os dados.",
   "requiresConfirmation": true
 }
 
-Se não entender o comando ou não houver ação clara, retorne:
+Entrada: "Qual minha última nota?"
+{
+  "action": {"type": "consultar_ultima_nota"},
+  "explanation": "Vou buscar sua última nota fiscal emitida.",
+  "requiresConfirmation": false
+}
+
+Entrada: "Notas rejeitadas este mês"
+{
+  "action": {"type": "listar_notas", "data": {"status": "rejeitada", "periodo": "mes_atual"}},
+  "explanation": "Vou verificar as notas fiscais rejeitadas neste mês.",
+  "requiresConfirmation": false
+}
+
+Entrada: "Cancelar nota 12345"
+{
+  "action": {"type": "cancelar_nfse", "data": {"numero": "12345"}},
+  "explanation": "Para cancelar esta nota, preciso que você informe o motivo do cancelamento (mínimo 15 caracteres).",
+  "requiresConfirmation": true
+}
+
+Entrada: "Qual meu faturamento?"
+{
+  "action": {"type": "consultar_faturamento", "data": {"periodo": "mes_atual"}},
+  "explanation": "Vou verificar seu faturamento do mês atual.",
+  "requiresConfirmation": false
+}
+
+TRADUÇÃO DE ERROS:
+Quando ocorrer um erro, NUNCA mostre mensagens técnicas. Sempre explique:
+1. O que aconteceu (de forma simples)
+2. Por que aconteceu (se possível identificar)
+3. O que o usuário deve fazer
+
+Exemplo de erro técnico: "401 Unauthorized - Invalid credentials"
+Resposta traduzida: "Não foi possível conectar com a prefeitura. As credenciais de acesso não foram aceitas. Verifique se o certificado digital está válido e configurado corretamente."
+
+REGRAS DE CANCELAMENTO:
+- Só notas AUTORIZADAS podem ser canceladas
+- Prazo varia por município (24-120 horas)
+- Motivo obrigatório com mínimo 15 caracteres
+- Se fora do prazo, explique e sugira alternativas
+
+Se não entender, retorne:
 {
   "action": null,
-  "explanation": "Explicação do que você pode fazer",
+  "explanation": "Desculpe, não entendi. Posso ajudar com:\\n• Emitir notas fiscais\\n• Consultar última nota\\n• Ver notas rejeitadas\\n• Verificar faturamento\\n\\nO que você precisa?",
   "requiresConfirmation": false
 }`;
 }
