@@ -13,6 +13,7 @@
 import { pollAllPendingInvoices, startBackgroundPolling } from '../services/invoiceStatusMonitoring.js';
 import { checkAllCertificates, startCertificateMonitoring } from '../services/certificateLifecycleService.js';
 import { processRetryQueue, startRetryQueueProcessor } from '../services/municipalityRetryService.js';
+import { isDatabaseConnectionError } from '../utils/databaseConnection.js';
 
 /**
  * Start all background tasks
@@ -20,23 +21,48 @@ import { processRetryQueue, startRetryQueueProcessor } from '../services/municip
 export async function startAllBackgroundTasks() {
   console.log('[BackgroundTasks] Starting all background tasks...');
 
+  const errors = [];
+
   try {
-    // Start invoice status polling (runs every 5 minutes)
     await startBackgroundPolling();
     console.log('[BackgroundTasks] Invoice status polling started');
+  } catch (error) {
+    if (isDatabaseConnectionError(error)) {
+      console.warn('[BackgroundTasks] Database unavailable, invoice polling will retry when database is available');
+    } else {
+      console.error('[BackgroundTasks] Error starting invoice polling:', error.message);
+      errors.push(error);
+    }
+  }
 
-    // Start certificate monitoring (runs daily at 9 AM)
+  try {
     await startCertificateMonitoring();
     console.log('[BackgroundTasks] Certificate monitoring started');
+  } catch (error) {
+    if (isDatabaseConnectionError(error)) {
+      console.warn('[BackgroundTasks] Database unavailable, certificate monitoring will retry when database is available');
+    } else {
+      console.error('[BackgroundTasks] Error starting certificate monitoring:', error.message);
+      errors.push(error);
+    }
+  }
 
-    // Start municipality retry queue processor (runs every 10 minutes)
+  try {
     await startRetryQueueProcessor();
     console.log('[BackgroundTasks] Municipality retry queue started');
-
-    console.log('[BackgroundTasks] All background tasks started successfully');
   } catch (error) {
-    console.error('[BackgroundTasks] Error starting background tasks:', error);
-    throw error;
+    if (isDatabaseConnectionError(error)) {
+      console.warn('[BackgroundTasks] Database unavailable, retry queue will retry when database is available');
+    } else {
+      console.error('[BackgroundTasks] Error starting retry queue:', error.message);
+      errors.push(error);
+    }
+  }
+
+  if (errors.length > 0) {
+    console.warn('[BackgroundTasks] Some background tasks failed to start, but server will continue running');
+  } else {
+    console.log('[BackgroundTasks] All background tasks started successfully');
   }
 }
 

@@ -11,6 +11,7 @@
 import { prisma } from '../index.js';
 import { emitNfse, checkConnection } from './nuvemFiscal.js';
 import { translateErrorForUser } from './errorTranslationService.js';
+import { isDatabaseConnectionError } from '../utils/databaseConnection.js';
 
 // Retry configuration
 const RETRY_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
@@ -80,8 +81,9 @@ export async function queueInvoiceForRetry(invoiceData, company, userId, reason)
 export async function processRetryQueue() {
   console.log('[RetryQueue] Processing retry queue...');
 
-  // Get all pending items ready for retry
-  const pendingItems = await prisma.invoiceRetryQueue.findMany({
+  let pendingItems;
+  try {
+    pendingItems = await prisma.invoiceRetryQueue.findMany({
     where: {
       status: 'pending',
       nextRetryAt: {
@@ -94,8 +96,20 @@ export async function processRetryQueue() {
     include: {
       company: true
     },
-    take: 20 // Process 20 at a time
-  });
+    take: 20
+    });
+  } catch (error) {
+    if (isDatabaseConnectionError(error)) {
+      console.warn('[RetryQueue] Database unavailable, skipping retry queue processing');
+      return {
+        total: 0,
+        success: 0,
+        failed: 0,
+        retrying: 0
+      };
+    }
+    throw error;
+  }
 
   console.log(`[RetryQueue] Found ${pendingItems.length} items to process`);
 
@@ -307,21 +321,21 @@ export async function getQueueStatus(userId) {
 export async function startRetryQueueProcessor() {
   console.log('[RetryQueue] Starting retry queue processor...');
 
-  // Process immediately
-  try {
-    await processRetryQueue();
-  } catch (error) {
-    console.error('[RetryQueue] Initial processing error:', error);
-  }
-
-  // Set up interval for continuous processing
-  setInterval(async () => {
+  const processWithErrorHandling = async () => {
     try {
       await processRetryQueue();
     } catch (error) {
-      console.error('[RetryQueue] Processing error:', error);
+      if (isDatabaseConnectionError(error)) {
+        console.warn('[RetryQueue] Database unavailable, will retry on next cycle');
+      } else {
+        console.error('[RetryQueue] Processing error:', error);
+      }
     }
-  }, RETRY_INTERVAL_MS);
+  };
+
+  await processWithErrorHandling();
+
+  setInterval(processWithErrorHandling, RETRY_INTERVAL_MS);
 }
 
 /**

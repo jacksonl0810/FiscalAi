@@ -48,12 +48,19 @@ export default function Login() {
 
   const handleGoogleLogin = () => {
     setGoogleLoading(true);
-    // Use backend URL directly - Google OAuth requires full page redirect
-    // In dev: frontend on 5173, backend on 3000
-    // In prod: same origin
-    const backendUrl = window.location.port === '5173' 
-      ? 'http://localhost:3000'
-      : window.location.origin;
+    const apiBaseUrl = import.meta.env.VITE_API_URL;
+    let backendUrl;
+    
+    if (apiBaseUrl && !apiBaseUrl.startsWith('/')) {
+      backendUrl = apiBaseUrl.replace('/api', '');
+    } else {
+      const host = window.location.hostname;
+      const isLocalhost = host === 'localhost' || host === '127.0.0.1';
+      const backendPort = import.meta.env.VITE_BACKEND_PORT || '3001';
+      backendUrl = isLocalhost 
+        ? `http://localhost:${backendPort}`
+        : `http://${host}:${backendPort}`;
+    }
     
     console.log('[Google Login] Redirecting to:', `${backendUrl}/api/auth/google`);
     window.location.href = `${backendUrl}/api/auth/google`;
