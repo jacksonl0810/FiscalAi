@@ -4,6 +4,7 @@ import dotenv from 'dotenv';
 import cookieParser from 'cookie-parser';
 import { PrismaClient } from '@prisma/client';
 import multer from 'multer';
+import path from 'path';
 
 // Import routes
 import authRoutes from './routes/auth.js';
@@ -79,6 +80,11 @@ app.use(cookieParser());
 // Apply general rate limiting to all API routes
 import { apiLimiter } from './middleware/rateLimiter.js';
 app.use('/api', apiLimiter);
+
+app.use(express.static(path.join(__dirname, '../frontend/dist')));
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, '../frontend/dist', 'index.html'));
+});
 
 // Multer configuration for file uploads (memory storage for audio)
 const upload = multer({
