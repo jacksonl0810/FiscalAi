@@ -104,7 +104,26 @@ export async function handleError(
   onDisplay?: (message: string) => void
 ): Promise<TranslatedError> {
   // Log original error for debugging (never shown to user)
+  try {
+    if (error instanceof Error) {
+      console.error('[Error Handler] Original error:', {
+        name: error.name,
+        message: error.message,
+        stack: error.stack,
+        ...(error as any).status && { status: (error as any).status },
+        ...(error as any).statusCode && { statusCode: (error as any).statusCode },
+        ...(error as any).code && { code: (error as any).code },
+        ...(error as any).data && { data: (error as any).data }
+      });
+    } else if (typeof error === 'object' && error !== null) {
+      console.error('[Error Handler] Original error:', JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
+    } else {
   console.error('[Error Handler] Original error:', error);
+    }
+  } catch (logError) {
+    console.error('[Error Handler] Failed to log error:', logError);
+    console.error('[Error Handler] Original error (raw):', error);
+  }
 
   // Translate error
   const translation = await translateError(error, context);

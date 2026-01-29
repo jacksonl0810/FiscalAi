@@ -3,7 +3,7 @@
  * Tracks certificate expiration and sends notifications
  */
 
-import { prisma } from '../index.js';
+import { prisma } from '../lib/prisma.js';
 import { getCredentialStatus } from './fiscalCredentialService.js';
 import { isDatabaseConnectionError } from '../utils/databaseConnection.js';
 

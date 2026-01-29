@@ -44,28 +44,18 @@ export default function PaymentSuccess() {
   const PlanIcon = plan.icon;
 
   useEffect(() => {
+    // ✅ Prevent multiple executions
     if (hasProcessed.current) return;
+    if (paymentStatus !== 'confirming') return; // Don't run if already processed
 
     const verifyPayment = async () => {
       // Mark as processing immediately to prevent re-triggers
       hasProcessed.current = true;
 
       try {
-        // Case 1: Check if subscription is already active (handles page refresh)
-        if (user?.subscription_status === 'ativo' || user?.subscription_status === 'trial') {
-          setPaymentStatus('confirmed');
-          return;
-        }
-
-        // Case 2: URL has explicit status parameter from checkout
-        if (paymentStatusParam === 'pending') {
-          // Real Pagar.me payment is pending - redirect to pending page
-          navigate('/subscription-pending', { replace: true });
-          return;
-        }
-
+        // Case 1: URL has explicit status parameter 'paid' - webhook confirmed payment
         if (paymentStatusParam === 'paid') {
-          // Payment confirmed by Pagar.me
+          // Payment confirmed by Pagar.me webhook
           setPaymentStatus('confirmed');
           if (refreshUser) {
             await refreshUser();
@@ -73,9 +63,28 @@ export default function PaymentSuccess() {
           return;
         }
 
+        // Case 2: URL has explicit status parameter 'pending' - redirect to pending page
+        if (paymentStatusParam === 'pending') {
+          // Real Pagar.me payment is pending - redirect to pending page
+          navigate('/subscription-pending', { replace: true });
+          return;
+        }
+
         // Case 3: Trial plan - activate immediately (no payment needed)
         if (planId === 'trial') {
           try {
+            // ✅ Check if user already has trial before making request
+            if (user?.subscription_status === 'trial' && user?.plan === 'trial') {
+              // Already has trial, skip API call
+              setPaymentStatus('confirmed');
+              if (refreshUser) {
+                setTimeout(() => {
+                  refreshUser().catch(console.error);
+                }, 500);
+              }
+              return;
+            }
+
             if (sessionId) {
               await subscriptionsService.confirmCheckout(planId, sessionId);
             }
@@ -88,6 +97,25 @@ export default function PaymentSuccess() {
             }
           } catch (error) {
             console.error('Error confirming trial:', error);
+            
+            // ✅ Handle rate limit errors gracefully
+            if (error?.status === 429 || error?.code === 'RATE_LIMIT_EXCEEDED' || error?.code === 'SUBSCRIPTION_RATE_LIMIT_EXCEEDED') {
+              // If rate limited but user already has trial, show success
+              if (user?.subscription_status === 'trial') {
+                setPaymentStatus('confirmed');
+                if (refreshUser) {
+                  setTimeout(() => {
+                    refreshUser().catch(console.error);
+                  }, 500);
+                }
+                return;
+              }
+              // Otherwise show error message
+              setErrorMessage('Muitas requisições. Aguarde alguns minutos e tente novamente.');
+              setPaymentStatus('error');
+              return;
+            }
+            
             // Even if confirmCheckout fails, show success if user already has trial
             if (user?.subscription_status === 'trial') {
               setPaymentStatus('confirmed');
@@ -98,20 +126,51 @@ export default function PaymentSuccess() {
           return;
         }
 
-        // Case 4: Simulated payment (development/test) - confirm immediately
-        if (sessionId?.startsWith('sim_') || sessionId?.startsWith('pending_') || sessionId?.startsWith('trial_')) {
-          await subscriptionsService.confirmCheckout(planId, sessionId);
+        // Case 4: Check if subscription is ALREADY active with matching plan (page refresh scenario)
+        // Only show confirmed if user has ACTIVE paid subscription, not trial
+        if (user?.subscription_status === 'ativo' && user?.plan === planId) {
           setPaymentStatus('confirmed');
-          if (refreshUser) {
-            setTimeout(() => {
-              refreshUser().catch(console.error);
-            }, 500);
+          return;
+        }
+
+        // Case 5: Simulated payment (development/test) - confirm immediately
+        if (sessionId?.startsWith('sim_') || sessionId?.startsWith('trial_')) {
+          try {
+            await subscriptionsService.confirmCheckout(planId, sessionId);
+            setPaymentStatus('confirmed');
+            if (refreshUser) {
+              setTimeout(() => {
+                refreshUser().catch(console.error);
+              }, 500);
+            }
+          } catch (error) {
+            console.error('Error confirming simulated payment:', error);
+            
+            // ✅ Handle rate limit errors gracefully for all plan types
+            if (error?.status === 429 || error?.code === 'RATE_LIMIT_EXCEEDED' || error?.code === 'SUBSCRIPTION_RATE_LIMIT_EXCEEDED') {
+              // If rate limited but user already has the plan, show success
+              if (user?.subscription_status === 'ativo' && user?.plan === planId) {
+                setPaymentStatus('confirmed');
+                if (refreshUser) {
+                  setTimeout(() => {
+                    refreshUser().catch(console.error);
+                  }, 500);
+                }
+                return;
+              }
+              // Otherwise show error message
+              setErrorMessage('Muitas requisições. Aguarde alguns minutos e tente novamente.');
+              setPaymentStatus('error');
+              return;
+            }
+            throw error;
           }
           return;
         }
 
-        // Case 5: Default - show pending for real Pagar.me payments
-        // Real payments need webhook confirmation
+        // Case 6: Default - redirect to pending page for real Pagar.me payments
+        // Real payments need webhook confirmation before showing success
+        console.log('[PaymentSuccess] No confirmation found, redirecting to pending page');
         navigate('/subscription-pending', { replace: true });
 
       } catch (error) {
@@ -119,14 +178,16 @@ export default function PaymentSuccess() {
         hasProcessed.current = false;
         const { handleApiError } = await import('@/utils/errorHandler');
         await handleApiError(error, { operation: 'confirm_payment' });
-        // On error, still show something rather than infinite loading
-        setPaymentStatus('confirmed');
+        // On error, redirect to pending page instead of showing false success
+        navigate('/subscription-pending', { replace: true });
       }
     };
 
     const timer = setTimeout(() => verifyPayment(), 300);
-    return () => clearTimeout(timer);
-  }, [planId, sessionId, paymentStatusParam, navigate]);
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [planId, sessionId, paymentStatusParam, navigate, user, refreshUser, paymentStatus]);
 
   // Loading state
   if (paymentStatus === 'confirming') {

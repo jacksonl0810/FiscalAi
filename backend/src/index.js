@@ -2,7 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import cookieParser from 'cookie-parser';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from './lib/prisma.js';
 import multer from 'multer';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -31,10 +31,10 @@ dotenv.config();
 // Get directory paths (ES modules don't have __dirname)
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const frontendBuildDir = path.join(__dirname, '..', 'dist');
+const frontendBuildDir = path.join(__dirname, '..', 'frontend');
 
-// Initialize Prisma client
-export const prisma = new PrismaClient();
+// Re-export prisma for backward compatibility with files that import from index.js
+export { prisma };
 
 // Create Express app
 const app = express();

@@ -3,7 +3,7 @@ import { body, validationResult } from 'express-validator';
 import multer from 'multer';
 import axios from 'axios';
 import FormDataLib from 'form-data';
-import { prisma } from '../index.js';
+import { prisma } from '../lib/prisma.js';
 import { authenticate } from '../middleware/auth.js';
 import { asyncHandler, AppError } from '../middleware/errorHandler.js';
 import { requireActiveSubscription } from '../middleware/subscriptionAccess.js';

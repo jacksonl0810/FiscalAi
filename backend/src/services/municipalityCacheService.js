@@ -9,7 +9,7 @@
  * - Graceful degradation when API unavailable
  */
 
-import { prisma } from '../index.js';
+import { prisma } from '../lib/prisma.js';
 import { apiRequest, isNuvemFiscalConfigured } from './nuvemFiscal.js';
 
 // In-memory cache configuration

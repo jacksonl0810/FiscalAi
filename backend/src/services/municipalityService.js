@@ -7,7 +7,7 @@
  */
 
 import { apiRequest, getBaseUrl, isNuvemFiscalConfigured } from './nuvemFiscal.js';
-import { prisma } from '../index.js';
+import { prisma } from '../lib/prisma.js';
 
 // Cache for supported municipalities (refresh every 24 hours)
 let municipalityCache = {

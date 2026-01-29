@@ -6,7 +6,7 @@
  * Falls back to static messages when AI is not available
  */
 
-import { prisma } from '../index.js';
+import { prisma } from '../lib/prisma.js';
 import { translateError } from './errorTranslationService.js';
 import { fetchWithTimeout, getTimeout } from '../utils/timeout.js';
 

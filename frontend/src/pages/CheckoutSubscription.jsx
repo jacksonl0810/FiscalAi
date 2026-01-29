@@ -199,27 +199,21 @@ export default function CheckoutSubscription() {
       const finalToken = cardToken ?? await tokenizeCard();
 
       // ✅ Step 2: Send only token to backend (no card data)
-      // Backend will: create customer -> attach token (creates card) -> create subscription
+      // Backend will: create customer -> attach token (creates card) -> create order
       const response = await subscriptionsService.processPayment({
         plan_id: planId,
-        billing_cycle: 'monthly', // TODO: Add UI selector for monthly/annual
-        card_token: finalToken, // ✅ Must be token_xxxxx format
-        cpf_cnpj: cleanCpfCnpj // ✅ Required for Pagar.me customer creation
+        billing_cycle: 'monthly',
+        card_token: finalToken,
+        cpf_cnpj: cleanCpfCnpj
       });
 
-      // ✅ Step 3: Navigate based on payment status
-      // Pagar.me returns 'active'/'paid' for immediate success, 'pending' otherwise
-      const paymentStatus = response?.data?.status || response?.status;
-      
-      if (paymentStatus === 'active' || paymentStatus === 'paid') {
-        // Payment confirmed immediately by Pagar.me
-        toast.success('Pagamento confirmado com sucesso!');
-        navigate(`/payment-success?plan=${planId}&status=paid`);
-      } else {
-        // Payment pending - needs webhook confirmation
-        toast.info('Pagamento enviado! Aguardando confirmação...');
-        navigate(`/payment-success?plan=${planId}&status=pending`);
-      }
+      // ✅ Step 3: Payment is always pending until webhook confirms
+      // Status will be updated to 'ativo' when Pagar.me webhook confirms payment
+      toast.success('Pagamento enviado! Aguardando confirmação...', {
+        duration: 5000,
+        description: 'Você será notificado quando o pagamento for aprovado.'
+      });
+      navigate(`/subscription-pending?plan=${planId}&order_id=${response?.pagar_me_order_id || ''}`)
 
     } catch (error) {
       await handleApiError(error, { operation: 'process_payment', planId });

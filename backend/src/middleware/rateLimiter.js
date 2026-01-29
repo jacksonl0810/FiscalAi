@@ -158,3 +158,28 @@ export const fiscalConnectionLimiter = rateLimit({
   },
   validate: false // Disable all validations
 });
+
+/**
+ * Rate limiter for subscription endpoints (checkout, confirm, etc.)
+ * More lenient than general API limiter - 20 requests per 5 minutes per user
+ * This allows for legitimate subscription operations without being too restrictive
+ */
+export const subscriptionLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000, // 5 minutes
+  max: 20, // Limit to 20 subscription requests per 5 minutes
+  message: {
+    status: 'error',
+    message: 'Muitas requisições de assinatura. Por favor, aguarde alguns minutos antes de tentar novamente.',
+    code: 'SUBSCRIPTION_RATE_LIMIT_EXCEEDED'
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => {
+    // Rate limit per user instead of IP for authenticated requests
+    return req.user?.id || req.ip || 'anonymous';
+  },
+  skip: (req) => {
+    return process.env.NODE_ENV === 'test' || process.env.NODE_ENV === 'development';
+  },
+  validate: false // Disable all validations
+});

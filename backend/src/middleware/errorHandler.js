@@ -3,13 +3,27 @@
  * Returns standardized error format: {status: 'error', message: string, code?: string}
  */
 export const errorHandler = (err, req, res, next) => {
-  // Log error
-  console.error('[Error]', {
+  // Extract error details safely
+  const errorMessage = err?.message || (typeof err === 'string' ? err : 'Internal server error');
+  const errorCode = err?.code || 'INTERNAL_ERROR';
+  const statusCode = err?.statusCode || err?.status || 500;
+  
+  // Log error with full details
+  console.error('[Error Handler]', {
     method: req.method,
     path: req.path,
-    error: err.message,
-    stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
+    statusCode,
+    errorCode,
+    message: errorMessage,
+    errorName: err?.name,
+    stack: process.env.NODE_ENV === 'development' ? err?.stack : undefined,
+    errorData: err?.data ? JSON.stringify(err.data) : undefined
   });
+
+  // Log full error object in development for debugging
+  if (process.env.NODE_ENV === 'development') {
+    console.error('[Error Handler] Full error object:', err);
+  }
 
   // Prisma errors
   if (err.code === 'P2002') {
@@ -49,20 +63,17 @@ export const errorHandler = (err, req, res, next) => {
   if (err.name === 'ValidationError') {
     return res.status(400).json({
       status: 'error',
-      message: err.message,
+      message: errorMessage,
       code: 'VALIDATION_ERROR',
       errors: err.errors
     });
   }
 
   // Default error
-  const statusCode = err.statusCode || 500;
-  const message = err.message || 'Internal server error';
-
   const errorResponse = {
     status: 'error',
-    message,
-    code: err.code || 'INTERNAL_ERROR'
+    message: errorMessage,
+    code: errorCode
   };
 
   // Include additional error data if available (e.g., upgradeOptions for limit errors)

@@ -1,13 +1,67 @@
-import React from "react";
-import { useNavigate } from "react-router-dom";
+import React, { useEffect, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { motion } from "framer-motion";
-import { ArrowRight, Clock, Bell, Sparkles, CreditCard, Shield } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { ArrowRight, Clock, Bell, Sparkles, CreditCard, Shield, CheckCircle, XCircle, RefreshCw, Loader2, Home } from "lucide-react";
 import { useAuth } from "@/lib/AuthContext";
+import { subscriptionsService } from "@/api/services/subscriptions";
+import { toast } from "sonner";
 
 export default function SubscriptionPending() {
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, refreshUser } = useAuth();
+  const [searchParams] = useSearchParams();
+  const planId = searchParams.get('plan');
+  const orderId = searchParams.get('order_id');
+  
+  const [isPolling, setIsPolling] = useState(true);
+  const [pollCount, setPollCount] = useState(0);
+  const [currentStatus, setCurrentStatus] = useState('pending');
+  const [paymentConfirmed, setPaymentConfirmed] = useState(false);
+
+  const hasActiveTrial = user?.is_in_trial && user?.trial_days_remaining > 0;
+
+  useEffect(() => {
+    if (!isPolling) return;
+
+    const checkStatus = async () => {
+      try {
+        const status = await subscriptionsService.getStatus();
+        console.log('[SubscriptionPending] Status check:', status);
+        setCurrentStatus(status.status);
+
+        if (status.status === 'ativo') {
+          setIsPolling(false);
+          setPaymentConfirmed(true);
+          toast.success('🎉 Pagamento aprovado! Sua assinatura está ativa.', { duration: 5000 });
+          if (refreshUser) await refreshUser();
+          setTimeout(() => navigate('/dashboard'), 2000);
+        } else if (status.status === 'inadimplente') {
+          setIsPolling(false);
+          toast.error('Pagamento recusado. Por favor, tente novamente.', { duration: 5000 });
+          navigate('/payment-failed');
+        } else if (status.status === 'trial') {
+          setCurrentStatus('trial');
+        }
+        
+        setPollCount(prev => prev + 1);
+      } catch (error) {
+        console.error('[SubscriptionPending] Error checking status:', error);
+      }
+    };
+
+    checkStatus();
+    const interval = setInterval(checkStatus, 5000);
+
+    const timeout = setTimeout(() => {
+      setIsPolling(false);
+      clearInterval(interval);
+    }, 120000);
+
+    return () => {
+      clearInterval(interval);
+      clearTimeout(timeout);
+    };
+  }, [isPolling, navigate, refreshUser]);
 
   return (
     <div className="min-h-screen bg-[#07070a] flex items-center justify-center p-4">
@@ -50,21 +104,43 @@ export default function SubscriptionPending() {
           <div className="relative p-10 text-center">
             {/* Animated Icon Container */}
             <div className="relative w-28 h-28 mx-auto mb-8">
-              {/* Outer rotating ring */}
+              {paymentConfirmed ? (
+                <>
+                  {/* Success state - static green circle */}
+                  <motion.div
+                    initial={{ scale: 0 }}
+                    animate={{ scale: 1 }}
+                    transition={{ type: "spring", stiffness: 200, damping: 15 }}
+                    className="absolute inset-0 rounded-full border-2 border-emerald-500/40"
+                  />
+                  <motion.div
+                    initial={{ scale: 0 }}
+                    animate={{ scale: 1 }}
+                    transition={{ type: "spring", stiffness: 200, damping: 15, delay: 0.1 }}
+                    className="absolute inset-2 rounded-full bg-gradient-to-br from-emerald-500/20 to-green-500/10"
+                  />
+                  <motion.div 
+                    initial={{ scale: 0 }}
+                    animate={{ scale: 1 }}
+                    transition={{ type: "spring", stiffness: 200, damping: 15, delay: 0.2 }}
+                    className="absolute inset-4 rounded-full bg-gradient-to-br from-emerald-500/30 to-green-600/20 flex items-center justify-center border border-emerald-500/30 shadow-2xl shadow-emerald-500/20"
+                  >
+                    <CheckCircle className="w-10 h-10 text-emerald-400" />
+                  </motion.div>
+                </>
+              ) : (
+                <>
+                  {/* Pending state - animated orange circle */}
               <motion.div
                 animate={{ rotate: 360 }}
                 transition={{ duration: 8, repeat: Infinity, ease: "linear" }}
                 className="absolute inset-0 rounded-full border-2 border-dashed border-orange-500/20"
               />
-              
-              {/* Middle pulsing ring */}
               <motion.div
                 animate={{ scale: [1, 1.1, 1], opacity: [0.3, 0.6, 0.3] }}
                 transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
                 className="absolute inset-2 rounded-full bg-gradient-to-br from-orange-500/20 to-amber-500/10"
               />
-              
-              {/* Inner icon container */}
               <div className="absolute inset-4 rounded-full bg-gradient-to-br from-orange-500/30 to-amber-600/20 flex items-center justify-center border border-orange-500/30 shadow-2xl shadow-orange-500/20">
                 <motion.div
                   animate={{ rotate: [0, 10, -10, 0] }}
@@ -73,8 +149,6 @@ export default function SubscriptionPending() {
                   <Clock className="w-10 h-10 text-orange-400" />
                 </motion.div>
               </div>
-              
-              {/* Floating particles */}
               <motion.div
                 animate={{ y: [-5, 5, -5], opacity: [0.5, 1, 0.5] }}
                 transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
@@ -85,6 +159,8 @@ export default function SubscriptionPending() {
                 transition={{ duration: 2.5, repeat: Infinity, ease: "easeInOut", delay: 0.5 }}
                 className="absolute bottom-0 left-1 w-1.5 h-1.5 bg-amber-400 rounded-full blur-[1px]"
               />
+                </>
+              )}
             </div>
 
             {/* Badge */}
@@ -92,14 +168,29 @@ export default function SubscriptionPending() {
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.3 }}
-              className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-orange-500/10 border border-orange-500/20 mb-6"
+              className={`inline-flex items-center gap-2 px-4 py-1.5 rounded-full mb-6 ${
+                paymentConfirmed 
+                  ? 'bg-emerald-500/10 border border-emerald-500/20' 
+                  : 'bg-orange-500/10 border border-orange-500/20'
+              }`}
             >
+              {paymentConfirmed ? (
+                <>
+                  <CheckCircle className="w-4 h-4 text-emerald-400" />
+                  <span className="text-xs font-semibold text-emerald-300 tracking-wide uppercase">Pagamento Confirmado</span>
+                </>
+              ) : (
+                <>
               <motion.div
                 animate={{ scale: [1, 1.2, 1] }}
                 transition={{ duration: 1.5, repeat: Infinity }}
                 className="w-2 h-2 bg-orange-400 rounded-full"
               />
-              <span className="text-xs font-semibold text-orange-300 tracking-wide uppercase">Aguardando confirmação</span>
+                  <span className="text-xs font-semibold text-orange-300 tracking-wide uppercase">
+                    {currentStatus === 'pending' ? 'Aguardando Confirmação' : 'Status: ' + currentStatus}
+                  </span>
+                </>
+              )}
             </motion.div>
 
             {/* Title */}
@@ -109,7 +200,7 @@ export default function SubscriptionPending() {
               transition={{ delay: 0.2 }}
               className="text-3xl font-bold text-white mb-3"
             >
-              Processando Pagamento
+              {paymentConfirmed ? '✓ Assinatura Ativada!' : 'Processando Pagamento'}
             </motion.h1>
 
             {/* Subtitle */}
@@ -119,8 +210,10 @@ export default function SubscriptionPending() {
               transition={{ delay: 0.3 }}
               className="text-slate-400 mb-8 leading-relaxed max-w-sm mx-auto"
             >
-              Seu pagamento está sendo processado com segurança. 
-              Assim que for confirmado, você terá acesso completo à MAY.
+              {paymentConfirmed 
+                ? 'Seu pagamento foi aprovado com sucesso. Você agora tem acesso completo à MAY!'
+                : 'Seu pagamento está sendo processado com segurança. Assim que for confirmado, você terá acesso completo à MAY.'
+              }
             </motion.p>
 
             {/* Progress Steps */}
@@ -132,12 +225,17 @@ export default function SubscriptionPending() {
             >
               <div className="flex items-center gap-2">
                 <div className="w-8 h-8 rounded-full bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center">
-                  <CreditCard className="w-4 h-4 text-emerald-400" />
+                  <CheckCircle className="w-4 h-4 text-emerald-400" />
                 </div>
                 <span className="text-xs text-emerald-400">Dados enviados</span>
               </div>
-              <div className="w-8 h-px bg-gradient-to-r from-emerald-500/50 to-orange-500/50" />
+              <div className={`w-8 h-px bg-gradient-to-r ${paymentConfirmed ? 'from-emerald-500/50 to-emerald-500/50' : 'from-emerald-500/50 to-orange-500/50'}`} />
               <div className="flex items-center gap-2">
+                {paymentConfirmed ? (
+                  <div className="w-8 h-8 rounded-full bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center">
+                    <CheckCircle className="w-4 h-4 text-emerald-400" />
+                  </div>
+                ) : (
                 <motion.div 
                   animate={{ scale: [1, 1.1, 1] }}
                   transition={{ duration: 1.5, repeat: Infinity }}
@@ -145,14 +243,25 @@ export default function SubscriptionPending() {
                 >
                   <Shield className="w-4 h-4 text-orange-400" />
                 </motion.div>
-                <span className="text-xs text-orange-400">Verificando</span>
+                )}
+                <span className={`text-xs ${paymentConfirmed ? 'text-emerald-400' : 'text-orange-400'}`}>
+                  {paymentConfirmed ? 'Verificado' : 'Verificando'}
+                </span>
               </div>
-              <div className="w-8 h-px bg-gradient-to-r from-orange-500/50 to-slate-600/30" />
+              <div className={`w-8 h-px bg-gradient-to-r ${paymentConfirmed ? 'from-emerald-500/50 to-emerald-500/50' : 'from-orange-500/50 to-slate-600/30'}`} />
               <div className="flex items-center gap-2">
+                {paymentConfirmed ? (
+                  <div className="w-8 h-8 rounded-full bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center">
+                    <CheckCircle className="w-4 h-4 text-emerald-400" />
+                  </div>
+                ) : (
                 <div className="w-8 h-8 rounded-full bg-slate-700/30 border border-slate-600/30 flex items-center justify-center">
                   <Sparkles className="w-4 h-4 text-slate-500" />
                 </div>
-                <span className="text-xs text-slate-500">Ativação</span>
+                )}
+                <span className={`text-xs ${paymentConfirmed ? 'text-emerald-400' : 'text-slate-500'}`}>
+                  {paymentConfirmed ? 'Ativado!' : 'Ativação'}
+                </span>
               </div>
             </motion.div>
 
@@ -185,25 +294,52 @@ export default function SubscriptionPending() {
               transition={{ delay: 0.6 }}
               className="space-y-3"
             >
+              {paymentConfirmed ? (
+                <motion.button
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  onClick={() => navigate('/dashboard')}
+                  className="w-full py-4 px-6 rounded-2xl text-base font-semibold bg-gradient-to-r from-emerald-500 to-green-500 hover:from-emerald-400 hover:to-green-400 text-white shadow-xl shadow-emerald-500/25 transition-all duration-300 flex items-center justify-center gap-2"
+                >
+                  <CheckCircle className="w-5 h-5" />
+                  Pagamento Confirmado! Acessar Dashboard
+                </motion.button>
+              ) : hasActiveTrial ? (
               <motion.button
                 whileHover={{ scale: 1.02 }}
                 whileTap={{ scale: 0.98 }}
-                onClick={() => navigate('/pricing')}
+                  onClick={() => navigate('/dashboard')}
                 className="w-full py-4 px-6 rounded-2xl text-base font-semibold bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 text-white shadow-xl shadow-orange-500/25 transition-all duration-300 flex items-center justify-center gap-2"
               >
-                Ver Planos
-                <ArrowRight className="w-5 h-5" />
+                  <Home className="w-5 h-5" />
+                  Continuar Usando Trial
+                  <span className="text-xs bg-white/20 px-2 py-0.5 rounded-full ml-1">
+                    {user?.trial_days_remaining} dias
+                  </span>
               </motion.button>
+              ) : (
+                <div className="w-full py-4 px-6 rounded-2xl text-base font-medium bg-slate-800/30 text-slate-400 border border-slate-700/30 flex items-center justify-center gap-3 cursor-not-allowed">
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                  Aguardando confirmação do pagamento...
+                </div>
+              )}
 
               <motion.button
                 whileHover={{ scale: 1.02 }}
                 whileTap={{ scale: 0.98 }}
-                onClick={() => navigate('/notifications')}
-                className="w-full py-4 px-6 rounded-2xl text-base font-medium bg-white/[0.03] hover:bg-white/[0.06] text-slate-300 hover:text-white ring-1 ring-white/10 hover:ring-white/20 transition-all duration-300 flex items-center justify-center gap-2"
+                onClick={() => { setIsPolling(true); setPollCount(0); }}
+                disabled={isPolling || paymentConfirmed}
+                className="w-full py-4 px-6 rounded-2xl text-base font-medium bg-white/[0.03] hover:bg-white/[0.06] text-slate-300 hover:text-white ring-1 ring-white/10 hover:ring-white/20 transition-all duration-300 flex items-center justify-center gap-2 disabled:opacity-50"
               >
-                <Bell className="w-4 h-4" />
-                Ver Notificações
+                <RefreshCw className={`w-4 h-4 ${isPolling ? 'animate-spin' : ''}`} />
+                {isPolling ? `Verificando... (${pollCount})` : 'Verificar Status Manualmente'}
               </motion.button>
+
+              {!hasActiveTrial && !paymentConfirmed && (
+                <p className="text-xs text-slate-500 text-center mt-2">
+                  O acesso ao dashboard será liberado automaticamente após confirmação
+                </p>
+              )}
             </motion.div>
 
             {/* Security badge */}

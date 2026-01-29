@@ -16,7 +16,7 @@ import {
   checkCertificateExpiration,
   checkAllCertificates
 } from '../services/certificateLifecycleService.js';
-import { prisma } from '../index.js';
+import { prisma } from '../lib/prisma.js';
 
 const router = express.Router();
 

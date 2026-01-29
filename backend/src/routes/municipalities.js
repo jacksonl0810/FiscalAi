@@ -13,7 +13,7 @@ import {
   checkAndUpdateMunicipalitySupport,
   getMunicipalitySupportStatus
 } from '../services/municipalityService.js';
-import { prisma } from '../index.js';
+import { prisma } from '../lib/prisma.js';
 
 const router = express.Router();
 
