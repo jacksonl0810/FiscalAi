@@ -38,7 +38,10 @@ const plans = [
     ],
     buttonText: 'Começar Grátis',
     popular: false,
-    gradient: 'from-gray-600 to-gray-700'
+    gradient: 'from-gray-600 to-gray-700',
+    monthlyPrice: 0,
+    semiannualPrice: 0,
+    annualPrice: 0
   },
   {
     id: 'pro',
@@ -57,7 +60,10 @@ const plans = [
     ],
     buttonText: 'Assinar Pro',
     popular: true,
-    gradient: 'from-orange-500 to-orange-600'
+    gradient: 'from-orange-500 to-orange-600',
+    monthlyPrice: 97,
+    semiannualPrice: 540,
+    annualPrice: 970
   },
   {
     id: 'business',
@@ -76,7 +82,10 @@ const plans = [
     ],
     buttonText: 'Assinar Business',
     popular: false,
-    gradient: 'from-purple-500 to-purple-600'
+    gradient: 'from-purple-500 to-purple-600',
+    monthlyPrice: 197,
+    semiannualPrice: 1100,
+    annualPrice: 1970
   }
 ];
 
@@ -117,6 +126,7 @@ export default function Pricing() {
   const navigate = useNavigate();
   const { user, isAuthenticated } = useAuth();
   const [loadingPlan, setLoadingPlan] = useState(null);
+  const [selectedBillingCycle, setSelectedBillingCycle] = useState('monthly');
   const [trialEligibility, setTrialEligibility] = useState({
     eligible: true, // Default to eligible (for non-logged-in users)
     hasUsedTrial: false,
@@ -171,13 +181,18 @@ export default function Pricing() {
       // For paid plans: creates PENDING subscription and returns checkout_url
       const result = await subscriptionsService.createCheckout({
         plan_id: plan.id,
+        billing_cycle: plan.id === 'trial' ? undefined : selectedBillingCycle,
         return_url: `${window.location.origin}/payment-success`,
         cancel_url: `${window.location.origin}/pricing`
       });
 
       if (result.checkout_url) {
         // Redirect to checkout URL (Pagar.me or success page for trial)
-        window.location.href = result.checkout_url;
+        const url = new URL(result.checkout_url, window.location.origin);
+        if (plan.id !== 'trial' && selectedBillingCycle) {
+          url.searchParams.set('billing_cycle', selectedBillingCycle);
+        }
+        window.location.href = url.toString();
       } else {
         throw new Error('Checkout URL not received');
       }
@@ -463,6 +478,59 @@ export default function Pricing() {
                             : plan.description}
                         </p>
 
+                        {/* Billing Cycle Selector (only for paid plans) */}
+                        {!trialCompleted && plan.price > 0 && (
+                          <div className="mb-6">
+                            <div className="flex items-center justify-center gap-2 p-1 bg-slate-800/30 rounded-xl border border-slate-700/50">
+                              <button
+                                type="button"
+                                onClick={() => setSelectedBillingCycle('monthly')}
+                                className={`flex-1 px-3 py-2 rounded-lg text-xs font-semibold transition-all ${
+                                  selectedBillingCycle === 'monthly'
+                                    ? plan.popular
+                                      ? 'bg-orange-500/20 text-orange-300 border border-orange-500/40'
+                                      : plan.id === 'business'
+                                        ? 'bg-violet-500/20 text-violet-300 border border-violet-500/40'
+                                        : 'bg-slate-700/50 text-white border border-slate-600/50'
+                                    : 'text-slate-500 hover:text-slate-300'
+                                }`}
+                              >
+                                Mensal
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setSelectedBillingCycle('semiannual')}
+                                className={`flex-1 px-3 py-2 rounded-lg text-xs font-semibold transition-all ${
+                                  selectedBillingCycle === 'semiannual'
+                                    ? plan.popular
+                                      ? 'bg-orange-500/20 text-orange-300 border border-orange-500/40'
+                                      : plan.id === 'business'
+                                        ? 'bg-violet-500/20 text-violet-300 border border-violet-500/40'
+                                        : 'bg-slate-700/50 text-white border border-slate-600/50'
+                                    : 'text-slate-500 hover:text-slate-300'
+                                }`}
+                              >
+                                Semestral
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setSelectedBillingCycle('annual')}
+                                className={`flex-1 px-3 py-2 rounded-lg text-xs font-semibold transition-all ${
+                                  selectedBillingCycle === 'annual'
+                                    ? plan.popular
+                                      ? 'bg-orange-500/20 text-orange-300 border border-orange-500/40'
+                                      : plan.id === 'business'
+                                        ? 'bg-violet-500/20 text-violet-300 border border-violet-500/40'
+                                        : 'bg-slate-700/50 text-white border border-slate-600/50'
+                                    : 'text-slate-500 hover:text-slate-300'
+                                }`}
+                              >
+                                Anual
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
                         {/* Price section */}
                         <div className="text-center mb-8">
                           {trialCompleted ? (
@@ -484,18 +552,33 @@ export default function Pricing() {
                                 <span className={`text-5xl font-bold tracking-tight ${
                                   plan.popular ? 'text-white' : 'text-white'
                                 }`}>
-                                  {plan.price === 0 ? 'Grátis' : plan.price}
+                                  {plan.price === 0 ? 'Grátis' : (
+                                    selectedBillingCycle === 'monthly' ? plan.monthlyPrice :
+                                    selectedBillingCycle === 'semiannual' ? plan.semiannualPrice :
+                                    plan.annualPrice
+                                  )}
                     </span>
                     {plan.price > 0 && (
-                                  <span className="text-slate-500 text-base ml-1">/mês</span>
+                                  <span className="text-slate-500 text-base ml-1">
+                                    {selectedBillingCycle === 'monthly' ? '/mês' :
+                                     selectedBillingCycle === 'semiannual' ? '/semestre' :
+                                     '/ano'}
+                                  </span>
                     )}
                               </div>
                     {plan.price === 0 && (
                                 <span className="text-slate-500 text-sm">por {plan.period}</span>
                               )}
-                              {plan.popular && (
+                              {plan.popular && selectedBillingCycle === 'annual' && (
                                 <p className="text-xs text-orange-400/90 mt-3 font-medium">
                                   💰 Economize 20% no plano anual
+                                </p>
+                              )}
+                              {plan.price > 0 && selectedBillingCycle !== 'monthly' && (
+                                <p className="text-xs text-slate-500 mt-2">
+                                  {selectedBillingCycle === 'semiannual' 
+                                    ? `R$ ${(plan.semiannualPrice / 6).toFixed(2)}/mês equivalente`
+                                    : `R$ ${(plan.annualPrice / 12).toFixed(2)}/mês equivalente`}
                                 </p>
                               )}
                             </>

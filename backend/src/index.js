@@ -159,8 +159,8 @@ process.on('SIGTERM', async () => {
   process.exit(0);
 });
 
-// Start server
-app.listen(PORT, async () => {
+// Start server with error handling
+const server = app.listen(PORT, async () => {
   console.log(`🚀 Server running on http://localhost:${PORT}`);
   console.log(`📚 API available at http://localhost:${PORT}/api`);
   console.log(`🔧 Environment: ${process.env.NODE_ENV || 'development'}`);
@@ -180,6 +180,20 @@ app.listen(PORT, async () => {
     }
   } else {
     console.log(`⚙️  Background tasks disabled (ENABLE_BACKGROUND_TASKS=false)`);
+  }
+});
+
+// Handle server errors (e.g., port already in use)
+server.on('error', (error) => {
+  if (error.code === 'EADDRINUSE') {
+    console.error(`❌ Port ${PORT} is already in use.`);
+    console.error(`💡 To fix this, run one of the following commands:`);
+    console.error(`   - Kill the process: kill -9 $(lsof -ti:${PORT})`);
+    console.error(`   - Or use a different port: PORT=3001 npm start`);
+    process.exit(1);
+  } else {
+    console.error('❌ Server error:', error);
+    process.exit(1);
   }
 });
 

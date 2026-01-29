@@ -25,6 +25,71 @@ function isPagarMeConfigured() {
 }
 
 // ========================================
+// HELPER FUNCTIONS
+// ========================================
+
+/**
+ * Calculate next billing date based on billing cycle
+ * @param {string} billingCycle - 'monthly', 'semiannual', or 'annual'
+ * @param {Date} startDate - Start date (defaults to now)
+ * @returns {Date} Next billing date
+ */
+function calculateNextBillingDate(billingCycle, startDate = new Date()) {
+  const date = new Date(startDate);
+  
+  switch (billingCycle) {
+    case 'annual':
+      date.setFullYear(date.getFullYear() + 1);
+      break;
+    case 'semiannual':
+      date.setMonth(date.getMonth() + 6);
+      break;
+    case 'monthly':
+    default:
+      date.setMonth(date.getMonth() + 1);
+      break;
+  }
+  
+  return date;
+}
+
+/**
+ * Create notification with idempotency check
+ * Prevents duplicate notifications within a time window
+ * @param {object} params - Notification parameters
+ * @param {string} params.userId - User ID
+ * @param {string} params.titulo - Notification title
+ * @param {string} params.mensagem - Notification message
+ * @param {string} params.tipo - Notification type ('sucesso', 'erro', 'info', 'alerta')
+ * @param {number} params.windowMinutes - Time window in minutes to check for duplicates (default: 5)
+ * @returns {Promise<object|null>} Created notification or null if duplicate
+ */
+async function createNotificationWithIdempotency({ userId, titulo, mensagem, tipo, windowMinutes = 5 }) {
+  const windowAgo = new Date(Date.now() - windowMinutes * 60 * 1000);
+  
+  const existingNotification = await prisma.notification.findFirst({
+    where: {
+      userId,
+      titulo,
+      createdAt: { gte: windowAgo }
+    }
+  });
+
+  if (existingNotification) {
+    return null;
+  }
+
+  return await prisma.notification.create({
+    data: {
+      userId,
+      titulo,
+      mensagem,
+      tipo
+    }
+  });
+}
+
+// ========================================
 // WEBHOOK ENDPOINT (PUBLIC - NO AUTH)
 // ========================================
 // This MUST be before router.use(authenticate)
@@ -53,47 +118,27 @@ router.post('/webhook', express.json(), asyncHandler(async (req, res) => {
       throw new Error('Empty or invalid request body');
     }
   } catch (error) {
-    console.error(`[Webhook] Error parsing payload for event: ${eventId}`, error.message);
     return res.status(400).json({
       status: 'error',
       message: 'Invalid JSON payload'
     });
   }
 
-  // Log webhook receipt with full details
-  console.log(`[Webhook] ========================================`);
-  console.log(`[Webhook] Received event: ${eventId}`);
-  console.log(`[Webhook] Event type: ${event.type || event.event || 'unknown'}`);
-  console.log(`[Webhook] Event ID: ${event.id || event.data?.id || 'unknown'}`);
-  console.log(`[Webhook] Has query token: ${!!queryToken}`);
-  console.log(`[Webhook] Headers:`, JSON.stringify(req.headers, null, 2));
-  console.log(`[Webhook] Full event payload:`, JSON.stringify(event, null, 2));
-  console.log(`[Webhook] ========================================`);
+  // Log webhook data from Pagar.me
+  console.log('Webhook data from Pagar.me:', JSON.stringify(event, null, 2));
 
   // Validate webhook using custom secret (header or query token)
   // Pagar.me does NOT use HMAC signing - we use our own secret validation
   if (!pagarmeSDKService.validateWebhookSecret(req.headers, queryToken)) {
-    console.error(`[Webhook] Invalid secret for event: ${eventId}`);
     return res.status(401).json({
       status: 'error',
       message: 'Invalid webhook secret. Configure X-Pagarme-Webhook-Secret header or ?token= query param.'
     });
   }
 
-  console.log('[Webhook] Parsed payload:', {
-    type: event.type || event.event,
-    id: event.id || event.data?.id,
-    status: event.data?.status
-  });
-
   const eventType = event.type || event.event || 'unknown';
   const eventData = event.data || event;
   const eventObjectId = event.id || eventData.id || eventId;
-
-  console.log(`[Webhook] Processing event: ${eventType}`, {
-    eventId: eventObjectId,
-    type: eventType
-  });
 
   try {
     let result = null;
@@ -168,19 +213,10 @@ router.post('/webhook', express.json(), asyncHandler(async (req, res) => {
         break;
 
       default:
-        console.log(`[Webhook] Unhandled event type: ${eventType}`, {
-          eventId: eventObjectId,
-          event: event
-        });
         result = { handled: false, message: 'Event type not handled' };
     }
 
     const processingTime = Date.now() - startTime;
-    console.log(`[Webhook] Event processed successfully: ${eventType}`, {
-      eventId: eventObjectId,
-      processingTime: `${processingTime}ms`,
-      result
-    });
 
     // Always return 200 to acknowledge receipt
     res.status(200).json({
@@ -192,14 +228,6 @@ router.post('/webhook', express.json(), asyncHandler(async (req, res) => {
     });
   } catch (error) {
     const processingTime = Date.now() - startTime;
-    console.error(`[Webhook] Error processing event: ${eventType}`, {
-      eventId: eventObjectId,
-      error: error.message,
-      stack: error.stack,
-      processingTime: `${processingTime}ms`
-    });
-
-    console.error('[Webhook] Event data:', JSON.stringify(event, null, 2));
 
     // Return 200 to acknowledge receipt and prevent infinite retries
     res.status(200).json({
@@ -322,10 +350,6 @@ router.post('/webhook/simulate', express.json(), asyncHandler(async (req, res) =
     });
   }
 
-  console.log('[Webhook Simulation] Processing simulated event:', {
-    type: event_type,
-    data
-  });
 
   // Process the simulated event
   let result = null;
@@ -355,7 +379,6 @@ router.post('/webhook/simulate', express.json(), asyncHandler(async (req, res) =
 
     sendSuccess(res, 'Webhook simulation processed', { event_type, result });
   } catch (error) {
-    console.error('[Webhook Simulation] Error:', error);
     return res.status(500).json({
       status: 'error',
       message: error.message
@@ -401,12 +424,6 @@ router.post('/tokenize-card', [
   body('exp_year').trim().notEmpty().withMessage('Expiration year is required'),
   body('cvv').trim().notEmpty().withMessage('CVV is required'),
 ], validateRequest, asyncHandler(async (req, res) => {
-  // Log that this is a public endpoint (no auth required)
-  console.log('[Tokenize Card] Public endpoint called - no authentication required', {
-    hasAuthHeader: !!req.headers.authorization,
-    method: req.method,
-    url: req.url
-  });
   
   const { number, holder_name, exp_month, exp_year, cvv } = req.body;
 
@@ -433,10 +450,6 @@ router.post('/tokenize-card', [
       card: tokenResult.card // Card preview data (last 4 digits, brand, etc.)
     });
   } catch (error) {
-    console.error('[Card Tokenization] Error:', {
-      message: error.message,
-      stack: error.stack
-    });
     
     throw new AppError(
       `Erro ao tokenizar cartão: ${error.message}`,
@@ -463,7 +476,7 @@ router.post('/start',
   subscriptionLimiter, // Use subscription-specific rate limiter
   [
     body('plan_id').notEmpty().withMessage('Plan ID is required'),
-    body('billing_cycle').optional().isIn(['monthly', 'annual']).withMessage('Billing cycle must be monthly or annual'),
+    body('billing_cycle').optional().isIn(['monthly', 'semiannual', 'annual']).withMessage('Billing cycle must be monthly, semiannual, or annual'),
     body('return_url').optional(),
     body('cancel_url').optional()
   ], 
@@ -482,7 +495,7 @@ router.post('/start',
   }
 
   // Import plan configuration
-  const { getPlanConfig, getPlanPrice, normalizePlanId } = await import('../config/plans.js');
+  const { getPlanConfig, getPlanPrice, getBillingCycleConfig, normalizePlanId } = await import('../config/plans.js');
   
   // Normalize plan ID (map frontend IDs like 'pro', 'business' to backend IDs)
   const normalizedPlanId = normalizePlanId(plan_id);
@@ -499,12 +512,17 @@ router.post('/start',
     throw new AppError('Plano não suporta este ciclo de cobrança', 400, 'INVALID_BILLING_CYCLE');
   }
 
+  // Get billing cycle configuration
+  const billingConfig = getBillingCycleConfig(billing_cycle);
+
   // Plan configuration - Use normalized plan ID
   const plan = {
     name: planConfig.name,
     amount: planAmount || planConfig.monthlyPrice || 0,
-    days: normalizedPlanId === 'trial' ? 7 : (billing_cycle === 'annual' ? 365 : 30),
-    planId: normalizedPlanId
+    days: normalizedPlanId === 'trial' ? 7 : billingConfig.days,
+    planId: normalizedPlanId,
+    interval: billingConfig.interval,
+    intervalCount: billingConfig.intervalCount
   };
 
   // Check if user already has a subscription
@@ -591,8 +609,6 @@ router.post('/start',
       });
     }
 
-    console.log('[Subscription] Trial started for user:', userId, { trialEndsAt: periodEnd });
-
     // For trial, redirect directly to success page
     checkoutUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/payment-success?plan=trial&session_id=${subscription.pagarMeSubscriptionId}`;
   } else {
@@ -610,16 +626,9 @@ router.post('/start',
       checkoutUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/checkout/subscription?plan=${plan_id}`;
       
       // Store temporary subscription ID (will be updated after payment)
-      pagarMeSubscriptionId = `pending_${Date.now()}_${userId.slice(0, 8)}`;
-      
-      console.log('[Subscription Start] Returning checkout URL for payment collection:', {
-        checkoutUrl: checkoutUrl,
-        planId: plan.planId,
-        pendingSubscriptionId: pagarMeSubscriptionId
-      });
+      pagarMeSubscriptionId = `pending_${Date.now()}_${userId.slice(0, 8)}`;  
     } else {
       // Pagar.me not configured - create simulated subscription for testing/development
-      console.log('[Subscription Start] Creating simulated subscription (Pagar.me not configured)');
       pagarMeSubscriptionId = `pending_${Date.now()}_${userId.slice(0, 8)}`;
       checkoutUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/payment-success?plan=${plan_id}&session_id=${pagarMeSubscriptionId}`;
     }
@@ -652,7 +661,7 @@ router.post('/process-payment',
   subscriptionLimiter, // Use subscription-specific rate limiter
   [
   body('plan_id').trim().notEmpty().withMessage('Plan ID is required'),
-  body('billing_cycle').optional().isIn(['monthly', 'annual']).withMessage('Billing cycle must be monthly or annual'),
+  body('billing_cycle').optional().isIn(['monthly', 'semiannual', 'annual']).withMessage('Billing cycle must be monthly, semiannual, or annual'),
   // ✅ Frontend tokenization approach: card_token from frontend (PCI compliant)
   // ✅ v5 REQUIRES token (token_xxxxx) - card is created when token is attached to customer
   body('card_token').trim().notEmpty().withMessage('Card token is required'),
@@ -700,7 +709,7 @@ router.post('/process-payment',
   }
 
   // Import plan configuration
-  const { getPlanConfig, getPlanPrice, normalizePlanId } = await import('../config/plans.js');
+  const { getPlanConfig, getPlanPrice, getBillingCycleConfig, normalizePlanId } = await import('../config/plans.js');
   
   // Normalize plan ID (map frontend IDs like 'pro', 'business' to backend IDs)
   const normalizedPlanId = normalizePlanId(plan_id);
@@ -717,6 +726,9 @@ router.post('/process-payment',
     throw new AppError('Plano não suporta este ciclo de cobrança', 400, 'INVALID_BILLING_CYCLE');
   }
 
+  // Get billing cycle configuration
+  const billingConfig = getBillingCycleConfig(billing_cycle);
+
   // Plan configuration - Use normalized plan ID
   // ✅ CRITICAL: Amount must be in cents and >= 1
   const amount = planAmount || planConfig.monthlyPrice;
@@ -724,10 +736,10 @@ router.post('/process-payment',
   const plan = {
     name: planConfig.name,
     amount: amount,
-    days: normalizedPlanId === 'trial' ? 7 : (billing_cycle === 'annual' ? 365 : 30),
+    days: normalizedPlanId === 'trial' ? 7 : billingConfig.days,
     planId: normalizedPlanId,
-    interval: billing_cycle === 'annual' ? 'year' : 'month',
-    intervalCount: 1
+    interval: billingConfig.interval,
+    intervalCount: billingConfig.intervalCount
   };
 
   // ✅ Validate amount is a positive integer (in cents)
@@ -738,14 +750,6 @@ router.post('/process-payment',
       'INVALID_PLAN_AMOUNT'
     );
   }
-
-  console.log('[Subscription Payment] Plan configuration:', {
-    planId: plan.planId,
-    name: plan.name,
-    amount: plan.amount,
-    amountInReais: `R$ ${(plan.amount / 100).toFixed(2)}`,
-    interval: plan.interval
-  });
 
   // Pay-per-use doesn't use this endpoint
   if (normalizedPlanId === 'pay_per_use') {
@@ -778,7 +782,6 @@ router.post('/process-payment',
         where: { id: userId },
         data: { cpfCnpj: cleanCpfCnpj }
       });
-      console.log('[Subscription Payment] Updated user CPF/CNPJ:', { userId, cpfCnpjLength: cleanCpfCnpj.length });
     }
     
     // Step 1: Get or create customer in Pagar.me
@@ -803,10 +806,6 @@ router.post('/process-payment',
     // ✅ Step 2: Validate card_token format
     // Frontend tokenizes card via /tokenize-card endpoint and receives token_xxxxx
     // In v5, tokens are attached to customers and cards are created automatically
-    console.log('[Subscription Payment] Using card_token from frontend:', {
-      card_token: card_token.substring(0, 20) + '...', // Log partial for debugging
-      format: card_token.startsWith('token_') ? 'token_xxxxx' : 'INVALID'
-    });
 
     // ✅ CRITICAL: Only accept token (token_xxxxx) - card is created during attachment
     if (!card_token || !card_token.startsWith('token_')) {
@@ -821,7 +820,6 @@ router.post('/process-payment',
     // Pagar.me v5: Attaching token to customer creates the card automatically
     // This makes it the default payment method for the customer
     // attachCardToCustomer accepts token (token_xxxxx) and returns card_id (card_xxxxx)
-    console.log('[Subscription Payment] Attaching token to customer (creates card automatically)...');
     const attachResult = await pagarmeSDKService.attachCardToCustomer(
       pagarMeCustomerId,
       card_token // ✅ Token is attached, card is created automatically
@@ -835,18 +833,10 @@ router.post('/process-payment',
         'CARD_ATTACHMENT_FAILED'
       );
     }
-    
-    console.log('[Subscription Payment] ✅ Card attached successfully:', {
-      cardId: attachResult.card_id,
-      customerId: pagarMeCustomerId,
-      cardLast4: attachResult.card?.last_four_digits || 'N/A',
-      cardBrand: attachResult.card?.brand || 'N/A'
-    });
 
     // ✅ Step 4: Create subscription order using Orders API (v5)
     // Card is already attached (done in Step 3), so we have card_id
     // Pagar.me v5 uses Orders API with payments[].credit_card structure
-    console.log('[Subscription Payment] Creating subscription order with Orders API...');
     const subscriptionResult = await pagarmeSDKService.createSubscription({
       customerId: pagarMeCustomerId,
       cardId: attachResult.card_id, // ✅ Use attached card_id (card_xxxxx)
@@ -865,12 +855,6 @@ router.post('/process-payment',
       }
     });
 
-    console.log('[Subscription Payment] Subscription order created:', {
-      orderId: subscriptionResult.orderId,
-      subscriptionId: subscriptionResult.subscriptionId,
-      status: subscriptionResult.status
-    });
-
     // Step 5: Create or update subscription in database
     // ✅ IMPORTANT: Always set status to 'pending' - webhook will update to 'ativo' after payment confirmation
     const existingSubscription = await prisma.subscription.findFirst({
@@ -880,6 +864,8 @@ router.post('/process-payment',
     let subscription;
     const pagarMeId = subscriptionResult.orderId || subscriptionResult.subscriptionId;
     
+    const nextBillingDate = calculateNextBillingDate(billing_cycle);
+    
     if (existingSubscription) {
       subscription = await prisma.subscription.update({
         where: { id: existingSubscription.id },
@@ -888,7 +874,8 @@ router.post('/process-payment',
           pagarMeSubscriptionId: pagarMeId,
           pagarMePlanId: plan.planId,
           billingCycle: billing_cycle,
-          annualDiscountApplied: billing_cycle === 'annual',
+          annualDiscountApplied: billing_cycle === 'annual' || billing_cycle === 'semiannual',
+          nextBillingAt: nextBillingDate,
           canceledAt: null
         }
       });
@@ -900,27 +887,19 @@ router.post('/process-payment',
           pagarMeSubscriptionId: pagarMeId,
           pagarMePlanId: plan.planId,
           billingCycle: billing_cycle,
-          annualDiscountApplied: billing_cycle === 'annual'
+          annualDiscountApplied: billing_cycle === 'annual' || billing_cycle === 'semiannual',
+          nextBillingAt: nextBillingDate
         }
       });
     }
 
-    // Create notification for pending payment
-    await prisma.notification.create({
-        data: {
-        userId,
-        titulo: 'Pagamento em Processamento',
-        mensagem: `Seu pagamento do plano ${plan.name} está sendo processado. Você receberá uma confirmação em breve.`,
-        tipo: 'info'
-        }
-      });
-
-    console.log('[Subscription Payment] ✅ Subscription created with pending status:', {
-      subscriptionId: subscription.id,
-      pagarMeId: pagarMeId,
-      status: 'pending',
-      planId: plan.planId,
-      note: 'Webhook will update status to ativo after payment confirmation'
+    // ✅ Create notification for pending payment (with idempotency check)
+    await createNotificationWithIdempotency({
+      userId,
+      titulo: 'Pagamento em Processamento',
+      mensagem: `Seu pagamento do plano ${plan.name} está sendo processado. Você receberá uma confirmação em breve.`,
+      tipo: 'info',
+      windowMinutes: 5
     });
 
     sendSuccess(res, 'Pagamento enviado para processamento', {
@@ -933,10 +912,6 @@ router.post('/process-payment',
     });
 
   } catch (error) {
-    console.error('[Subscription Payment] Error processing payment:', {
-      message: error.message,
-      stack: error.stack
-    });
 
     throw new AppError(
       `Erro ao processar pagamento: ${error.message}`,
@@ -1264,7 +1239,6 @@ router.post('/cancel',
       try {
         await pagarmeSDKService.cancelSubscription(subscription.pagarMeSubscriptionId);
       } catch (pagarMeError) {
-        console.warn('Failed to cancel in Pagar.me, proceeding with local cancellation:', pagarMeError.message);
       }
     }
 
@@ -1289,7 +1263,6 @@ router.post('/cancel',
 
     sendSuccess(res, 'Assinatura cancelada com sucesso');
   } catch (error) {
-    console.error('Error canceling subscription:', error);
     throw new AppError(error.message || 'Falha ao cancelar assinatura', 500, 'SUBSCRIPTION_CANCEL_ERROR');
   }
 }));
@@ -1306,7 +1279,6 @@ async function handleSubscriptionCreated(event) {
   const externalId = subscriptionData.customer?.external_id;
 
   if (!externalId) {
-    console.warn('No external_id in subscription.created event');
     return;
   }
 
@@ -1315,7 +1287,6 @@ async function handleSubscriptionCreated(event) {
   });
 
   if (!user) {
-    console.warn(`User not found for external_id: ${externalId}`);
     return;
   }
 
@@ -1456,7 +1427,6 @@ async function handlePaymentApproved(event) {
   });
 
   if (existingPayment && existingPayment.status === 'paid') {
-    console.log(`[Webhook] Payment already processed: ${transactionId}`);
     return {
       paymentId: existingPayment.id,
       status: 'already_processed'
@@ -1500,15 +1470,35 @@ async function handlePaymentApproved(event) {
     ? new Date()
     : (transactionData.date_created ? new Date(transactionData.date_created * 1000) : new Date());
   const periodEnd = new Date(periodStart);
-  periodEnd.setMonth(periodEnd.getMonth() + 1);
+  const billingCycle = subscription.billingCycle || 'monthly';
+  
+  // Calculate period end based on billing cycle
+  switch (billingCycle) {
+    case 'annual':
+      periodEnd.setFullYear(periodEnd.getFullYear() + 1);
+      break;
+    case 'semiannual':
+      periodEnd.setMonth(periodEnd.getMonth() + 6);
+      break;
+    case 'monthly':
+    default:
+      periodEnd.setMonth(periodEnd.getMonth() + 1);
+      break;
+  }
+  
+  const nextBillingDate = calculateNextBillingDate(billingCycle, periodStart);
 
+  // ✅ Check if status is actually changing (only create notification on status change)
+  const wasPending = subscription.status === 'pending';
+  
   // 🚨 ACTIVATE SUBSCRIPTION
   await prisma.subscription.update({
     where: { id: subscription.id },
     data: {
       status: 'ativo',
       currentPeriodStart: periodStart,
-      currentPeriodEnd: periodEnd
+      currentPeriodEnd: periodEnd,
+      nextBillingAt: nextBillingDate
     }
   });
 
@@ -1531,15 +1521,17 @@ async function handlePaymentApproved(event) {
     }
   });
 
-  // Create success notification
-  await prisma.notification.create({
-    data: {
+  // ✅ Create success notification ONLY if status changed from 'pending' to 'ativo'
+  // This ensures notification is created exactly once when payment is confirmed
+  if (wasPending) {
+    await createNotificationWithIdempotency({
       userId: subscription.userId,
       titulo: 'Pagamento Aprovado',
-      mensagem: `Seu pagamento de R$ ${(payment.amount).toLocaleString('pt-BR', { minimumFractionDigits: 2 })} foi aprovado.`,
-      tipo: 'sucesso'
-    }
-  });
+      mensagem: `Seu pagamento de R$ ${(payment.amount).toLocaleString('pt-BR', { minimumFractionDigits: 2 })} foi aprovado. Sua assinatura está ativa!`,
+      tipo: 'sucesso',
+      windowMinutes: 5
+    });
+  }
 
   // Send payment confirmation email (async)
   if (subscription.user?.email) {
@@ -1548,9 +1540,7 @@ async function handlePaymentApproved(event) {
       planName: subscription.planId || 'MAY Pro',
       date: paidAt,
       transactionId: transactionId
-    }).catch(err => {
-      console.error('[Webhook] Failed to send payment confirmation email:', err);
-    });
+    }).catch(() => {});
   }
 
   return {
@@ -1634,9 +1624,7 @@ async function handlePaymentFailed(event) {
   });
 
   if (subscription.user?.email) {
-    sendSubscriptionStatusEmail(subscription.user, 'inadimplente').catch(err => {
-      console.error('[Webhook] Failed to send subscription status email:', err);
-    });
+    sendSubscriptionStatusEmail(subscription.user, 'inadimplente').catch(() => {});
   }
 
   return {
@@ -1690,9 +1678,7 @@ async function handleSubscriptionCanceled(event) {
   });
 
   if (subscription.user?.email) {
-    sendSubscriptionStatusEmail(subscription.user, 'cancelado').catch(err => {
-      console.error('[Webhook] Failed to send cancellation email:', err);
-    });
+    sendSubscriptionStatusEmail(subscription.user, 'cancelado').catch(() => {});
   }
 
   return {
@@ -1755,11 +1741,6 @@ async function handleSubscriptionRenewed(event) {
   const subscriptionData = event.data || event;
   const subscriptionId = subscriptionData.id;
 
-  console.log('[Webhook] Processing subscription.renewed/activated event:', {
-    subscriptionId,
-    status: subscriptionData.status
-  });
-
   if (!subscriptionId) {
     throw new Error('Subscription ID not found in renewed/activated event');
   }
@@ -1770,7 +1751,6 @@ async function handleSubscriptionRenewed(event) {
   });
 
   if (!subscription) {
-    console.warn(`[Webhook] Subscription not found for renewed event: ${subscriptionId}`);
     return { status: 'subscription_not_found', subscriptionId };
   }
 
@@ -1778,7 +1758,22 @@ async function handleSubscriptionRenewed(event) {
   const periodStart = new Date();
   const periodEnd = new Date();
   const billingCycle = subscription.billingCycle || 'monthly';
-  periodEnd.setDate(periodEnd.getDate() + (billingCycle === 'annual' ? 365 : 30));
+  
+  // Calculate period end based on billing cycle
+  switch (billingCycle) {
+    case 'annual':
+      periodEnd.setFullYear(periodEnd.getFullYear() + 1);
+      break;
+    case 'semiannual':
+      periodEnd.setMonth(periodEnd.getMonth() + 6);
+      break;
+    case 'monthly':
+    default:
+      periodEnd.setMonth(periodEnd.getMonth() + 1);
+      break;
+  }
+  
+  const nextBillingDate = calculateNextBillingDate(billingCycle, periodStart);
 
   // ✅ Activate/renew subscription
   await prisma.subscription.update({
@@ -1786,7 +1781,8 @@ async function handleSubscriptionRenewed(event) {
     data: {
       status: 'ativo',
       currentPeriodStart: periodStart,
-      currentPeriodEnd: periodEnd
+      currentPeriodEnd: periodEnd,
+      nextBillingAt: nextBillingDate
     }
   });
 
@@ -1798,11 +1794,6 @@ async function handleSubscriptionRenewed(event) {
       mensagem: 'Sua assinatura foi renovada com sucesso!',
       tipo: 'sucesso'
     }
-  });
-
-  console.log(`[Webhook] Subscription renewed/activated:`, {
-    subscriptionId: subscription.id,
-    newPeriodEnd: periodEnd
   });
 
   return {
@@ -1819,10 +1810,6 @@ async function handleSubscriptionPending(event) {
   const subscriptionData = event.data || event;
   const subscriptionId = subscriptionData.id;
 
-  console.log('[Webhook] Processing subscription.pending event:', {
-    subscriptionId
-  });
-
   if (!subscriptionId) {
     throw new Error('Subscription ID not found in pending event');
   }
@@ -1833,7 +1820,6 @@ async function handleSubscriptionPending(event) {
   });
 
   if (!subscription) {
-    console.warn(`[Webhook] Subscription not found for pending event: ${subscriptionId}`);
     return { status: 'subscription_not_found', subscriptionId };
   }
 
@@ -1841,10 +1827,6 @@ async function handleSubscriptionPending(event) {
   await prisma.subscription.update({
     where: { id: subscription.id },
     data: { status: 'pending' }
-  });
-
-  console.log(`[Webhook] Subscription set to pending:`, {
-    subscriptionId: subscription.id
   });
 
   return {
@@ -1883,39 +1865,15 @@ async function handleOrderPaid(event) {
   const planId = orderData.metadata?.plan_id;
   const billingCycle = orderData.metadata?.billing_cycle || 'monthly';
 
-  console.log('[Webhook] Processing order.paid event:', {
-    orderId,
-    customerId,
-    userId,
-    planId,
-    status: orderData.status
-  });
-
   if (!orderId) {
     throw new Error('Order ID not found in order.paid event');
   }
 
   // Find subscription by orderId or userId
-  console.log('[Webhook] Searching for subscription:', {
-    orderId,
-    userId,
-    customerId
-  });
-
   let subscription = await prisma.subscription.findFirst({
     where: { pagarMeSubscriptionId: orderId },
     include: { user: true }
   });
-
-  if (subscription) {
-    console.log('[Webhook] ✅ Found subscription by orderId:', {
-      subscriptionId: subscription.id,
-      currentStatus: subscription.status,
-      pagarMeSubscriptionId: subscription.pagarMeSubscriptionId
-    });
-  } else {
-    console.log('[Webhook] ⚠️ Subscription not found by orderId, trying userId...');
-  }
 
   if (!subscription && userId) {
     subscription = await prisma.subscription.findFirst({
@@ -1923,19 +1881,9 @@ async function handleOrderPaid(event) {
       include: { user: true },
       orderBy: { createdAt: 'desc' }
     });
-
-    if (subscription) {
-      console.log('[Webhook] ✅ Found subscription by userId:', {
-        subscriptionId: subscription.id,
-        currentStatus: subscription.status,
-        pagarMeSubscriptionId: subscription.pagarMeSubscriptionId,
-        note: 'Order ID mismatch - updating pagarMeSubscriptionId'
-      });
-    }
   }
 
   if (!subscription && customerId) {
-    console.log('[Webhook] ⚠️ Subscription not found by userId, trying customerId...');
     const user = await prisma.user.findFirst({ where: { pagarMeCustomerId: customerId } });
     if (user) {
       subscription = await prisma.subscription.findFirst({
@@ -1943,25 +1891,10 @@ async function handleOrderPaid(event) {
         include: { user: true },
         orderBy: { createdAt: 'desc' }
       });
-      if (subscription) {
-        console.log('[Webhook] ✅ Found subscription by customerId:', {
-          subscriptionId: subscription.id,
-          currentStatus: subscription.status,
-          pagarMeSubscriptionId: subscription.pagarMeSubscriptionId
-        });
-      }
     }
   }
 
   if (!subscription) {
-    console.warn(`[Webhook] ❌ Subscription not found for order: ${orderId}`, {
-      orderId,
-      userId,
-      customerId,
-      planId,
-      metadata: orderData.metadata
-    });
-    console.warn(`[Webhook] Attempting to create new subscription from order data...`);
     
     // Try to find user by customerId or metadata
     let user = null;
@@ -1976,16 +1909,37 @@ async function handleOrderPaid(event) {
       throw new Error(`User not found for order: ${orderId}`);
     }
 
-    // Create subscription from order
+    // Create subscription from order (fallback - should rarely happen)
+    // Use proper billing cycle calculation
+    const periodStart = new Date();
+    const periodEnd = new Date();
+    const finalBillingCycle = billingCycle || 'monthly';
+    
+    switch (finalBillingCycle) {
+      case 'annual':
+        periodEnd.setFullYear(periodEnd.getFullYear() + 1);
+        break;
+      case 'semiannual':
+        periodEnd.setMonth(periodEnd.getMonth() + 6);
+        break;
+      case 'monthly':
+      default:
+        periodEnd.setMonth(periodEnd.getMonth() + 1);
+        break;
+    }
+    
+    const nextBillingDate = calculateNextBillingDate(finalBillingCycle, periodStart);
+    
     subscription = await prisma.subscription.create({
       data: {
         userId: user.id,
         pagarMeSubscriptionId: orderId,
         pagarMePlanId: planId,
-        billingCycle: billingCycle,
+        billingCycle: finalBillingCycle,
         status: 'ativo',
-        currentPeriodStart: new Date(),
-        currentPeriodEnd: new Date(Date.now() + (billingCycle === 'annual' ? 365 : 30) * 86400000)
+        currentPeriodStart: periodStart,
+        currentPeriodEnd: periodEnd,
+        nextBillingAt: nextBillingDate
       },
       include: { user: true }
     });
@@ -2002,15 +1956,35 @@ async function handleOrderPaid(event) {
   });
 
   if (existingPayment && existingPayment.status === 'paid') {
-    console.log(`[Webhook] Order payment already processed: ${transactionId}`);
-    return { status: 'already_processed', orderId };
+    return { status: 'already_processed', paymentId: existingPayment.id };
   }
 
   // Calculate period dates
+  // ✅ CRITICAL: Use subscription's billingCycle first (it's the source of truth)
+  // Metadata might be missing or incorrect, but subscription was created with correct billingCycle
   const periodStart = new Date();
   const periodEnd = new Date();
-  periodEnd.setDate(periodEnd.getDate() + (billingCycle === 'annual' ? 365 : 30));
+  const subBillingCycle = subscription.billingCycle || billingCycle || 'monthly';
+  
+  // Calculate period end based on billing cycle
+  switch (subBillingCycle) {
+    case 'annual':
+      periodEnd.setFullYear(periodEnd.getFullYear() + 1);
+      break;
+    case 'semiannual':
+      periodEnd.setMonth(periodEnd.getMonth() + 6);
+      break;
+    case 'monthly':
+    default:
+      periodEnd.setMonth(periodEnd.getMonth() + 1);
+      break;
+  }
+  
+  const nextBillingDate = calculateNextBillingDate(subBillingCycle, periodStart);
 
+  // ✅ Check if status is actually changing (only create notification on status change)
+  const wasPending = subscription.status === 'pending';
+  
   // ✅ ACTIVATE SUBSCRIPTION
   await prisma.subscription.update({
     where: { id: subscription.id },
@@ -2018,7 +1992,8 @@ async function handleOrderPaid(event) {
       status: 'ativo',
       pagarMeSubscriptionId: orderId,
       currentPeriodStart: periodStart,
-      currentPeriodEnd: periodEnd
+      currentPeriodEnd: periodEnd,
+      nextBillingAt: nextBillingDate
     }
   });
 
@@ -2040,15 +2015,17 @@ async function handleOrderPaid(event) {
     }
   });
 
-  // Create success notification
-  await prisma.notification.create({
-    data: {
+  // ✅ Create success notification ONLY if status changed from 'pending' to 'ativo'
+  // This ensures notification is created exactly once when payment is confirmed
+  if (wasPending) {
+    await createNotificationWithIdempotency({
       userId: subscription.userId,
       titulo: 'Pagamento Aprovado',
       mensagem: `Seu pagamento de R$ ${amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} foi aprovado. Sua assinatura está ativa!`,
-      tipo: 'sucesso'
-    }
-  });
+      tipo: 'sucesso',
+      windowMinutes: 5
+    });
+  }
 
   // Send confirmation email (async)
   if (subscription.user?.email) {
@@ -2057,17 +2034,8 @@ async function handleOrderPaid(event) {
       planName: planId || 'MAY Pro',
       date: new Date(),
       transactionId: transactionId
-    }).catch(err => {
-      console.error('[Webhook] Failed to send payment confirmation email:', err);
-    });
+    }).catch(() => {});
   }
-
-  console.log(`[Webhook] Order.paid processed successfully:`, {
-    orderId,
-    subscriptionId: subscription.id,
-    status: 'ativo',
-    amount
-  });
 
   return {
     orderId,
@@ -2114,25 +2082,6 @@ async function handleOrderPaymentFailed(event) {
     failureReason = charge.status_reason;
   }
 
-  console.log('[Webhook] Processing order.payment_failed event:', {
-    orderId,
-    userId,
-    reason: failureReason,
-    orderStatus: orderData.status,
-    chargeStatus: charge?.status,
-    chargeId: charge?.id,
-    gatewayCode: gatewayCode,
-    gatewayErrors: gatewayErrors,
-    isIntegrationError: isIntegrationError,
-    lastTransaction: lastTransaction ? {
-      id: lastTransaction.id,
-      status: lastTransaction.status,
-      gatewayResponse: lastTransaction.gateway_response,
-      acquirerMessage: lastTransaction.acquirer_message
-    } : null,
-    fullOrderData: JSON.stringify(orderData, null, 2) // Full order data for debugging
-  });
-
   // Find subscription
   let subscription = await prisma.subscription.findFirst({
     where: { pagarMeSubscriptionId: orderId },
@@ -2148,7 +2097,6 @@ async function handleOrderPaymentFailed(event) {
   }
 
   if (!subscription) {
-    console.warn(`[Webhook] Subscription not found for failed order: ${orderId}`);
     return { status: 'subscription_not_found', orderId };
   }
 
@@ -2170,16 +2118,8 @@ async function handleOrderPaymentFailed(event) {
 
   // Send status email
   if (subscription.user?.email) {
-    sendSubscriptionStatusEmail(subscription.user, 'inadimplente').catch(err => {
-      console.error('[Webhook] Failed to send subscription status email:', err);
-    });
+    sendSubscriptionStatusEmail(subscription.user, 'inadimplente').catch(() => {});
   }
-
-  console.log(`[Webhook] Order.payment_failed processed:`, {
-    orderId,
-    subscriptionId: subscription.id,
-    reason: failureReason
-  });
 
   return {
     orderId,
@@ -2199,38 +2139,17 @@ async function handleChargePaid(event) {
   const orderId = chargeData.order_id || chargeData.order?.id;
   const customerId = chargeData.customer_id || chargeData.customer?.id;
 
-  console.log('[Webhook] Processing charge.paid event:', {
-    chargeId,
-    orderId,
-    customerId,
-    amount: chargeData.amount
-  });
-
   // Find subscription by orderId
   let subscription = null;
-  
-  console.log('[Webhook] Searching for subscription by charge:', {
-    chargeId,
-    orderId,
-    customerId
-  });
   
   if (orderId) {
     subscription = await prisma.subscription.findFirst({
       where: { pagarMeSubscriptionId: orderId },
       include: { user: true }
     });
-
-    if (subscription) {
-      console.log('[Webhook] ✅ Found subscription by orderId:', {
-        subscriptionId: subscription.id,
-        currentStatus: subscription.status
-      });
-    }
   }
 
   if (!subscription && customerId) {
-    console.log('[Webhook] ⚠️ Subscription not found by orderId, trying customerId...');
     const user = await prisma.user.findFirst({
       where: { pagarMeCustomerId: customerId }
     });
@@ -2240,21 +2159,10 @@ async function handleChargePaid(event) {
         include: { user: true },
         orderBy: { createdAt: 'desc' }
       });
-      if (subscription) {
-        console.log('[Webhook] ✅ Found subscription by customerId:', {
-          subscriptionId: subscription.id,
-          currentStatus: subscription.status
-      });
-      }
     }
   }
 
   if (!subscription) {
-    console.warn(`[Webhook] ❌ Subscription not found for charge: ${chargeId}`, {
-      chargeId,
-      orderId,
-      customerId
-    });
     return { status: 'subscription_not_found', chargeId, orderId };
   }
 
@@ -2264,19 +2172,43 @@ async function handleChargePaid(event) {
   });
 
   if (existingPayment && existingPayment.status === 'paid') {
-    console.log(`[Webhook] Charge already processed: ${chargeId}`);
     return { status: 'already_processed', chargeId };
   }
 
   const amount = chargeData.amount ? chargeData.amount / 100 : 0;
+
+  // ✅ Check if status is actually changing (only create notification on status change)
+  const wasPending = subscription.status === 'pending';
+
+  // ✅ Calculate period dates using subscription's billingCycle (source of truth)
+  const periodStart = new Date();
+  const periodEnd = new Date();
+  const billingCycle = subscription.billingCycle || 'monthly';
+  
+  // Calculate period end based on billing cycle
+  switch (billingCycle) {
+    case 'annual':
+      periodEnd.setFullYear(periodEnd.getFullYear() + 1);
+      break;
+    case 'semiannual':
+      periodEnd.setMonth(periodEnd.getMonth() + 6);
+      break;
+    case 'monthly':
+    default:
+      periodEnd.setMonth(periodEnd.getMonth() + 1);
+      break;
+  }
+  
+  const nextBillingDate = calculateNextBillingDate(billingCycle, periodStart);
 
   // Activate subscription and record payment
   await prisma.subscription.update({
     where: { id: subscription.id },
     data: {
       status: 'ativo',
-      currentPeriodStart: new Date(),
-      currentPeriodEnd: new Date(Date.now() + 30 * 86400000)
+      currentPeriodStart: periodStart,
+      currentPeriodEnd: periodEnd,
+      nextBillingAt: nextBillingDate
     }
   });
 
@@ -2293,21 +2225,17 @@ async function handleChargePaid(event) {
     }
   });
 
-  // Create success notification
-  await prisma.notification.create({
-    data: {
+  // ✅ Create success notification ONLY if status changed from 'pending' to 'ativo'
+  // charge.paid is a secondary event - only create notification if status actually changed
+  if (wasPending) {
+    await createNotificationWithIdempotency({
       userId: subscription.userId,
-      titulo: 'Pagamento Confirmado',
-      mensagem: `Seu pagamento de R$ ${amount.toFixed(2)} foi confirmado com sucesso!`,
-      tipo: 'sucesso'
-    }
-  });
-
-  console.log(`[Webhook] Charge.paid processed:`, {
-    chargeId,
-    subscriptionId: subscription.id,
-    amount
-  });
+      titulo: 'Pagamento Aprovado',
+      mensagem: `Seu pagamento de R$ ${amount.toFixed(2)} foi aprovado. Sua assinatura está ativa!`,
+      tipo: 'sucesso',
+      windowMinutes: 5
+    });
+  }
 
   return {
     chargeId,
@@ -2350,23 +2278,6 @@ async function handleChargePaymentFailed(event) {
     failureReason = lastTransaction.status_reason;
   }
 
-  console.log('[Webhook] Processing charge.payment_failed event:', {
-    chargeId,
-    orderId,
-    reason: failureReason,
-    chargeStatus: chargeData.status,
-    gatewayCode: gatewayCode,
-    gatewayErrors: gatewayErrors,
-    isIntegrationError: isIntegrationError,
-    lastTransaction: lastTransaction ? {
-      id: lastTransaction.id,
-      status: lastTransaction.status,
-      gatewayResponse: lastTransaction.gateway_response,
-      acquirerMessage: lastTransaction.acquirer_message
-    } : null,
-    fullChargeData: JSON.stringify(chargeData, null, 2) // Full charge data for debugging
-  });
-
   // Find subscription
   let subscription = null;
   if (orderId) {
@@ -2377,7 +2288,6 @@ async function handleChargePaymentFailed(event) {
   }
 
   if (!subscription) {
-    console.warn(`[Webhook] Subscription not found for failed charge: ${chargeId}`);
     return { status: 'subscription_not_found', chargeId };
   }
 
@@ -2399,16 +2309,8 @@ async function handleChargePaymentFailed(event) {
 
   // Send status email
   if (subscription.user?.email) {
-    sendSubscriptionStatusEmail(subscription.user, 'inadimplente').catch(err => {
-      console.error('[Webhook] Failed to send subscription status email:', err);
-    });
+    sendSubscriptionStatusEmail(subscription.user, 'inadimplente').catch(() => {});
   }
-
-  console.log(`[Webhook] Charge.payment_failed processed:`, {
-    chargeId,
-    subscriptionId: subscription.id,
-    reason: failureReason
-  });
 
   return {
     chargeId,
@@ -2427,20 +2329,14 @@ async function handleOrderCreated(event) {
   const orderId = orderData.id;
   const orderStatus = orderData.status;
 
-  console.log('[Webhook] Processing order.created event:', {
-    orderId,
-    status: orderStatus
-  });
 
   // If order is already paid, process it as order.paid
   if (orderStatus === 'paid' || orderStatus === 'closed') {
-    console.log('[Webhook] Order is already paid, processing as order.paid');
     return await handleOrderPaid(event);
   }
 
   // If order is pending payment, just log it
   if (orderStatus === 'pending' || orderStatus === 'processing') {
-    console.log('[Webhook] Order is pending payment, waiting for order.paid event');
     return { status: 'pending', orderId };
   }
 
@@ -2457,20 +2353,14 @@ async function handleChargeCreated(event) {
   const chargeId = chargeData.id;
   const chargeStatus = chargeData.status;
 
-  console.log('[Webhook] Processing charge.created event:', {
-    chargeId,
-    status: chargeStatus
-  });
 
   // If charge is already paid, process it as charge.paid
   if (chargeStatus === 'paid' || chargeStatus === 'success') {
-    console.log('[Webhook] Charge is already paid, processing as charge.paid');
     return await handleChargePaid(event);
   }
 
   // If charge is pending, just log it
   if (chargeStatus === 'pending' || chargeStatus === 'processing') {
-    console.log('[Webhook] Charge is pending payment, waiting for charge.paid event');
     return { status: 'pending', chargeId };
   }
 
@@ -2510,7 +2400,6 @@ router.post('/check-payment',
 
   // Skip if order ID doesn't look like a Pagar.me order ID
   if (!orderId.startsWith('or_')) {
-    console.log('[Check Payment] Order ID is not a Pagar.me order ID, skipping API check:', orderId);
     return sendSuccess(res, 'Order ID is not a Pagar.me order ID', {
       orderId,
       canCheck: false
@@ -2519,26 +2408,34 @@ router.post('/check-payment',
 
   try {
     // ✅ Check order status with Pagar.me API
-    console.log('[Check Payment] Checking order status with Pagar.me API:', { orderId });
     const orderStatus = await pagarmeSDKService.getOrderStatus(orderId);
-
-    console.log('[Check Payment] Order status from Pagar.me:', {
-      orderId: orderStatus.id,
-      status: orderStatus.status,
-      amount: orderStatus.amount
-    });
 
     // If order is paid, activate subscription
     if (orderStatus.status === 'paid' || orderStatus.status === 'closed') {
-      console.log('[Check Payment] Order is paid, activating subscription:', {
-        orderId,
-        subscriptionId: subscription.id
-      });
+
+      // ✅ Check if status is actually changing (only create notification on status change)
+      const wasPending = subscription.status === 'pending';
 
       // Calculate period dates
       const periodStart = new Date();
       const periodEnd = new Date();
-      periodEnd.setDate(periodEnd.getDate() + (subscription.billingCycle === 'annual' ? 365 : 30));
+      const billingCycle = subscription.billingCycle || 'monthly';
+      
+      // Calculate period end based on billing cycle
+      switch (billingCycle) {
+        case 'annual':
+          periodEnd.setFullYear(periodEnd.getFullYear() + 1);
+          break;
+        case 'semiannual':
+          periodEnd.setMonth(periodEnd.getMonth() + 6);
+          break;
+        case 'monthly':
+        default:
+          periodEnd.setMonth(periodEnd.getMonth() + 1);
+          break;
+      }
+      
+      const nextBillingDate = calculateNextBillingDate(billingCycle, periodStart);
 
       // Update subscription status
       await prisma.subscription.update({
@@ -2546,7 +2443,8 @@ router.post('/check-payment',
         data: {
           status: 'ativo',
           currentPeriodStart: periodStart,
-          currentPeriodEnd: periodEnd
+          currentPeriodEnd: periodEnd,
+          nextBillingAt: nextBillingDate
         }
       });
 
@@ -2573,15 +2471,16 @@ router.post('/check-payment',
         }
       });
 
-      // Create success notification
-      await prisma.notification.create({
-        data: {
+      // ✅ Create success notification ONLY if status changed from 'pending' to 'ativo'
+      if (wasPending) {
+        await createNotificationWithIdempotency({
           userId: subscription.userId,
-          titulo: 'Pagamento Confirmado',
-          mensagem: `Seu pagamento de R$ ${amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} foi confirmado. Sua assinatura está ativa!`,
-          tipo: 'sucesso'
-        }
-      });
+          titulo: 'Pagamento Aprovado',
+          mensagem: `Seu pagamento de R$ ${amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} foi aprovado. Sua assinatura está ativa!`,
+          tipo: 'sucesso',
+          windowMinutes: 5
+        });
+      }
 
       return sendSuccess(res, 'Payment confirmed and subscription activated', {
         subscriptionId: subscription.id,
@@ -2592,10 +2491,6 @@ router.post('/check-payment',
       });
     } else if (orderStatus.status === 'pending' || orderStatus.status === 'processing') {
       // Order is still pending
-      console.log('[Check Payment] Order is still pending:', {
-        orderId,
-        status: orderStatus.status
-      });
 
       return sendSuccess(res, 'Payment is still pending', {
         subscriptionId: subscription.id,
@@ -2606,10 +2501,6 @@ router.post('/check-payment',
       });
     } else if (orderStatus.status === 'failed' || orderStatus.status === 'canceled' || orderStatus.status === 'refused') {
       // Payment failed
-      console.log('[Check Payment] Order payment failed:', {
-        orderId,
-        status: orderStatus.status
-      });
 
       // Update subscription status
       await prisma.subscription.update({
@@ -2635,10 +2526,6 @@ router.post('/check-payment',
       });
     } else {
       // Unknown status
-      console.log('[Check Payment] Unknown order status:', {
-        orderId,
-        status: orderStatus.status
-      });
 
       return sendSuccess(res, 'Payment status checked', {
         subscriptionId: subscription.id,
@@ -2649,12 +2536,6 @@ router.post('/check-payment',
       });
     }
   } catch (error) {
-    console.error('[Check Payment] Error checking payment status:', {
-      orderId,
-      error: error.message,
-      stack: error.stack
-    });
-
     // If order not found or API error, return error
     throw new AppError(
       `Erro ao verificar status do pagamento: ${error.message}`,

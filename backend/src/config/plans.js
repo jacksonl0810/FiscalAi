@@ -4,16 +4,16 @@
  */
 
 export const PLANS = {
-  // ✅ Frontend plan IDs with correct prices
   pro: {
     planId: 'pro',
     name: 'Pro',
     description: 'Para profissionais autônomos e MEIs',
-    monthlyPrice: 9700, // R$97.00 in cents
-    annualPrice: 97000, // R$970.00/year (10 months)
+    monthlyPrice: 9700,
+    semiannualPrice: 54000,
+    annualPrice: 97000,
     perInvoicePrice: null,
     maxCompanies: 1,
-    maxInvoicesPerMonth: null, // Unlimited
+    maxInvoicesPerMonth: null,
     features: [
       '1 empresa',
       'Notas fiscais ilimitadas',
@@ -26,11 +26,12 @@ export const PLANS = {
     planId: 'business',
     name: 'Business',
     description: 'Para empresas e escritórios contábeis',
-    monthlyPrice: 19700, // R$197.00 in cents
-    annualPrice: 197000, // R$1,970.00/year (10 months)
+    monthlyPrice: 19700,
+    semiannualPrice: 110000,
+    annualPrice: 197000,
     perInvoicePrice: null,
     maxCompanies: 5,
-    maxInvoicesPerMonth: null, // Unlimited
+    maxInvoicesPerMonth: null,
     features: [
       'Até 5 empresas',
       'Notas fiscais ilimitadas',
@@ -215,18 +216,51 @@ export function hasUnlimitedCompanies(planId) {
 /**
  * Get plan price based on billing cycle
  * @param {string} planId - Plan identifier
- * @param {string} billingCycle - 'monthly' or 'annual'
+ * @param {string} billingCycle - 'monthly', 'semiannual', or 'annual'
  * @returns {number|null} Price in cents or null if not applicable
  */
 export function getPlanPrice(planId, billingCycle = 'monthly') {
   const plan = getPlanConfig(planId);
   if (!plan) return null;
 
-  if (billingCycle === 'annual' && plan.annualPrice !== null) {
-    return plan.annualPrice;
+  switch (billingCycle) {
+    case 'annual':
+      return plan.annualPrice !== null ? plan.annualPrice : plan.monthlyPrice;
+    case 'semiannual':
+      return plan.semiannualPrice !== null ? plan.semiannualPrice : plan.monthlyPrice;
+    case 'monthly':
+    default:
+      return plan.monthlyPrice;
   }
+}
 
-  return plan.monthlyPrice;
+/**
+ * Get billing cycle configuration
+ * @param {string} billingCycle - 'monthly', 'semiannual', or 'annual'
+ * @returns {object} Configuration with interval and intervalCount
+ */
+export function getBillingCycleConfig(billingCycle) {
+  switch (billingCycle) {
+    case 'annual':
+      return {
+        interval: 'year',
+        intervalCount: 1,
+        days: 365
+      };
+    case 'semiannual':
+      return {
+        interval: 'month',
+        intervalCount: 6,
+        days: 180
+      };
+    case 'monthly':
+    default:
+      return {
+        interval: 'month',
+        intervalCount: 1,
+        days: 30
+      };
+  }
 }
 
 export default PLANS;

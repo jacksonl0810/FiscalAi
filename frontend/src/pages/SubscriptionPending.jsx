@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { motion } from "framer-motion";
 import { ArrowRight, Clock, Bell, Sparkles, CreditCard, Shield, CheckCircle, XCircle, RefreshCw, Loader2, Home } from "lucide-react";
@@ -17,28 +17,85 @@ export default function SubscriptionPending() {
   const [pollCount, setPollCount] = useState(0);
   const [currentStatus, setCurrentStatus] = useState('pending');
   const [paymentConfirmed, setPaymentConfirmed] = useState(false);
+  
+  // Use refs to store interval and timeout IDs so we can clear them from anywhere
+  const intervalRef = useRef(null);
+  const timeoutRef = useRef(null);
+  const paymentConfirmedRef = useRef(false);
+  
+  // Keep ref in sync with state
+  useEffect(() => {
+    paymentConfirmedRef.current = paymentConfirmed;
+  }, [paymentConfirmed]);
 
   const hasActiveTrial = user?.is_in_trial && user?.trial_days_remaining > 0;
 
   useEffect(() => {
-    if (!isPolling) return;
+    if (!isPolling) {
+      // Clear intervals if polling is stopped
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+        timeoutRef.current = null;
+      }
+      return;
+    }
 
     const checkStatus = async () => {
+      // Double-check if polling should continue (use ref to get current value)
+      if (!isPolling || paymentConfirmedRef.current) {
+        if (intervalRef.current) {
+          clearInterval(intervalRef.current);
+          intervalRef.current = null;
+        }
+        return;
+      }
+
       try {
         const status = await subscriptionsService.getStatus();
         console.log('[SubscriptionPending] Status check:', status);
         setCurrentStatus(status.status);
 
         if (status.status === 'ativo') {
+          // ✅ Immediately stop polling
           setIsPolling(false);
           setPaymentConfirmed(true);
+          paymentConfirmedRef.current = true; // Update ref immediately
+          
+          // Clear intervals immediately
+          if (intervalRef.current) {
+            clearInterval(intervalRef.current);
+            intervalRef.current = null;
+          }
+          if (timeoutRef.current) {
+            clearTimeout(timeoutRef.current);
+            timeoutRef.current = null;
+          }
+          
           toast.success('🎉 Pagamento aprovado! Sua assinatura está ativa.', { duration: 5000 });
           if (refreshUser) await refreshUser();
           setTimeout(() => navigate('/dashboard'), 2000);
+          return; // Exit early to prevent further polling
         } else if (status.status === 'inadimplente') {
+          // ✅ Immediately stop polling
           setIsPolling(false);
+          
+          // Clear intervals immediately
+          if (intervalRef.current) {
+            clearInterval(intervalRef.current);
+            intervalRef.current = null;
+          }
+          if (timeoutRef.current) {
+            clearTimeout(timeoutRef.current);
+            timeoutRef.current = null;
+          }
+          
           toast.error('Pagamento recusado. Por favor, tente novamente.', { duration: 5000 });
           navigate('/payment-failed');
+          return; // Exit early to prevent further polling
         } else if (status.status === 'trial') {
           setCurrentStatus('trial');
         }
@@ -49,17 +106,31 @@ export default function SubscriptionPending() {
       }
     };
 
+    // Initial check
     checkStatus();
-    const interval = setInterval(checkStatus, 5000);
+    
+    // Set up interval
+    intervalRef.current = setInterval(checkStatus, 5000);
 
-    const timeout = setTimeout(() => {
+    // Set up timeout to stop polling after 2 minutes
+    timeoutRef.current = setTimeout(() => {
       setIsPolling(false);
-      clearInterval(interval);
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
     }, 120000);
 
+    // Cleanup function
     return () => {
-      clearInterval(interval);
-      clearTimeout(timeout);
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+        timeoutRef.current = null;
+      }
     };
   }, [isPolling, navigate, refreshUser]);
 
@@ -327,7 +398,42 @@ export default function SubscriptionPending() {
               <motion.button
                 whileHover={{ scale: 1.02 }}
                 whileTap={{ scale: 0.98 }}
-                onClick={() => { setIsPolling(true); setPollCount(0); }}
+                onClick={async () => {
+                  if (paymentConfirmed) return; // Don't restart if already confirmed
+                  
+                  // Clear existing intervals
+                  if (intervalRef.current) {
+                    clearInterval(intervalRef.current);
+                    intervalRef.current = null;
+                  }
+                  if (timeoutRef.current) {
+                    clearTimeout(timeoutRef.current);
+                    timeoutRef.current = null;
+                  }
+                  
+                  setIsPolling(true);
+                  setPollCount(0);
+                  
+                  // Manual check
+                  try {
+                    const status = await subscriptionsService.getStatus();
+                    setCurrentStatus(status.status);
+                    
+                    if (status.status === 'ativo') {
+                      setIsPolling(false);
+                      setPaymentConfirmed(true);
+                      toast.success('🎉 Pagamento aprovado! Sua assinatura está ativa.', { duration: 5000 });
+                      if (refreshUser) await refreshUser();
+                      setTimeout(() => navigate('/dashboard'), 2000);
+                    } else if (status.status === 'inadimplente') {
+                      setIsPolling(false);
+                      toast.error('Pagamento recusado. Por favor, tente novamente.', { duration: 5000 });
+                      navigate('/payment-failed');
+                    }
+                  } catch (error) {
+                    console.error('[SubscriptionPending] Error checking status:', error);
+                  }
+                }}
                 disabled={isPolling || paymentConfirmed}
                 className="w-full py-4 px-6 rounded-2xl text-base font-medium bg-white/[0.03] hover:bg-white/[0.06] text-slate-300 hover:text-white ring-1 ring-white/10 hover:ring-white/20 transition-all duration-300 flex items-center justify-center gap-2 disabled:opacity-50"
               >
