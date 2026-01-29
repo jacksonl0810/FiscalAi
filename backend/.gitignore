@@ -30,3 +30,6 @@ prisma/migrations/
 
 # Uploads
 uploads/
+
+#Frontend
+frontend/

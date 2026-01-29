@@ -5,7 +5,7 @@
  * Creates alerts and notifications when approaching/exceeding limits
  */
 
-import { prisma } from '../index.js';
+import { prisma } from '../lib/prisma.js';
 
 const MEI_ANNUAL_LIMIT = 81000; // R$ 81.000 per year
 

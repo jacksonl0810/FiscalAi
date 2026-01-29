@@ -400,18 +400,26 @@ router.post('/:id/register-fiscal', asyncHandler(async (req, res) => {
     });
   } catch (error) {
     console.error('[Companies] Error registering in Nuvem Fiscal:', error);
-    console.error('[Companies] Error stack:', error.stack);
-    console.error('[Companies] Error details:', JSON.stringify(error, Object.getOwnPropertyNames(error)));
+    console.error('[Companies] Error name:', error?.name);
+    console.error('[Companies] Error message:', error?.message);
+    console.error('[Companies] Error status:', error?.status);
+    console.error('[Companies] Error statusCode:', error?.statusCode);
+    console.error('[Companies] Error code:', error?.code);
+    console.error('[Companies] Error stack:', error?.stack);
     
     // Extract error message safely
     let errorMessage = 'Erro desconhecido ao registrar empresa';
     let statusCode = 500;
     let errorCode = 'FISCAL_REGISTRATION_ERROR';
+    let errorData = null;
     
     if (typeof error === 'string') {
       errorMessage = error;
-    } else if (error && error.message) {
-      errorMessage = error.message;
+    } else if (error instanceof Error) {
+      errorMessage = error.message || 'Erro desconhecido ao registrar empresa';
+      errorCode = error.code || 'FISCAL_REGISTRATION_ERROR';
+      statusCode = error.statusCode || error.status || 500;
+      errorData = error.data || null;
       
       // Check if it's a validation error (should be 400, not 500)
       if (errorMessage.includes('inválido') || 
@@ -421,13 +429,11 @@ router.post('/:id/register-fiscal', asyncHandler(async (req, res) => {
         statusCode = 400;
         errorCode = 'VALIDATION_ERROR';
       }
-      
-      // Check if it's an API error with status code
-      if (error.status) {
-        statusCode = error.status;
-      }
     } else if (error && typeof error === 'object') {
-      errorMessage = JSON.stringify(error);
+      errorMessage = error.message || error.error || JSON.stringify(error);
+      errorCode = error.code || 'FISCAL_REGISTRATION_ERROR';
+      statusCode = error.statusCode || error.status || 500;
+      errorData = error.data || null;
     }
     
     // Update status to failure
@@ -436,7 +442,7 @@ router.post('/:id/register-fiscal', asyncHandler(async (req, res) => {
         where: { companyId: req.params.id },
         update: {
           status: 'falha',
-          mensagem: errorMessage.substring(0, 500), // Limit message length
+          mensagem: errorMessage.substring(0, 500),
           ultimaVerificacao: new Date()
         },
         create: {
@@ -450,7 +456,7 @@ router.post('/:id/register-fiscal', asyncHandler(async (req, res) => {
       console.error('[Companies] Error updating fiscal status:', dbError);
     }
 
-    throw new AppError(errorMessage, statusCode, errorCode);
+    throw new AppError(errorMessage, statusCode, errorCode, errorData);
   }
 }));
 

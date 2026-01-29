@@ -3,7 +3,7 @@
  * Manages company-level fiscal connection states and validation
  */
 
-import { prisma } from '../index.js';
+import { prisma } from '../lib/prisma.js';
 import { checkConnection } from './nuvemFiscal.js';
 import { AppError } from '../middleware/errorHandler.js';
 

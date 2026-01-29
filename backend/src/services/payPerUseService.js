@@ -3,7 +3,7 @@
  * Handles pay-per-use invoice payment flow
  */
 
-import { prisma } from '../index.js';
+import { prisma } from '../lib/prisma.js';
 import { getPlanConfig } from '../config/plans.js';
 import * as pagarmeSDKService from './pagarMeSDK.js';
 import { AppError } from '../middleware/errorHandler.js';

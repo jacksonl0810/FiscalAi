@@ -5,7 +5,7 @@
 
 import express from 'express';
 import crypto from 'crypto';
-import { prisma } from '../index.js';
+import { prisma } from '../lib/prisma.js';
 import { asyncHandler, AppError } from '../middleware/errorHandler.js';
 import { sendSuccess } from '../utils/response.js';
 import { checkNfseStatus } from '../services/nuvemFiscal.js';

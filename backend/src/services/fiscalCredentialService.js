@@ -3,7 +3,7 @@
  * Manages digital certificates and municipal credentials securely
  */
 
-import { prisma } from '../index.js';
+import { prisma } from '../lib/prisma.js';
 import { encryptCredential, decryptCredential, hashPassword, verifyPassword } from './credentialEncryption.js';
 import { AppError } from '../middleware/errorHandler.js';
 

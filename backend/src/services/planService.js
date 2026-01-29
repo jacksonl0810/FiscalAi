@@ -3,7 +3,7 @@
  * Handles plan-related business logic, limit checking, and validations
  */
 
-import { prisma } from '../index.js';
+import { prisma } from '../lib/prisma.js';
 import { getPlanConfig, getUpgradeOptions } from '../config/plans.js';
 import { AppError } from '../middleware/errorHandler.js';
 

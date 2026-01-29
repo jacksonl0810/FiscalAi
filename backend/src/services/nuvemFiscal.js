@@ -338,10 +338,18 @@ async function registerCompany(companyData) {
     };
   } catch (error) {
     console.error('[NuvemFiscal] Error registering company:', error);
-    console.error('[NuvemFiscal] Error stack:', error.stack);
+    console.error('[NuvemFiscal] Error name:', error?.name);
+    console.error('[NuvemFiscal] Error message:', error?.message);
+    console.error('[NuvemFiscal] Error status:', error?.status);
+    console.error('[NuvemFiscal] Error statusCode:', error?.statusCode);
+    console.error('[NuvemFiscal] Error code:', error?.code);
+    console.error('[NuvemFiscal] Error stack:', error?.stack);
     
     // Extract meaningful error message
     let errorMessage = 'Erro desconhecido';
+    let statusCode = error?.status || error?.statusCode || 500;
+    let errorCode = error?.code || 'NUVEM_FISCAL_REGISTRATION_ERROR';
+    let errorData = error?.data || null;
     
     if (error.message) {
       errorMessage = error.message;
@@ -362,7 +370,28 @@ async function registerCompany(companyData) {
       errorMessage = JSON.stringify(error);
     }
     
-    throw new Error(`Falha ao registrar empresa na Nuvem Fiscal: ${errorMessage}`);
+    // Preserve status code from original error if it exists
+    if (error?.status) {
+      statusCode = error.status;
+    } else if (error?.statusCode) {
+      statusCode = error.statusCode;
+    }
+    
+    // Preserve error code from original error if it exists
+    if (error?.code) {
+      errorCode = error.code;
+    }
+    
+    // Create new error with preserved properties
+    const newError = new Error(`Falha ao registrar empresa na Nuvem Fiscal: ${errorMessage}`);
+    newError.status = statusCode;
+    newError.statusCode = statusCode;
+    newError.code = errorCode;
+    if (errorData) {
+      newError.data = errorData;
+    }
+    
+    throw newError;
   }
 }
 
@@ -754,8 +783,35 @@ async function cancelNfse(nuvemFiscalId, nfseId, motivo) {
       data: response
     };
   } catch (error) {
-    console.error('Error canceling NFS-e:', error);
-    throw new Error(`Falha ao cancelar NFS-e: ${error.message}`);
+    console.error('[NuvemFiscal] Error canceling NFS-e:', {
+      nuvemFiscalId,
+      nfseId,
+      motivo,
+      errorMessage: error.message,
+      errorStatus: error.status,
+      errorData: error.data,
+      fullError: error
+    });
+    
+    // Preserve original error structure (status, data, code) when re-throwing
+    const cancelError = new Error(error.message || `Falha ao cancelar NFS-e: ${error.message}`);
+    
+    // Preserve status code from original error
+    if (error.status) {
+      cancelError.status = error.status;
+    }
+    
+    // Preserve error data from original error
+    if (error.data) {
+      cancelError.data = error.data;
+    }
+    
+    // Preserve error code if present
+    if (error.code) {
+      cancelError.code = error.code;
+    }
+    
+    throw cancelError;
   }
 }
 

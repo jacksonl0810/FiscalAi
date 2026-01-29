@@ -5,7 +5,7 @@
 
 import express from 'express';
 import { body, query, validationResult } from 'express-validator';
-import { prisma } from '../index.js';
+import { prisma } from '../lib/prisma.js';
 import { authenticate } from '../middleware/auth.js';
 import { requireAdmin } from '../middleware/admin.js';
 import { asyncHandler, AppError } from '../middleware/errorHandler.js';

@@ -11,27 +11,27 @@ datasource db {
 }
 
 model User {
-  id                String   @id @default(uuid())
-  email             String   @unique
-  passwordHash      String?  @map("password_hash") // Optional for Google auth users
+  id                String  @id @default(uuid())
+  email             String  @unique
+  passwordHash      String? @map("password_hash") // Optional for Google auth users
   name              String
   avatar            String?
-  pagarMeCustomerId String?  @map("pagar_me_customer_id")
-  cpfCnpj           String?  @map("cpf_cnpj")
-  isAdmin           Boolean  @default(false) @map("is_admin")
-  
+  pagarMeCustomerId String? @map("pagar_me_customer_id")
+  cpfCnpj           String? @map("cpf_cnpj")
+  isAdmin           Boolean @default(false) @map("is_admin")
+
   // Google OAuth fields
-  googleId          String?  @unique @map("google_id")
-  emailVerified     Boolean  @default(false) @map("email_verified")
-  authProvider      String   @default("email") @map("auth_provider") // 'email' or 'google'
-  
+  googleId      String? @unique @map("google_id")
+  emailVerified Boolean @default(false) @map("email_verified")
+  authProvider  String  @default("email") @map("auth_provider") // 'email' or 'google'
+
   // Trial tracking - users can only use trial ONCE
-  hasUsedTrial      Boolean  @default(false) @map("has_used_trial")
-  trialStartedAt    DateTime? @map("trial_started_at")
-  trialEndedAt      DateTime? @map("trial_ended_at")
-  
-  createdAt         DateTime @default(now()) @map("created_at")
-  updatedAt         DateTime @updatedAt @map("updated_at")
+  hasUsedTrial   Boolean   @default(false) @map("has_used_trial")
+  trialStartedAt DateTime? @map("trial_started_at")
+  trialEndedAt   DateTime? @map("trial_ended_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   // Relations
   companies            Company[]
@@ -287,24 +287,6 @@ model InvoiceUsage {
   @@index([userId, periodYear, periodMonth])
   @@index([companyId, periodYear, periodMonth])
   @@map("invoice_usage")
-}
-
-model PlanConfiguration {
-  id                  String   @id @default(uuid())
-  planId              String   @unique @map("plan_id")
-  name                String
-  description         String?
-  monthlyPrice        Int      @map("monthly_price") // in cents
-  annualPrice         Int?     @map("annual_price") // in cents, null if not available
-  perInvoicePrice     Int?     @map("per_invoice_price") // in cents, null if not pay-per-use
-  maxCompanies        Int?     @map("max_companies") // null = unlimited
-  maxInvoicesPerMonth Int?     @map("max_invoices_per_month") // null = unlimited
-  features            Json // Array of feature strings
-  isActive            Boolean  @default(true) @map("is_active")
-  createdAt           DateTime @default(now()) @map("created_at")
-  updatedAt           DateTime @updatedAt @map("updated_at")
-
-  @@map("plan_configurations")
 }
 
 model FiscalCredential {

@@ -8,7 +8,7 @@
  * - Notifications when municipality comes back online
  */
 
-import { prisma } from '../index.js';
+import { prisma } from '../lib/prisma.js';
 import { emitNfse, checkConnection } from './nuvemFiscal.js';
 import { translateErrorForUser } from './errorTranslationService.js';
 import { isDatabaseConnectionError } from '../utils/databaseConnection.js';

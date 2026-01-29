@@ -99,11 +99,24 @@ export default function SubscriptionBadge() {
     );
   }
 
-  // Don't show "pending" status if user hasn't actually attempted payment
-  // Only show pending if there's an actual payment attempt in progress
+  // ✅ PRIORITY: Active subscription status from API takes precedence over user data
+  // Get status and plan from subscriptionStatus first (most accurate)
   let status = subscriptionStatus?.status || user?.subscription_status || 'trial';
-  const planId = subscriptionStatus?.plan_id || user?.plan || 'trial';
+  let planId = subscriptionStatus?.plan_id || user?.plan || 'trial';
   const daysRemaining = subscriptionStatus?.days_remaining ?? user?.trial_days_remaining;
+  
+  // ✅ CRITICAL FIX: If status is 'ativo' (active), always use the plan_id from subscription
+  // Don't fallback to trial - user has a paid subscription!
+  if (status === 'ativo' && subscriptionStatus?.plan_id) {
+    planId = subscriptionStatus.plan_id; // Use the actual plan from subscription (pro/business)
+  }
+  
+  // ✅ CRITICAL FIX: If we have an active subscription, never show trial status
+  // Active paid subscription always takes priority over trial
+  if (status === 'ativo') {
+    // User has active paid subscription - ensure we're not showing trial
+    // This prevents showing "Trial" when user has purchased a plan
+  }
 
   // ✅ FIX: Don't show "pending" status if user is just browsing checkout
   // Only show pending if there's an actual payment transaction

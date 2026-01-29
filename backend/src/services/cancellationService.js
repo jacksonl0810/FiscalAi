@@ -8,7 +8,7 @@
  * - Some require cancellation before specific fiscal periods
  */
 
-import { prisma } from '../index.js';
+import { prisma } from '../lib/prisma.js';
 import { apiRequest, isNuvemFiscalConfigured } from './nuvemFiscal.js';
 
 // Default cancellation rules (conservative - most restrictive)

@@ -474,10 +474,19 @@ export async function createSubscription(subscriptionData) {
 
     // ✅ Build request body using Orders API structure
     // ⚠️ CRITICAL: items[].amount must be an integer >= 1 (in cents)
+    // ⚠️ CRITICAL: items[].code is REQUIRED by Pagar.me (HTTP 412 if missing)
+    // ⚠️ CRITICAL: closed: true means charge immediately, false means create order but don't charge
+    // For subscription first payment, we want to charge immediately, so closed: true
+    
+    // Generate unique code for the plan (e.g., "pro_monthly", "business_yearly")
+    const planCode = subscriptionData.plan.code || 
+                     `${(subscriptionData.metadata?.plan_id || subscriptionData.plan.name || 'plan').toLowerCase().replace(/\s+/g, '_')}_${subscriptionData.plan.interval || 'monthly'}`;
+    
     const requestBody = {
       customer_id: subscriptionData.customerId,
       items: [
         {
+          code: planCode, // ✅ REQUIRED: Unique identifier for the product/plan
           amount: amount, // ✅ REQUIRED: integer in cents (e.g., 9700 for R$97.00)
           description: `${subscriptionData.plan.name} (${subscriptionData.plan.interval || 'month'})`,
           quantity: 1
@@ -487,10 +496,15 @@ export async function createSubscription(subscriptionData) {
       payments: [
         {
           payment_method: 'credit_card',
-          credit_card: creditCard // ✅ { card_id: "card_xxx" } OR { card_token: "token_xxx" }
+          credit_card: {
+            ...creditCard,
+            // ✅ CRITICAL: Add installments for credit card (1 = single payment, required for immediate charge)
+            installments: 1
+            // Note: capture is not a valid field in Pagar.me v5 - payment is captured automatically when closed: true
+          }
         }
       ],
-      closed: false, // Required for subscriptions
+      closed: true, // ✅ CRITICAL: true = charge immediately, false = create order but don't charge
       metadata: subscriptionData.metadata || {}
     };
 
@@ -520,18 +534,49 @@ export async function createSubscription(subscriptionData) {
       orderId: order.id,
       status: order.status,
       customerId: subscriptionData.customerId,
-      charges: order.charges?.length || 0
+      charges: order.charges?.length || 0,
+      chargeStatus: order.charges?.[0]?.status || 'unknown',
+      amount: order.amount,
+      closed: order.closed
     });
+
+    // ✅ Extract charge info to verify payment was processed
+    const charge = order.charges?.[0];
+    
+    if (!charge) {
+      console.warn('[Pagar.me] ⚠️ No charge found in order response:', {
+        orderId: order.id,
+        orderStatus: order.status
+      });
+    } else {
+      console.log('[Pagar.me] Charge details:', {
+        chargeId: charge.id,
+        chargeStatus: charge.status,
+        amount: charge.amount,
+        paidAt: charge.paid_at
+      });
+    }
+
+    // ✅ Verify payment was actually processed
+    if (order.status !== 'paid' && order.status !== 'closed' && charge?.status !== 'paid') {
+      console.warn('[Pagar.me] ⚠️ Order created but payment not confirmed:', {
+        orderId: order.id,
+        orderStatus: order.status,
+        chargeStatus: charge?.status,
+        note: 'Payment may be pending or failed. Check charge status.'
+      });
+    }
 
     // ✅ Extract subscription info from order response
     // Orders API returns order with charges, we need to extract subscription ID if available
-    const charge = order.charges?.[0];
     const subscriptionId = charge?.subscription_id || order.id; // Use order ID as fallback
 
     return {
       subscriptionId: subscriptionId,
       orderId: order.id,
-      status: order.status === 'paid' ? 'active' : order.status,
+      status: order.status === 'paid' || order.status === 'closed' || charge?.status === 'paid' ? 'active' : order.status,
+      chargeId: charge?.id,
+      chargeStatus: charge?.status,
       currentPeriodStart: charge?.paid_at ? new Date(charge.paid_at * 1000) : new Date(),
       currentPeriodEnd: charge?.paid_at 
         ? new Date((charge.paid_at * 1000) + (subscriptionData.plan.interval === 'year' ? 365 : 30) * 86400000)
@@ -541,25 +586,45 @@ export async function createSubscription(subscriptionData) {
     const errorData = error.response?.data || {};
     const errorMessage = errorData.message || error.message;
     const errorDetails = errorData.errors || errorData.details || null;
+    const statusCode = error.response?.status;
+    
+    // ✅ Check for gateway response errors (e.g., HTTP 412 - missing required fields)
+    const gatewayResponse = errorData.gateway_response || {};
+    const gatewayCode = gatewayResponse.code;
+    const gatewayErrors = gatewayResponse.errors || [];
 
     console.error('[Pagar.me] Error creating subscription:', {
       message: error.message,
-      status: error.response?.status,
+      status: statusCode,
       statusText: error.response?.statusText,
       data: error.response?.data,
+      gatewayCode: gatewayCode,
+      gatewayErrors: gatewayErrors,
       requestBody: error.config?.data ? JSON.parse(error.config.data) : null,
       fullError: JSON.stringify(error.response?.data, null, 2)
     });
+
+    // ✅ CRITICAL: Detect HTTP 412 (Precondition Failed) - missing required fields like 'code'
+    if (statusCode === 412 || gatewayCode === '412') {
+      const missingField = gatewayErrors.find(e => e.message?.includes('Code')) || 
+                          gatewayErrors.find(e => e.message?.includes('code')) ||
+                          gatewayErrors[0];
+      const errorMsg = missingField?.message || 'Missing required field in order items';
+      throw new Error(`Erro de integração: ${errorMsg}. Por favor, tente novamente mais tarde.`);
+    }
 
     // Provide detailed error message
     let detailedMessage = errorMessage;
     if (errorDetails) {
       detailedMessage += ` | Details: ${JSON.stringify(errorDetails)}`;
     }
+    if (gatewayErrors.length > 0) {
+      detailedMessage += ` | Gateway: ${gatewayErrors.map(e => e.message).join(', ')}`;
+    }
 
-    if (error.response?.status === 400) {
+    if (statusCode === 400) {
       throw new Error(`Dados inválidos (400): ${detailedMessage}`);
-    } else if (error.response?.status === 401) {
+    } else if (statusCode === 401) {
       throw new Error(`Erro de autenticação (401): ${detailedMessage}`);
     }
 
@@ -611,6 +676,61 @@ export async function cancelSubscription(subscriptionId) {
 /* -------------------------------------------------------------------------- */
 
 /**
+ * Get order status from Pagar.me API
+ * @param {string} orderId - Pagar.me order ID (e.g., or_xxxxx)
+ * @returns {Promise<object>} Order data with status
+ */
+export async function getOrderStatus(orderId) {
+  if (!orderId || !orderId.startsWith('or_')) {
+    throw new Error(`Invalid order ID format. Expected or_xxxxx, got: ${orderId}`);
+  }
+
+  try {
+    const apiUrl = `${API_BASE}/orders/${orderId}`;
+
+    console.log('[Pagar.me] Fetching order status:', { orderId });
+
+    const response = await axios.get(apiUrl, {
+      headers: getAuthHeaders(),
+      timeout: PAGARME_TIMEOUT,
+      httpsAgent: httpsAgent
+    });
+
+    const order = response.data;
+
+    console.log('[Pagar.me] ✅ Order status retrieved:', {
+      orderId: order.id,
+      status: order.status,
+      amount: order.amount,
+      charges: order.charges?.length || 0
+    });
+
+    return {
+      id: order.id,
+      status: order.status,
+      amount: order.amount,
+      charges: order.charges || [],
+      customer_id: order.customer_id,
+      metadata: order.metadata || {}
+    };
+  } catch (error) {
+    console.error('[Pagar.me] Error fetching order status:', {
+      orderId,
+      message: error.message,
+      status: error.response?.status,
+      data: error.response?.data
+    });
+
+    if (error.response?.status === 404) {
+      throw new Error(`Order not found: ${orderId}`);
+    }
+
+    const errorData = error.response?.data || {};
+    throw new Error(`Failed to fetch order status: ${errorData.message || error.message}`);
+  }
+}
+
+/**
  * Create order for one-time payment (e.g., pay-per-use invoices)
  * ⚠️ NOTE: This is for one-time payments only, NOT for subscriptions
  * Use createSubscription() for recurring payments
@@ -636,6 +756,7 @@ export async function createOrder(orderData) {
       },
       items: [
         {
+          code: orderData.code || `invoice_${Date.now()}`, // ✅ REQUIRED: Unique identifier for the product/item
           amount: orderData.amount,
           description: orderData.planName || 'One-time payment',
           quantity: 1
@@ -675,13 +796,36 @@ export async function createOrder(orderData) {
       charges: response.data.charges
     };
   } catch (error) {
+    const errorData = error.response?.data || {};
+    const statusCode = error.response?.status;
+    const gatewayResponse = errorData.gateway_response || {};
+    const gatewayCode = gatewayResponse.code;
+    const gatewayErrors = gatewayResponse.errors || [];
+
     console.error('[Pagar.me] Error creating order:', {
       message: error.message,
       response: error.response?.data,
-      status: error.response?.status
+      status: statusCode,
+      gatewayCode: gatewayCode,
+      gatewayErrors: gatewayErrors
     });
-    const errorData = error.response?.data || {};
-    throw new Error(`Falha ao criar pedido no Pagar.me: ${errorData.message || error.message}`);
+
+    // ✅ CRITICAL: Detect HTTP 412 (Precondition Failed) - missing required fields like 'code'
+    if (statusCode === 412 || gatewayCode === '412') {
+      const missingField = gatewayErrors.find(e => e.message?.includes('Code')) || 
+                          gatewayErrors.find(e => e.message?.includes('code')) ||
+                          gatewayErrors[0];
+      const errorMsg = missingField?.message || 'Missing required field in order items';
+      throw new Error(`Erro de integração: ${errorMsg}. Por favor, tente novamente mais tarde.`);
+    }
+
+    const errorMessage = errorData.message || error.message;
+    if (gatewayErrors.length > 0) {
+      const gatewayMsg = gatewayErrors.map(e => e.message).join(', ');
+      throw new Error(`Falha ao criar pedido no Pagar.me: ${errorMessage} | ${gatewayMsg}`);
+    }
+    
+    throw new Error(`Falha ao criar pedido no Pagar.me: ${errorMessage}`);
   }
 }
 
@@ -690,33 +834,70 @@ export async function createOrder(orderData) {
 /* -------------------------------------------------------------------------- */
 
 /**
- * Validate webhook signature
- * @param {string} signature - Webhook signature from header
- * @param {string} payload - Raw webhook payload
- * @returns {boolean} True if signature is valid
+ * Validate webhook using custom secret header
+ * 
+ * IMPORTANT: Pagar.me does NOT provide HMAC signing like Stripe!
+ * Instead, we use a custom header approach:
+ * - Set PAGARME_WEBHOOK_SECRET in .env (any secure string you create)
+ * - Configure Pagar.me webhook to send this secret in X-Pagarme-Webhook-Secret header
+ * - Or append it to the webhook URL as ?token=YOUR_SECRET
+ * 
+ * @param {object} headers - Request headers object
+ * @param {string} queryToken - Optional token from query string
+ * @returns {boolean} True if webhook is authenticated
  */
-export function validateWebhookSignature(signature, payload) {
+export function validateWebhookSecret(headers, queryToken = null) {
   if (!PAGARME_WEBHOOK_SECRET) {
-    console.warn('[Pagar.me] Webhook secret not configured, skipping signature validation');
-    return true; // Allow in development
+    console.warn('[Pagar.me] Webhook secret not configured (PAGARME_WEBHOOK_SECRET), skipping validation');
+    console.warn('[Pagar.me] ⚠️ SECURITY WARNING: Configure PAGARME_WEBHOOK_SECRET in production!');
+    return true;
   }
 
-  if (!signature) {
-    return false;
+  // Method 1: Check custom header (recommended)
+  const headerSecret = headers['x-pagarme-webhook-secret'] || 
+                       headers['x-webhook-secret'] ||
+                       headers['authorization']?.replace('Bearer ', '');
+
+  if (headerSecret && headerSecret === PAGARME_WEBHOOK_SECRET) {
+    console.log('[Pagar.me] ✅ Webhook validated via header');
+    return true;
   }
 
-  // Extract hash from signature (format: sha256=<hash> or just <hash>)
-  const hash = signature.replace('sha256=', '');
-  
-  // Calculate expected hash
-  const expectedHash = crypto
-    .createHmac('sha256', PAGARME_WEBHOOK_SECRET)
-    .update(payload)
-    .digest('hex');
+  // Method 2: Check query token (fallback)
+  if (queryToken && queryToken === PAGARME_WEBHOOK_SECRET) {
+    console.log('[Pagar.me] ✅ Webhook validated via query token');
+    return true;
+  }
 
-  // Timing-safe comparison
-  return crypto.timingSafeEqual(
-    Buffer.from(hash),
-    Buffer.from(expectedHash)
-  );
+  // Method 3: Check Basic Auth (alternative)
+  const authHeader = headers['authorization'];
+  if (authHeader && authHeader.startsWith('Basic ')) {
+    try {
+      const base64Credentials = authHeader.replace('Basic ', '');
+      const credentials = Buffer.from(base64Credentials, 'base64').toString('utf-8');
+      const [username, password] = credentials.split(':');
+      
+      if (password === PAGARME_WEBHOOK_SECRET || username === PAGARME_WEBHOOK_SECRET) {
+        console.log('[Pagar.me] ✅ Webhook validated via Basic Auth');
+        return true;
+      }
+    } catch (e) {
+      // Ignore parse errors
+    }
+  }
+
+  console.error('[Pagar.me] ❌ Webhook validation failed - no valid secret found');
+  console.error('[Pagar.me] Expected header: X-Pagarme-Webhook-Secret or query param: ?token=...');
+  return false;
 }
+
+/**
+ * Get the webhook secret for configuring in Pagar.me dashboard
+ * @returns {string|null} The webhook secret or null if not configured
+ */
+export function getWebhookSecret() {
+  return PAGARME_WEBHOOK_SECRET || null;
+}
+
+// Legacy alias for backwards compatibility
+export const validateWebhookSignature = validateWebhookSecret;

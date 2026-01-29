@@ -15,7 +15,7 @@
  * - AI-friendly status updates
  */
 
-import { prisma } from '../index.js';
+import { prisma } from '../lib/prisma.js';
 import { checkNfseStatus } from './nuvemFiscal.js';
 import { translateErrorForUser } from './errorTranslationService.js';
 import { isDatabaseConnectionError } from '../utils/databaseConnection.js';
