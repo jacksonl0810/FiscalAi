@@ -412,6 +412,37 @@ export async function attachCardToCustomer(customerId, token) {
   }
 }
 
+/**
+ * Get customer cards from Pagar.me
+ * @param {string} customerId - Pagar.me customer ID
+ * @returns {Promise<Array>} Array of customer cards
+ */
+export async function getCustomerCards(customerId) {
+  assertId(customerId, 'cus_', 'customer_id');
+
+  try {
+    const apiUrl = `${API_BASE}/customers/${customerId}/cards`;
+    
+    const response = await axios.get(apiUrl, {
+      headers: getAuthHeaders(),
+      timeout: PAGARME_TIMEOUT,
+      httpsAgent: httpsAgent
+    });
+
+    return response.data.data || [];
+  } catch (error) {
+    console.error('[Pagar.me] Error getting customer cards:', {
+      customerId,
+      message: error.message,
+      response: error.response?.data,
+      status: error.response?.status
+    });
+    
+    const errorData = error.response?.data || {};
+    throw new Error(`Falha ao buscar cartões do cliente: ${errorData.message || error.message}`);
+  }
+}
+
 /* -------------------------------------------------------------------------- */
 /* Subscription Management (v5)                                               */
 /* -------------------------------------------------------------------------- */

@@ -2,6 +2,7 @@ import apiClient from '../client';
 
 export interface CreateCheckoutParams {
   plan_id: string;
+  billing_cycle?: 'monthly' | 'semiannual' | 'annual';
   return_url: string;
   cancel_url?: string;
 }
@@ -136,7 +137,7 @@ export const subscriptionsService = {
    */
   processPayment: async (data: {
     plan_id: string;
-    billing_cycle?: 'monthly' | 'annual';
+    billing_cycle?: 'monthly' | 'semiannual' | 'annual';
     card_token: string; // ✅ Must be token (token_xxxxx) from tokenization
     cpf_cnpj: string; // ✅ Required for Pagar.me customer creation (CPF: 11 digits, CNPJ: 14 digits)
   }) => {

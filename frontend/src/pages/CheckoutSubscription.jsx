@@ -46,8 +46,16 @@ export default function CheckoutSubscription() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const planId = searchParams.get('plan');
+  const billingCycleParam = searchParams.get('billing_cycle') || 'monthly';
+  
+  // Validate billing cycle parameter - helper function to ensure type safety
+  const validBillingCycles = ['monthly', 'semiannual', 'annual'];
+  const getValidBillingCycle = (value) => {
+    return validBillingCycles.includes(value) ? value : 'monthly';
+  };
   
   const [isProcessing, setIsProcessing] = useState(false);
+  const [billingCycle, setBillingCycle] = useState(getValidBillingCycle(billingCycleParam));
   const [card, setCard] = useState({
     number: '',
     holder_name: '',
@@ -58,6 +66,15 @@ export default function CheckoutSubscription() {
   const [cpfCnpj, setCpfCnpj] = useState(user?.cpf_cnpj || '');
 
   const plan = planDetails[planId];
+  
+  const getPriceForBillingCycle = () => {
+    if (billingCycle === 'semiannual') {
+      return planId === 'pro' ? 540 : 1100;
+    } else if (billingCycle === 'annual') {
+      return planId === 'pro' ? 970 : 1970;
+    }
+    return plan.price;
+  };
 
   // Format CPF/CNPJ for display
   const formatCpfCnpj = (value) => {
@@ -200,9 +217,10 @@ export default function CheckoutSubscription() {
 
       // ✅ Step 2: Send only token to backend (no card data)
       // Backend will: create customer -> attach token (creates card) -> create order
+      // Ensure billing cycle is valid before sending
       const response = await subscriptionsService.processPayment({
         plan_id: planId,
-        billing_cycle: 'monthly',
+        billing_cycle: getValidBillingCycle(billingCycle),
         card_token: finalToken,
         cpf_cnpj: cleanCpfCnpj
       });
@@ -302,16 +320,74 @@ export default function CheckoutSubscription() {
                   <p className="text-slate-500">{plan.description}</p>
             </div>
 
+                {/* Billing Cycle Selector */}
+                <div className="mb-6">
+                  <div className="flex items-center justify-center gap-2 p-1 bg-slate-800/30 rounded-xl border border-slate-700/50">
+                    <button
+                      type="button"
+                      onClick={() => setBillingCycle('monthly')}
+                      className={`flex-1 px-3 py-2 rounded-lg text-xs font-semibold transition-all ${
+                        billingCycle === 'monthly'
+                          ? isPro
+                            ? 'bg-orange-500/20 text-orange-300 border border-orange-500/40'
+                            : 'bg-violet-500/20 text-violet-300 border border-violet-500/40'
+                          : 'text-slate-500 hover:text-slate-300'
+                      }`}
+                    >
+                      Mensal
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setBillingCycle('semiannual')}
+                      className={`flex-1 px-3 py-2 rounded-lg text-xs font-semibold transition-all ${
+                        billingCycle === 'semiannual'
+                          ? isPro
+                            ? 'bg-orange-500/20 text-orange-300 border border-orange-500/40'
+                            : 'bg-violet-500/20 text-violet-300 border border-violet-500/40'
+                          : 'text-slate-500 hover:text-slate-300'
+                      }`}
+                    >
+                      Semestral
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setBillingCycle('annual')}
+                      className={`flex-1 px-3 py-2 rounded-lg text-xs font-semibold transition-all ${
+                        billingCycle === 'annual'
+                          ? isPro
+                            ? 'bg-orange-500/20 text-orange-300 border border-orange-500/40'
+                            : 'bg-violet-500/20 text-violet-300 border border-violet-500/40'
+                          : 'text-slate-500 hover:text-slate-300'
+                      }`}
+                    >
+                      Anual
+                    </button>
+                  </div>
+                </div>
+
                 {/* Price */}
                 <div className="mb-8">
                   <div className="flex items-baseline">
                     <span className="text-slate-500 text-xl">R$</span>
-                    <span className="text-5xl font-bold text-white mx-1">{plan.price}</span>
-                    <span className="text-slate-500 text-lg">/mês</span>
+                    <span className="text-5xl font-bold text-white mx-1">{getPriceForBillingCycle()}</span>
+                    <span className="text-slate-500 text-lg">
+                      {billingCycle === 'monthly' ? '/mês' :
+                       billingCycle === 'semiannual' ? '/semestre' :
+                       '/ano'}
+                    </span>
               </div>
                   <p className={`text-xs ${isPro ? 'text-orange-400/70' : 'text-violet-400/70'} mt-2`}>
-                    💳 Cobrado mensalmente • Cancele quando quiser
+                    💳 {billingCycle === 'monthly' ? 'Cobrado mensalmente' :
+                        billingCycle === 'semiannual' ? 'Cobrado semestralmente' :
+                        'Cobrado anualmente'} • Cancele quando quiser
                   </p>
+                  {billingCycle !== 'monthly' && (
+                    <p className="text-xs text-slate-500 mt-2">
+                      {billingCycle === 'semiannual' 
+                        ? `R$ ${(getPriceForBillingCycle() / 6).toFixed(2)}/mês equivalente`
+                        : `R$ ${(getPriceForBillingCycle() / 12).toFixed(2)}/mês equivalente`}
+                    </p>
+                  )}
             </div>
 
                 {/* Divider */}
@@ -585,7 +661,7 @@ export default function CheckoutSubscription() {
                     <>
                       <Lock className="w-5 h-5 relative z-10 drop-shadow-lg transition-transform duration-300 group-hover:scale-110" />
                       <span className="relative z-10 drop-shadow-md tracking-wide">
-                        Confirmar Pagamento — R$ {plan.price},00
+                        Confirmar Pagamento — R$ {getPriceForBillingCycle()},00
                       </span>
                     </>
                   )}
@@ -596,7 +672,9 @@ export default function CheckoutSubscription() {
                   <p className="text-xs text-center text-slate-600 mt-4 leading-relaxed">
                     Ao confirmar, você concorda com nossos{' '}
                     <span className="text-slate-400 hover:text-white cursor-pointer">termos de serviço</span>
-                    {' '}e autoriza a cobrança recorrente mensal de R$ {plan.price},00
+                    {' '}e autoriza a cobrança recorrente {billingCycle === 'monthly' ? 'mensal' :
+                                                           billingCycle === 'semiannual' ? 'semestral' :
+                                                           'anual'} de R$ {getPriceForBillingCycle()},00
                   </p>
 
                   {/* Security footer */}

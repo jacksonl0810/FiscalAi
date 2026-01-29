@@ -13,6 +13,7 @@
 import { pollAllPendingInvoices, startBackgroundPolling } from '../services/invoiceStatusMonitoring.js';
 import { checkAllCertificates, startCertificateMonitoring } from '../services/certificateLifecycleService.js';
 import { processRetryQueue, startRetryQueueProcessor } from '../services/municipalityRetryService.js';
+import { startRecurringBillingMonitoring } from '../services/recurringBillingService.js';
 import { isDatabaseConnectionError } from '../utils/databaseConnection.js';
 
 /**
@@ -55,6 +56,18 @@ export async function startAllBackgroundTasks() {
       console.warn('[BackgroundTasks] Database unavailable, retry queue will retry when database is available');
     } else {
       console.error('[BackgroundTasks] Error starting retry queue:', error.message);
+      errors.push(error);
+    }
+  }
+
+  try {
+    await startRecurringBillingMonitoring();
+    console.log('[BackgroundTasks] Recurring billing monitoring started');
+  } catch (error) {
+    if (isDatabaseConnectionError(error)) {
+      console.warn('[BackgroundTasks] Database unavailable, recurring billing will retry when database is available');
+    } else {
+      console.error('[BackgroundTasks] Error starting recurring billing monitoring:', error.message);
       errors.push(error);
     }
   }

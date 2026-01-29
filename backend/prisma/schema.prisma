@@ -217,10 +217,11 @@ model Subscription {
   pagarMeSubscriptionId String?   @map("pagar_me_subscription_id") // null for pay-per-use (removed @unique to allow multiple nulls)
   pagarMePlanId         String?   @map("pagar_me_plan_id") // null for pay-per-use
   status                String    @default("trial") // 'trial', 'ativo', 'inadimplente', 'cancelado', 'pending'
-  billingCycle          String?   @map("billing_cycle") // 'monthly', 'annual', 'per_invoice', 'custom'
+  billingCycle          String?   @map("billing_cycle") // 'monthly', 'semiannual', 'annual', 'per_invoice', 'custom'
   annualDiscountApplied Boolean   @default(false) @map("annual_discount_applied")
   currentPeriodStart    DateTime? @map("current_period_start")
   currentPeriodEnd      DateTime? @map("current_period_end")
+  nextBillingAt         DateTime? @map("next_billing_at") // Next billing date for recurring subscriptions
   canceledAt            DateTime? @map("canceled_at")
   trialEndsAt           DateTime? @map("trial_ends_at")
   createdAt             DateTime  @default(now()) @map("created_at")
@@ -230,6 +231,7 @@ model Subscription {
   user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   payments Payment[]
 
+  @@index([nextBillingAt, status])
   @@map("subscriptions")
 }
 
