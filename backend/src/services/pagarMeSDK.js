@@ -245,7 +245,50 @@ export async function createCustomer(customerData) {
     }
     
     const errorData = error.response?.data || {};
+    const statusCode = error.response?.status;
+    
+    if (statusCode === 409 || errorData.message?.includes('already exists') || errorData.message?.includes('duplicado')) {
+      console.log('[Pagar.me] Customer already exists, attempting to find:', customerData.email);
+      const document = customerData.cpfCnpj?.replace(/\D/g, '') || '';
+      const existingCustomer = await searchCustomer(customerData.email, document);
+      if (existingCustomer) {
+        return {
+          customerId: existingCustomer.customerId,
+          externalId: customerData.externalId
+        };
+      }
+    }
+    
     throw new Error(`Falha ao criar cliente no Pagar.me: ${errorData.message || error.message}`);
+  }
+}
+
+/**
+ * Search for an existing customer in Pagar.me by email or document
+ */
+async function searchCustomer(email, document) {
+  try {
+    const apiUrl = `${API_BASE}/customers`;
+    
+    const response = await axios.get(apiUrl, {
+      headers: getAuthHeaders(),
+      params: { email },
+      timeout: PAGARME_TIMEOUT,
+      httpsAgent: httpsAgent
+    });
+    
+    if (response.data?.data?.length > 0) {
+      const matchingCustomer = response.data.data.find(c => 
+        c.document === document || c.email === email
+      );
+      if (matchingCustomer) {
+        return { customerId: matchingCustomer.id };
+      }
+    }
+    return null;
+  } catch (error) {
+    console.log('[Pagar.me] Customer search failed, will create new:', error.message);
+    return null;
   }
 }
 
@@ -261,7 +304,6 @@ export async function createCustomer(customerData) {
  * @returns {Promise<object>} Customer with Pagar.me customer ID
  */
 export async function getOrCreateCustomer(customerData) {
-  // If customer already has Pagar.me ID, return it
   if (customerData.pagarMeCustomerId) {
     assertId(customerData.pagarMeCustomerId, 'cus_', 'customer_id');
     return {
@@ -270,7 +312,17 @@ export async function getOrCreateCustomer(customerData) {
     };
   }
 
-  // Otherwise, create new customer
+  const document = customerData.cpfCnpj?.replace(/\D/g, '') || '';
+  
+  const existingCustomer = await searchCustomer(customerData.email, document);
+  if (existingCustomer) {
+    console.log('[Pagar.me] Found existing customer:', existingCustomer.customerId);
+    return {
+      customerId: existingCustomer.customerId,
+      externalId: customerData.externalId
+    };
+  }
+
   return await createCustomer(customerData);
 }
 
