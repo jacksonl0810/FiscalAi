@@ -978,10 +978,14 @@ router.get('/status', asyncHandler(async (req, res) => {
   let currentPeriodEnd = null;
   let daysRemaining = 0;
 
+  const trialDays = 7;
+  const accountAgeDays = Math.floor((Date.now() - new Date(user.createdAt)) / (1000 * 60 * 60 * 24));
+  const isInTrialPeriod = accountAgeDays <= trialDays;
+
   if (subscription) {
     if (subscription.status === 'pending' && 
         subscription.pagarMeSubscriptionId?.startsWith('pending_') &&
-        !subscription.pagarMeSubscriptionId.includes('order_')) {
+        !subscription.pagarMeSubscriptionId.includes('or_')) {
       const paymentCount = await prisma.payment.count({
         where: { subscriptionId: subscription.id }
       });
@@ -991,29 +995,34 @@ router.get('/status', asyncHandler(async (req, res) => {
       }
     }
 
-  if (subscription) {
-    status = subscription.status;
-    planId = subscription.pagarMePlanId;
-    currentPeriodEnd = subscription.currentPeriodEnd;
+    if (subscription) {
+      status = subscription.status;
+      planId = subscription.pagarMePlanId;
+      currentPeriodEnd = subscription.currentPeriodEnd;
     
-    if (currentPeriodEnd) {
-      const now = new Date();
-      daysRemaining = Math.max(0, Math.ceil((new Date(currentPeriodEnd) - now) / (1000 * 60 * 60 * 24)));
-    }
+      if (currentPeriodEnd) {
+        const now = new Date();
+        daysRemaining = Math.max(0, Math.ceil((new Date(currentPeriodEnd) - now) / (1000 * 60 * 60 * 24)));
+      }
+      
+      if (status === 'pending' && isInTrialPeriod) {
+        status = 'pending';
+      }
     }
   }
   
   if (!subscription && user) {
-    const trialDays = 7;
-    const accountAgeDays = Math.floor((Date.now() - new Date(user.createdAt)) / (1000 * 60 * 60 * 24));
-    
-    if (accountAgeDays <= trialDays) {
+    if (isInTrialPeriod) {
       status = 'trial';
       daysRemaining = trialDays - accountAgeDays;
       currentPeriodEnd = new Date(new Date(user.createdAt).getTime() + trialDays * 24 * 60 * 60 * 1000);
-    } else {
+    } else if (user.hasUsedTrial) {
       status = 'inadimplente';
       daysRemaining = 0;
+    } else {
+      status = 'trial';
+      daysRemaining = trialDays - accountAgeDays;
+      currentPeriodEnd = new Date(new Date(user.createdAt).getTime() + trialDays * 24 * 60 * 60 * 1000);
     }
   }
 
