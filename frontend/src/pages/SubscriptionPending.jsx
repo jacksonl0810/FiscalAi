@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import { ArrowRight, Clock, Bell, Sparkles, CreditCard, Shield, CheckCircle, XCircle, RefreshCw, Loader2, Home } from "lucide-react";
 import { useAuth } from "@/lib/AuthContext";
 import { subscriptionsService } from "@/api/services/subscriptions";
@@ -22,107 +22,118 @@ export default function SubscriptionPending() {
   const intervalRef = useRef(null);
   const timeoutRef = useRef(null);
   const paymentConfirmedRef = useRef(false);
+  const isPollingRef = useRef(isPolling);
+  const hasStartedRef = useRef(false);
   
-  // Keep ref in sync with state
+  // Keep refs in sync with state
   useEffect(() => {
     paymentConfirmedRef.current = paymentConfirmed;
   }, [paymentConfirmed]);
+  
+  useEffect(() => {
+    isPollingRef.current = isPolling;
+  }, [isPolling]);
 
   const hasActiveTrial = user?.is_in_trial && user?.trial_days_remaining > 0;
 
+  // Single effect to handle polling - only runs once on mount
   useEffect(() => {
-    if (!isPolling) {
-      // Clear intervals if polling is stopped
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-        intervalRef.current = null;
-      }
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current);
-        timeoutRef.current = null;
-      }
-      return;
-    }
-
-    const checkStatus = async () => {
-      // Double-check if polling should continue (use ref to get current value)
-      if (!isPolling || paymentConfirmedRef.current) {
-        if (intervalRef.current) {
-          clearInterval(intervalRef.current);
-          intervalRef.current = null;
-        }
+    // Prevent multiple initializations
+    if (hasStartedRef.current) {
         return;
       }
+    hasStartedRef.current = true;
 
+    // Don't rely on cached user data - always poll API for real-time status
+    // The webhook will update the backend, and polling will detect the change
+        
+    const stopPolling = () => {
+            if (intervalRef.current) {
+              clearInterval(intervalRef.current);
+              intervalRef.current = null;
+            }
+            if (timeoutRef.current) {
+              clearTimeout(timeoutRef.current);
+              timeoutRef.current = null;
+            }
+    };
+
+    const checkStatus = async () => {
+      // Double-check if polling should continue
+      if (!isPollingRef.current || paymentConfirmedRef.current) {
+        stopPolling();
+            return;
+          }
+          
       try {
         const status = await subscriptionsService.getStatus();
-        console.log('[SubscriptionPending] Status check:', status);
         setCurrentStatus(status.status);
 
         if (status.status === 'ativo') {
-          // ✅ Immediately stop polling
-          setIsPolling(false);
+          // ✅ Immediately stop polling and mark as confirmed
+          stopPolling();
+          paymentConfirmedRef.current = true;
+          
+          // Batch state updates to prevent multiple re-renders
           setPaymentConfirmed(true);
-          paymentConfirmedRef.current = true; // Update ref immediately
+          setIsPolling(false);
           
-          // Clear intervals immediately
-          if (intervalRef.current) {
-            clearInterval(intervalRef.current);
-            intervalRef.current = null;
-          }
-          if (timeoutRef.current) {
-            clearTimeout(timeoutRef.current);
-            timeoutRef.current = null;
-          }
+          toast.success('🎉 Pagamento aprovado! Sua assinatura está ativa.', { 
+            id: 'payment-success',
+            duration: 5000 
+          });
           
-          toast.success('🎉 Pagamento aprovado! Sua assinatura está ativa.', { duration: 5000 });
+          // Delay refreshUser and navigation to allow UI transition to complete
+          setTimeout(async () => {
           if (refreshUser) await refreshUser();
-          setTimeout(() => navigate('/dashboard'), 2000);
-          return; // Exit early to prevent further polling
+            navigate('/dashboard');
+          }, 2500);
+          return;
         } else if (status.status === 'inadimplente') {
           // ✅ Immediately stop polling
+          stopPolling();
           setIsPolling(false);
           
-          // Clear intervals immediately
-          if (intervalRef.current) {
-            clearInterval(intervalRef.current);
-            intervalRef.current = null;
-          }
-          if (timeoutRef.current) {
-            clearTimeout(timeoutRef.current);
-            timeoutRef.current = null;
-          }
-          
-          toast.error('Pagamento recusado. Por favor, tente novamente.', { duration: 5000 });
+          toast.error('Pagamento recusado. Por favor, tente novamente.', { 
+            id: 'payment-failed',
+            duration: 5000 
+          });
           navigate('/payment-failed');
-          return; // Exit early to prevent further polling
+          return;
         } else if (status.status === 'trial') {
           setCurrentStatus('trial');
         }
         
-        setPollCount(prev => prev + 1);
+          setPollCount(prev => prev + 1);
       } catch (error) {
-        console.error('[SubscriptionPending] Error checking status:', error);
+        // Silently ignore errors during polling
       }
     };
 
-    // Initial check
-    checkStatus();
+    // Initial check after a short delay
+    const initialDelay = setTimeout(() => {
+          checkStatus();
+    }, 500);
     
-    // Set up interval
-    intervalRef.current = setInterval(checkStatus, 5000);
+    // Set up interval (every 10 seconds - reduced frequency)
+    intervalRef.current = setInterval(checkStatus, 10000);
 
     // Set up timeout to stop polling after 2 minutes
     timeoutRef.current = setTimeout(() => {
-      setIsPolling(false);
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-        intervalRef.current = null;
-      }
+      stopPolling();
+        setIsPolling(false);
     }, 120000);
 
     // Cleanup function
     return () => {
+      clearTimeout(initialDelay);
+      stopPolling();
+    };
+  }, [user?.subscription_status, navigate, refreshUser]); // Include user status to redirect if already active
+  
+  // Separate effect to handle isPolling becoming false
+  useEffect(() => {
+    if (!isPolling) {
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
         intervalRef.current = null;
@@ -131,8 +142,8 @@ export default function SubscriptionPending() {
         clearTimeout(timeoutRef.current);
         timeoutRef.current = null;
       }
-    };
-  }, [isPolling, navigate, refreshUser]);
+    }
+  }, [isPolling]);
 
   return (
     <div className="min-h-screen bg-[#07070a] flex items-center justify-center p-4">
@@ -173,10 +184,17 @@ export default function SubscriptionPending() {
           }} />
           
           <div className="relative p-10 text-center">
-            {/* Animated Icon Container */}
+            {/* Animated Icon Container with smooth transition */}
             <div className="relative w-28 h-28 mx-auto mb-8">
+              <AnimatePresence mode="wait">
               {paymentConfirmed ? (
-                <>
+                  <motion.div
+                    key="success"
+                    initial={{ opacity: 0, scale: 0.8 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    transition={{ duration: 0.4, ease: "easeOut" }}
+                    className="absolute inset-0"
+                  >
                   {/* Success state - static green circle */}
                   <motion.div
                     initial={{ scale: 0 }}
@@ -198,9 +216,15 @@ export default function SubscriptionPending() {
                   >
                     <CheckCircle className="w-10 h-10 text-emerald-400" />
                   </motion.div>
-                </>
+                  </motion.div>
               ) : (
-                <>
+                  <motion.div
+                    key="pending"
+                    initial={{ opacity: 1 }}
+                    exit={{ opacity: 0, scale: 0.8 }}
+                    transition={{ duration: 0.3 }}
+                    className="absolute inset-0"
+                  >
                   {/* Pending state - animated orange circle */}
               <motion.div
                 animate={{ rotate: 360 }}
@@ -230,15 +254,19 @@ export default function SubscriptionPending() {
                 transition={{ duration: 2.5, repeat: Infinity, ease: "easeInOut", delay: 0.5 }}
                 className="absolute bottom-0 left-1 w-1.5 h-1.5 bg-amber-400 rounded-full blur-[1px]"
               />
-                </>
+                  </motion.div>
               )}
+              </AnimatePresence>
             </div>
 
-            {/* Badge */}
+            {/* Badge with smooth transition */}
+            <AnimatePresence mode="wait">
             <motion.div
+                key={paymentConfirmed ? 'confirmed' : 'pending'}
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.3 }}
+                exit={{ opacity: 0, y: -10 }}
+                transition={{ duration: 0.3 }}
               className={`inline-flex items-center gap-2 px-4 py-1.5 rounded-full mb-6 ${
                 paymentConfirmed 
                   ? 'bg-emerald-500/10 border border-emerald-500/20' 
@@ -263,22 +291,30 @@ export default function SubscriptionPending() {
                 </>
               )}
             </motion.div>
+            </AnimatePresence>
 
-            {/* Title */}
+            {/* Title with smooth transition */}
+            <AnimatePresence mode="wait">
             <motion.h1 
+                key={paymentConfirmed ? 'title-confirmed' : 'title-pending'}
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.2 }}
+                exit={{ opacity: 0, y: -10 }}
+                transition={{ duration: 0.3 }}
               className="text-3xl font-bold text-white mb-3"
             >
               {paymentConfirmed ? '✓ Assinatura Ativada!' : 'Processando Pagamento'}
             </motion.h1>
+            </AnimatePresence>
 
-            {/* Subtitle */}
+            {/* Subtitle with smooth transition */}
+            <AnimatePresence mode="wait">
             <motion.p 
+                key={paymentConfirmed ? 'subtitle-confirmed' : 'subtitle-pending'}
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.3 }}
+                exit={{ opacity: 0, y: -10 }}
+                transition={{ duration: 0.3 }}
               className="text-slate-400 mb-8 leading-relaxed max-w-sm mx-auto"
             >
               {paymentConfirmed 
@@ -286,6 +322,7 @@ export default function SubscriptionPending() {
                 : 'Seu pagamento está sendo processado com segurança. Assim que for confirmado, você terá acesso completo à MAY.'
               }
             </motion.p>
+            </AnimatePresence>
 
             {/* Progress Steps */}
             <motion.div
@@ -402,17 +439,17 @@ export default function SubscriptionPending() {
                   if (paymentConfirmed) return; // Don't restart if already confirmed
                   
                   // Clear existing intervals
-                  if (intervalRef.current) {
-                    clearInterval(intervalRef.current);
-                    intervalRef.current = null;
-                  }
-                  if (timeoutRef.current) {
-                    clearTimeout(timeoutRef.current);
-                    timeoutRef.current = null;
-                  }
+                    if (intervalRef.current) {
+                      clearInterval(intervalRef.current);
+                      intervalRef.current = null;
+                    }
+                    if (timeoutRef.current) {
+                      clearTimeout(timeoutRef.current);
+                      timeoutRef.current = null;
+                    }
                   
-                  setIsPolling(true);
-                  setPollCount(0);
+                    setIsPolling(true);
+                    setPollCount(0);
                   
                   // Manual check
                   try {
@@ -420,14 +457,23 @@ export default function SubscriptionPending() {
                     setCurrentStatus(status.status);
                     
                     if (status.status === 'ativo') {
-                      setIsPolling(false);
+                      paymentConfirmedRef.current = true;
                       setPaymentConfirmed(true);
-                      toast.success('🎉 Pagamento aprovado! Sua assinatura está ativa.', { duration: 5000 });
+                      setIsPolling(false);
+                      toast.success('🎉 Pagamento aprovado! Sua assinatura está ativa.', { 
+                        id: 'payment-success',
+                        duration: 5000 
+                      });
+                      setTimeout(async () => {
                       if (refreshUser) await refreshUser();
-                      setTimeout(() => navigate('/dashboard'), 2000);
+                        navigate('/dashboard');
+                      }, 2500);
                     } else if (status.status === 'inadimplente') {
                       setIsPolling(false);
-                      toast.error('Pagamento recusado. Por favor, tente novamente.', { duration: 5000 });
+                      toast.error('Pagamento recusado. Por favor, tente novamente.', { 
+                        id: 'payment-failed',
+                        duration: 5000 
+                      });
                       navigate('/payment-failed');
                     }
                   } catch (error) {

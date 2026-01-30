@@ -22,6 +22,7 @@ const CACHEABLE_API_ROUTES = [
   '/api/notifications',
   '/api/settings',
   '/api/auth/me',
+  '/api/subscriptions/status',
 ];
 
 // Install event - cache static assets
