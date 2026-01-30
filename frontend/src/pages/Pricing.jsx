@@ -182,7 +182,9 @@ export default function Pricing() {
       const result = await subscriptionsService.createCheckout({
         plan_id: plan.id,
         billing_cycle: plan.id === 'trial' ? undefined : selectedBillingCycle,
-        return_url: `${window.location.origin}/payment-success`,
+        return_url: plan.id === 'trial' 
+          ? `${window.location.origin}/payment-success?plan=trial`
+          : `${window.location.origin}/subscription-pending?plan=${plan.id}`,
         cancel_url: `${window.location.origin}/pricing`
       });
 

@@ -363,7 +363,7 @@ export default function CheckoutSubscription() {
                       Anual
                     </button>
                   </div>
-                </div>
+            </div>
 
                 {/* Price */}
                 <div className="mb-8">

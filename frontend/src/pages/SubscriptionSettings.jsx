@@ -50,6 +50,11 @@ export default function SubscriptionSettings() {
   const { data: subscriptionStatus, isLoading } = useQuery({
     queryKey: ['subscription-status'],
     queryFn: subscriptionsService.getStatus,
+    staleTime: 5 * 60 * 1000, // Consider data fresh for 5 minutes
+    gcTime: 10 * 60 * 1000, // Keep in cache for 10 minutes
+    refetchOnWindowFocus: false,
+    refetchOnMount: false, // Don't refetch when component mounts if data is fresh
+    refetchOnReconnect: false
   });
 
   const cancelMutation = useMutation({

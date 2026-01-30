@@ -145,8 +145,9 @@ router.post('/webhook', express.json(), asyncHandler(async (req, res) => {
 
     // Handle different event types
     // ✅ Pagar.me v5 uses Orders API, so primary events are order.* and charge.*
+    // IMPORTANT: Only process order.paid as primary - charge.paid is duplicate
     switch (eventType) {
-      // ✅ V5 Orders API events
+      // ✅ V5 Orders API events - PRIMARY handlers
       case 'order.paid':
       case 'order.closed':
         result = await handleOrderPaid(event);
@@ -157,9 +158,11 @@ router.post('/webhook', express.json(), asyncHandler(async (req, res) => {
         result = await handleOrderPaymentFailed(event);
         break;
 
-      // ✅ V5 Charge events (payments within orders)
+      // ✅ V5 Charge events - acknowledge only (order.paid handles activation)
+      // Pagar.me sends both charge.paid AND order.paid for the same payment
+      // We only process order.paid to avoid duplicate notifications
       case 'charge.paid':
-        result = await handleChargePaid(event);
+        result = { status: 'acknowledged', message: 'Handled by order.paid event' };
         break;
 
       case 'charge.payment_failed':
@@ -168,7 +171,7 @@ router.post('/webhook', express.json(), asyncHandler(async (req, res) => {
         result = await handleChargePaymentFailed(event);
         break;
 
-      // ✅ Handle order.created - check if order is already paid
+      // ✅ Just acknowledge created events - let .paid events handle activation
       case 'order.created':
         result = await handleOrderCreated(event);
         break;
@@ -2322,50 +2325,32 @@ async function handleChargePaymentFailed(event) {
 
 /**
  * Handle order.created event (v5 Orders API)
- * Check if order is already paid and activate subscription if so
+ * Just acknowledge - let order.paid handle the activation
+ * This prevents duplicate processing since Pagar.me sends both order.created and order.paid
  */
 async function handleOrderCreated(event) {
   const orderData = event.data || event;
   const orderId = orderData.id;
   const orderStatus = orderData.status;
 
-
-  // If order is already paid, process it as order.paid
-  if (orderStatus === 'paid' || orderStatus === 'closed') {
-    return await handleOrderPaid(event);
-  }
-
-  // If order is pending payment, just log it
-  if (orderStatus === 'pending' || orderStatus === 'processing') {
-    return { status: 'pending', orderId };
-  }
-
-  // For other statuses, just acknowledge
-  return { status: 'created', orderId };
+  // Don't process here - let order.paid event handle activation
+  // This prevents duplicate notifications and subscription updates
+  return { status: 'acknowledged', orderId, orderStatus };
 }
 
 /**
  * Handle charge.created event (v5 Orders API)
- * Check if charge is already paid and activate subscription if so
+ * Just acknowledge - let charge.paid handle the activation
+ * This prevents duplicate processing since Pagar.me sends both charge.created and charge.paid
  */
 async function handleChargeCreated(event) {
   const chargeData = event.data || event;
   const chargeId = chargeData.id;
   const chargeStatus = chargeData.status;
 
-
-  // If charge is already paid, process it as charge.paid
-  if (chargeStatus === 'paid' || chargeStatus === 'success') {
-    return await handleChargePaid(event);
-  }
-
-  // If charge is pending, just log it
-  if (chargeStatus === 'pending' || chargeStatus === 'processing') {
-    return { status: 'pending', chargeId };
-  }
-
-  // For other statuses, just acknowledge
-  return { status: 'created', chargeId };
+  // Don't process here - let charge.paid event handle activation
+  // This prevents duplicate notifications and subscription updates
+  return { status: 'acknowledged', chargeId, chargeStatus };
 }
 
 /**

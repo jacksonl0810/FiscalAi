@@ -1,4 +1,4 @@
-import React, { createContext, useState, useContext, useEffect, useCallback } from 'react';
+import React, { createContext, useState, useContext, useEffect, useCallback, useMemo, useRef } from 'react';
 import { authService, getToken, setToken, setRefreshToken } from '@/api/services';
 
 const AuthContext = createContext(undefined);
@@ -8,13 +8,32 @@ export const AuthProvider = ({ children }) => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoadingAuth, setIsLoadingAuth] = useState(true);
   const [authError, setAuthError] = useState(null);
+  const lastCheckRef = useRef(0);
+  const isCheckingRef = useRef(false);
+  const MIN_CHECK_INTERVAL = 5000;
+  const MIN_FORCE_INTERVAL = 1000;
 
-  // Check authentication status on mount
   useEffect(() => {
     checkAuth();
   }, []);
 
-  const checkAuth = async () => {
+  const checkAuth = useCallback(async (force = false) => {
+    if (isCheckingRef.current) return;
+    
+    const now = Date.now();
+    const timeSinceLastCheck = now - lastCheckRef.current;
+    
+    if (!force && timeSinceLastCheck < MIN_CHECK_INTERVAL) {
+      return;
+    }
+    
+    if (force && timeSinceLastCheck < MIN_FORCE_INTERVAL) {
+      return;
+    }
+    
+    isCheckingRef.current = true;
+    lastCheckRef.current = now;
+
     try {
       setIsLoadingAuth(true);
       setAuthError(null);
@@ -28,21 +47,17 @@ export const AuthProvider = ({ children }) => {
       }
 
       // Validate token by getting current user
-      // 👉 This call returns subscription_status from backend
       const currentUser = await authService.me();
       setUser(currentUser);
       setIsAuthenticated(true);
     } catch (error) {
-      // 401 is expected when not authenticated - don't log as error
       if (error.status !== 401) {
         console.error('Auth check failed:', error);
       }
       setIsAuthenticated(false);
       setUser(null);
 
-      // Handle specific error types
       if (error.status === 401) {
-        // 401 is expected when not authenticated - don't set error state
         setAuthError(null);
       } else {
         setAuthError({
@@ -52,10 +67,11 @@ export const AuthProvider = ({ children }) => {
       }
     } finally {
       setIsLoadingAuth(false);
+      isCheckingRef.current = false;
     }
-  };
+  }, []);
 
-  const login = async (email, password) => {
+  const login = useCallback(async (email, password) => {
     try {
       setIsLoadingAuth(true);
       setAuthError(null);
@@ -64,8 +80,7 @@ export const AuthProvider = ({ children }) => {
       setUser(response.user);
       setIsAuthenticated(true);
       
-      // Refresh to get subscription status
-      await checkAuth();
+      await checkAuth(true);
       
       return response;
     } catch (error) {
@@ -77,9 +92,9 @@ export const AuthProvider = ({ children }) => {
     } finally {
       setIsLoadingAuth(false);
     }
-  };
+  }, [checkAuth]);
 
-  const register = async (name, email, password) => {
+  const register = useCallback(async (name, email, password) => {
     try {
       setIsLoadingAuth(true);
       setAuthError(null);
@@ -88,8 +103,7 @@ export const AuthProvider = ({ children }) => {
       setUser(response.user);
       setIsAuthenticated(true);
       
-      // Refresh to get subscription status
-      await checkAuth();
+      await checkAuth(true);
       
       return response;
     } catch (error) {
@@ -101,7 +115,7 @@ export const AuthProvider = ({ children }) => {
     } finally {
       setIsLoadingAuth(false);
     }
-  };
+  }, [checkAuth]);
 
   const logout = useCallback(async () => {
     try {
@@ -113,23 +127,20 @@ export const AuthProvider = ({ children }) => {
     }
   }, []);
 
-  // Login with Google credential (for Google Sign-In button)
-  const loginWithGoogle = async (credential) => {
+  const loginWithGoogle = useCallback(async (credential) => {
     try {
       setIsLoadingAuth(true);
       setAuthError(null);
 
       const response = await authService.googleLogin(credential);
       
-      // Store tokens
       setToken(response.token);
       setRefreshToken(response.refreshToken);
       
       setUser(response.user);
       setIsAuthenticated(true);
       
-      // Refresh to get subscription status
-      await checkAuth();
+      await checkAuth(true);
       
       return response;
     } catch (error) {
@@ -141,7 +152,7 @@ export const AuthProvider = ({ children }) => {
     } finally {
       setIsLoadingAuth(false);
     }
-  };
+  }, [checkAuth]);
 
   const navigateToLogin = useCallback(() => {
     window.location.href = '/login';
@@ -151,16 +162,17 @@ export const AuthProvider = ({ children }) => {
     setAuthError(null);
   }, []);
 
-  // 👉 Expose refreshUser method for components to call after subscription changes
+  // Expose refreshUser method for components to call after subscription changes
   const refreshUser = useCallback(async () => {
-    await checkAuth();
-  }, []);
+    await checkAuth(true); // Force refresh, bypass debounce
+  }, [checkAuth]);
 
-  const value = {
+  // Memoize context value to prevent unnecessary re-renders
+  const value = useMemo(() => ({
     user,
     isAuthenticated,
     isLoadingAuth,
-    isLoadingPublicSettings: false, // For backward compatibility
+    isLoadingPublicSettings: false,
     authError,
     login,
     register,
@@ -169,8 +181,8 @@ export const AuthProvider = ({ children }) => {
     navigateToLogin,
     checkAuth,
     clearError,
-    refreshUser, // New method to refresh user data
-  };
+    refreshUser,
+  }), [user, isAuthenticated, isLoadingAuth, authError, login, register, logout, loginWithGoogle, navigateToLogin, checkAuth, clearError, refreshUser]);
 
   return (
     <AuthContext.Provider value={value}>
