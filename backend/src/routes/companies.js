@@ -379,24 +379,41 @@ router.post('/:id/register-fiscal', asyncHandler(async (req, res) => {
       data: { nuvemFiscalId: registrationResult.nuvemFiscalId }
     });
 
+    // Map status from registration result to database status
+    // 'not_connected' means company exists but needs credentials (NOT an error)
+    // 'conectado' means company is fully connected
+    const dbStatus = registrationResult.status === 'conectado' ? 'conectado' : 'not_connected';
+
     // Update fiscal integration status
+    // IMPORTANT: 'not_connected' is NOT a failure - it means company exists but needs credentials
     await prisma.fiscalIntegrationStatus.upsert({
       where: { companyId: req.params.id },
       update: {
-        status: registrationResult.status,
+        status: dbStatus,
         mensagem: registrationResult.message,
         ultimaVerificacao: new Date()
       },
       create: {
         companyId: req.params.id,
-        status: registrationResult.status,
+        status: dbStatus,
         mensagem: registrationResult.message,
         ultimaVerificacao: new Date()
       }
     });
 
+    // Also update company's fiscal connection status
+    await prisma.company.update({
+      where: { id: req.params.id },
+      data: {
+        fiscalConnectionStatus: dbStatus === 'conectado' ? 'connected' : 'not_connected',
+        fiscalConnectionError: null // Clear any previous errors
+      }
+    });
+
     sendSuccess(res, registrationResult.message, {
-      nuvemFiscalId: registrationResult.nuvemFiscalId
+      nuvemFiscalId: registrationResult.nuvemFiscalId,
+      status: registrationResult.status,
+      alreadyExists: registrationResult.alreadyExists || false
     });
   } catch (error) {
     console.error('[Companies] Error registering in Nuvem Fiscal:', error);
@@ -436,7 +453,8 @@ router.post('/:id/register-fiscal', asyncHandler(async (req, res) => {
       errorData = error.data || null;
     }
     
-    // Update status to failure
+    // Only update status to 'falha' for actual errors (not for existing companies)
+    // Existing companies are handled above and set to 'not_connected'
     try {
       await prisma.fiscalIntegrationStatus.upsert({
         where: { companyId: req.params.id },

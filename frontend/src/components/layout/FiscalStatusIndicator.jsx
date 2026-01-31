@@ -29,7 +29,8 @@ export default function FiscalStatusIndicator({ companyId }) {
       const responseStatus = responseData.status || responseData.connectionStatus;
       console.log('[FiscalStatus] Extracted status:', responseStatus);
       
-      const failedStatuses = ['falha', 'failed', 'not_connected', 'expired'];
+      // Only explain actual failures, not 'not_connected' (which is informational)
+      const failedStatuses = ['falha', 'failed', 'expired'];
       
       if (failedStatuses.includes(responseStatus)) {
         explainError(responseData.error || responseData.details || responseData.message || response.message);
@@ -143,7 +144,7 @@ export default function FiscalStatusIndicator({ companyId }) {
       color: "text-orange-400",
       bg: "bg-orange-500/10",
       border: "border-orange-500/20",
-      label: "🟠 Não conectado"
+      label: "🟠 Empresa cadastrada - Falta conectar"
     },
     not_configured: {
       icon: AlertCircle,
@@ -205,7 +206,9 @@ export default function FiscalStatusIndicator({ companyId }) {
               ? 'Verificando conexão com a prefeitura...'
               : rateLimitError 
                 ? rateLimitError 
-                : status.mensagem || 'Verificando status da conexão com a prefeitura...'}
+                : displayStatus === 'not_connected'
+                  ? 'Empresa cadastrada na Nuvem Fiscal. Configure certificado digital ou credenciais municipais para conectar.'
+                  : status.mensagem || 'Verificando status da conexão com a prefeitura...'}
           </p>
           {status.ultima_verificacao && !verifyMutation.isPending && !rateLimitError && (
             <p className="text-xs text-gray-600 mt-2">
@@ -249,9 +252,9 @@ export default function FiscalStatusIndicator({ companyId }) {
         )}
       </AnimatePresence>
 
-      {/* GPT Error Explanation */}
+      {/* GPT Error Explanation - only for actual failures */}
       <AnimatePresence>
-        {(isExplaining || gptExplanation) && displayStatus === 'falha' && !rateLimitError && (
+        {(isExplaining || gptExplanation) && (displayStatus === 'falha' || displayStatus === 'failed') && !rateLimitError && (
           <motion.div
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: 'auto' }}

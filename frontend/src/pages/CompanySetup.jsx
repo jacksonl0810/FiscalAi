@@ -159,24 +159,49 @@ export default function CompanySetup() {
         try {
           const nuvemResult = await companiesService.registerInFiscalCloud(savedCompany.id);
 
+          // Handle different registration outcomes
           if (nuvemResult.status === 'success' || nuvemResult.nuvemFiscalId) {
-            toast.success('✓ Integração Fiscal Ativada!\n\nEmpresa registrada com sucesso na Nuvem Fiscal', {
-              duration: 5000,
-              style: {
-                background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)',
-                border: '1px solid rgba(34, 197, 94, 0.3)',
-                borderRadius: '16px',
-                padding: '16px',
-                boxShadow: '0 10px 40px rgba(34, 197, 94, 0.2)',
-                color: '#fff',
-                whiteSpace: 'pre-line',
-              },
-            });
-            await notificationsService.create({
-              titulo: "Empresa registrada",
-              mensagem: "Empresa registrada com sucesso na Nuvem Fiscal!",
-              tipo: "sucesso"
-            });
+            const isExisting = nuvemResult.alreadyExists || nuvemResult.status === 'not_connected';
+            
+            if (isExisting) {
+              // Company already exists - this is NOT an error, just needs credentials
+              toast.success('✓ Empresa Encontrada na Nuvem Fiscal!\n\nA empresa já estava cadastrada. Configure certificado digital ou credenciais municipais para conectar.', {
+                duration: 6000,
+                style: {
+                  background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)',
+                  border: '1px solid rgba(251, 146, 60, 0.3)',
+                  borderRadius: '16px',
+                  padding: '16px',
+                  boxShadow: '0 10px 40px rgba(251, 146, 60, 0.2)',
+                  color: '#fff',
+                  whiteSpace: 'pre-line',
+                },
+              });
+              await notificationsService.create({
+                titulo: "Empresa vinculada",
+                mensagem: "Empresa encontrada na Nuvem Fiscal! Configure certificado digital ou credenciais municipais para conectar.",
+                tipo: "info"
+              });
+            } else {
+              // New company registered successfully
+              toast.success('✓ Integração Fiscal Ativada!\n\nEmpresa registrada com sucesso na Nuvem Fiscal', {
+                duration: 5000,
+                style: {
+                  background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)',
+                  border: '1px solid rgba(34, 197, 94, 0.3)',
+                  borderRadius: '16px',
+                  padding: '16px',
+                  boxShadow: '0 10px 40px rgba(34, 197, 94, 0.2)',
+                  color: '#fff',
+                  whiteSpace: 'pre-line',
+                },
+              });
+              await notificationsService.create({
+                titulo: "Empresa registrada",
+                mensagem: "Empresa registrada com sucesso na Nuvem Fiscal!",
+                tipo: "sucesso"
+              });
+            }
           } else if (nuvemResult.status === 'not_configured') {
             toast.info('ℹ️ Integração Fiscal Pendente\n\nNuvem Fiscal não configurado. Empresa salva localmente.', {
               duration: 5000,
