@@ -192,10 +192,55 @@ export async function apiRequest(endpoint, options = {}) {
 }
 
 /**
+ * Get company from Nuvem Fiscal by CNPJ
+ * @param {string} cnpj - Company CNPJ (cleaned, 14 digits)
+ * @returns {Promise<object|null>} Company data from Nuvem Fiscal or null if not found
+ */
+async function getCompanyByCnpj(cnpj) {
+  try {
+    const cleanCnpj = (cnpj || '').replace(/\D/g, '');
+    if (!cleanCnpj || cleanCnpj.length !== 14) {
+      return null;
+    }
+
+    console.log('[NuvemFiscal] Fetching existing company by CNPJ:', cleanCnpj);
+    
+    // Try to fetch company by CNPJ (Nuvem Fiscal uses CNPJ as ID in some cases)
+    try {
+      const response = await apiRequest(`/empresas/${cleanCnpj}`);
+      if (response && (response.id || response.cpf_cnpj)) {
+        console.log('[NuvemFiscal] Company found by CNPJ:', response.id || response.cpf_cnpj);
+        return response;
+      }
+    } catch (apiError) {
+      // If 404, company doesn't exist - that's fine
+      if (apiError.status === 404) {
+        console.log('[NuvemFiscal] Company not found by CNPJ:', cleanCnpj);
+        return null;
+      }
+      // Other errors might indicate the endpoint doesn't support CNPJ lookup
+      // We'll try alternative approaches below
+      console.log('[NuvemFiscal] Error fetching by CNPJ (will try alternative):', apiError.status);
+    }
+
+    return null;
+  } catch (error) {
+    console.error('[NuvemFiscal] Error getting company by CNPJ:', error.message);
+    return null;
+  }
+}
+
+/**
  * Register a company in Nuvem Fiscal
  * Documentation: https://dev.nuvemfiscal.com.br/docs/api#tag/Empresa/operation/CriarEmpresa
+ * 
+ * This function implements idempotent behavior:
+ * - If company already exists in Nuvem Fiscal, it fetches and links the existing company
+ * - Company existence is NOT treated as an error
+ * - Returns status 'not_connected' for existing companies (they need credentials)
+ * 
  * @param {object} companyData - Company data from database (Prisma camelCase format)
- * @returns {Promise<object>} Registration result with nuvemFiscalId
+ * @returns {Promise<object>} Registration result with nuvemFiscalId and status
  */
 async function registerCompany(companyData) {
   try {
@@ -308,6 +353,20 @@ async function registerCompany(companyData) {
         method: 'POST',
         body: JSON.stringify(nuvemFiscalCompany)
       });
+      
+      console.log('[NuvemFiscal] Company registered successfully:', response.id || response.cpf_cnpj);
+
+      // Validate response has required fields
+      if (!response.id && !response.cpf_cnpj) {
+        console.error('[NuvemFiscal] Invalid response from API:', response);
+        throw new Error('Resposta inválida da Nuvem Fiscal: ID da empresa não retornado');
+      }
+
+      return {
+        nuvemFiscalId: response.id || response.cpf_cnpj || cleanCnpj,
+        status: 'not_connected', // New companies need credentials/certificate
+        message: 'Empresa registrada com sucesso na Nuvem Fiscal. Configure certificado digital ou credenciais municipais para conectar.'
+      };
     } catch (apiError) {
       console.error('[NuvemFiscal] API request failed:', {
         status: apiError.status,
@@ -315,27 +374,61 @@ async function registerCompany(companyData) {
         data: apiError.data
       });
       
-      // Re-throw with better error message
+      // Check if company already exists (common error codes: 400, 409, 422)
+      const isCompanyExistsError = (
+        apiError.status === 400 || 
+        apiError.status === 409 || 
+        apiError.status === 422
+      ) && (
+        apiError.message?.toLowerCase().includes('já existe') ||
+        apiError.message?.toLowerCase().includes('already exists') ||
+        apiError.message?.toLowerCase().includes('duplicado') ||
+        apiError.message?.toLowerCase().includes('duplicate') ||
+        apiError.message?.toLowerCase().includes('cpf_cnpj') ||
+        (apiError.data?.error && (
+          typeof apiError.data.error === 'string' && (
+            apiError.data.error.toLowerCase().includes('já existe') ||
+            apiError.data.error.toLowerCase().includes('already exists') ||
+            apiError.data.error.toLowerCase().includes('duplicado')
+          )
+        ))
+      );
+
+      if (isCompanyExistsError) {
+        console.log('[NuvemFiscal] Company already exists, fetching existing company by CNPJ:', cleanCnpj);
+        
+        // Try to fetch the existing company
+        const existingCompany = await getCompanyByCnpj(cleanCnpj);
+        
+        if (existingCompany && (existingCompany.id || existingCompany.cpf_cnpj)) {
+          const nuvemFiscalId = existingCompany.id || existingCompany.cpf_cnpj || cleanCnpj;
+          console.log('[NuvemFiscal] Existing company found and linked:', nuvemFiscalId);
+          
+          return {
+            nuvemFiscalId: nuvemFiscalId,
+            status: 'not_connected', // Existing companies need credentials/certificate
+            message: 'Empresa já existe na Nuvem Fiscal. Configure certificado digital ou credenciais municipais para conectar.',
+            alreadyExists: true
+          };
+        } else {
+          // Company exists but we couldn't fetch it - use CNPJ as ID
+          console.log('[NuvemFiscal] Company exists but couldn\'t fetch details, using CNPJ as ID:', cleanCnpj);
+          return {
+            nuvemFiscalId: cleanCnpj,
+            status: 'not_connected',
+            message: 'Empresa já existe na Nuvem Fiscal. Configure certificado digital ou credenciais municipais para conectar.',
+            alreadyExists: true
+          };
+        }
+      }
+      
+      // Not a "company exists" error - re-throw as actual error
       const error = new Error(apiError.message || 'Erro ao registrar empresa na Nuvem Fiscal');
       error.status = apiError.status || 500;
       error.code = 'NUVEM_FISCAL_API_ERROR';
       error.data = apiError.data;
       throw error;
     }
-
-    console.log('[NuvemFiscal] Company registered successfully:', response.id || response.cpf_cnpj);
-
-    // Validate response has required fields
-    if (!response.id && !response.cpf_cnpj) {
-      console.error('[NuvemFiscal] Invalid response from API:', response);
-      throw new Error('Resposta inválida da Nuvem Fiscal: ID da empresa não retornado');
-    }
-
-    return {
-      nuvemFiscalId: response.id || response.cpf_cnpj || cleanCnpj,
-      status: 'conectado',
-      message: 'Empresa registrada com sucesso na Nuvem Fiscal'
-    };
   } catch (error) {
     console.error('[NuvemFiscal] Error registering company:', error);
     console.error('[NuvemFiscal] Error name:', error?.name);

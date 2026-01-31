@@ -1205,10 +1205,19 @@ router.post('/validate-issuance', [
     });
   }
 
+  // Check fiscal connection status
+  // 'not_connected' means company exists but needs credentials (NOT a failure)
+  // 'failed' means credentials were tested and failed
   if (company.fiscalConnectionStatus === 'failed') {
     validationErrors.push({
       code: 'CONNECTION_FAILED',
-      message: company.fiscalConnectionError || 'Conexão fiscal com falha.'
+      message: company.fiscalConnectionError || 'Conexão fiscal com falha. Verifique as credenciais e tente novamente.'
+    });
+  } else if (company.fiscalConnectionStatus === 'not_connected') {
+    // Company exists but needs credentials - provide helpful guidance
+    validationErrors.push({
+      code: 'NOT_CONNECTED',
+      message: 'Empresa cadastrada, mas falta conectar com a prefeitura. Configure certificado digital ou credenciais municipais na aba "Integração Fiscal".'
     });
   }
 
@@ -1489,13 +1498,24 @@ async function executeEmitNfse(actionData, company, userId, res) {
     fiscalConnectionValid = false;
     console.warn(`[Invoice] Fiscal connection warning: ${connectionError.message}. Proceeding to let Nuvem Fiscal validate.`);
     
-    if (connectionError.code === 'FISCAL_NOT_CONNECTED' && !company.fiscalCredential) {
-    throw new AppError(
-        'Certificado digital não configurado.\n\nPara emitir notas fiscais, você precisa:\n1. Ir em "Minha Empresa"\n2. Na aba "Integração Fiscal", fazer upload do certificado digital (.pfx)\n3. Informar a senha do certificado\n\nSe você não possui um certificado digital, adquira um e-CNPJ A1 ou A3.',
-      400,
-        'CERTIFICATE_REQUIRED',
-        { step: 'upload_certificate' }
-    );
+    // Handle different connection error types
+    if (connectionError.code === 'FISCAL_NOT_CONNECTED') {
+      if (!company.fiscalCredential) {
+        throw new AppError(
+          'Certificado digital não configurado.\n\nPara emitir notas fiscais, você precisa:\n1. Ir em "Minha Empresa"\n2. Na aba "Integração Fiscal", fazer upload do certificado digital (.pfx)\n3. Informar a senha do certificado\n\nSe você não possui um certificado digital, adquira um e-CNPJ A1 ou A3.',
+          400,
+          'CERTIFICATE_REQUIRED',
+          { step: 'upload_certificate' }
+        );
+      } else {
+        // Has credential but not connected - might need to test connection
+        throw new AppError(
+          'Empresa cadastrada, mas conexão não estabelecida.\n\nConfigure certificado digital ou credenciais municipais e teste a conexão na aba "Integração Fiscal".',
+          400,
+          'NOT_CONNECTED',
+          { step: 'test_connection' }
+        );
+      }
     }
   }
 
