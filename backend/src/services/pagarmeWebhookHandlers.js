@@ -172,7 +172,22 @@ export async function onInvoicePaymentFailed(event) {
 
   // Extract error message from gateway response
   const gatewayResponse = charge?.last_transaction?.gateway_response || {};
+  const errorCode = gatewayResponse.code;
   const errorMessage = gatewayResponse.errors?.[0]?.message || 'Pagamento recusado';
+  
+  // ✅ CRITICAL: Detect non-retryable validation errors (configuration issues)
+  const isValidationError = errorCode === '400' || errorMessage.includes('validation_error');
+  const isMissingBillingValue = errorMessage.includes('billing') && errorMessage.includes('value');
+  
+  if (isValidationError || isMissingBillingValue) {
+    console.error('[Webhook] ❌ NON-RETRYABLE ERROR - Configuration/integration issue:', {
+      errorCode,
+      errorMessage,
+      subscriptionId,
+      invoiceId: invoice.id,
+      note: 'This is a configuration error, not a payment failure. Check subscription creation payload.'
+    });
+  }
 
   // ✅ ATOMIC UPDATE: Mark as past due + record failed payment
   const transactionId = charge?.id || invoice.id;
