@@ -18,7 +18,15 @@ model User {
   avatar            String?
   pagarMeCustomerId String? @map("pagar_me_customer_id")
   cpfCnpj           String? @map("cpf_cnpj")
+  phone             String? // Phone number for Pagar.me customer profile
   isAdmin           Boolean @default(false) @map("is_admin")
+
+  // Billing address (required by Pagar.me for credit card payments)
+  addressLine1      String? @map("address_line_1")
+  addressLine2      String? @map("address_line_2")
+  city              String?
+  state             String? @db.Char(2) // Two-letter state code (e.g., SP, RJ)
+  zipCode           String? @map("zip_code")
 
   // Google OAuth fields
   googleId      String? @unique @map("google_id")

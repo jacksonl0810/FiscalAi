@@ -1501,12 +1501,12 @@ async function executeEmitNfse(actionData, company, userId, res) {
     // Handle different connection error types
     if (connectionError.code === 'FISCAL_NOT_CONNECTED') {
       if (!company.fiscalCredential) {
-        throw new AppError(
-          'Certificado digital não configurado.\n\nPara emitir notas fiscais, você precisa:\n1. Ir em "Minha Empresa"\n2. Na aba "Integração Fiscal", fazer upload do certificado digital (.pfx)\n3. Informar a senha do certificado\n\nSe você não possui um certificado digital, adquira um e-CNPJ A1 ou A3.',
-          400,
-          'CERTIFICATE_REQUIRED',
-          { step: 'upload_certificate' }
-        );
+    throw new AppError(
+        'Certificado digital não configurado.\n\nPara emitir notas fiscais, você precisa:\n1. Ir em "Minha Empresa"\n2. Na aba "Integração Fiscal", fazer upload do certificado digital (.pfx)\n3. Informar a senha do certificado\n\nSe você não possui um certificado digital, adquira um e-CNPJ A1 ou A3.',
+      400,
+        'CERTIFICATE_REQUIRED',
+        { step: 'upload_certificate' }
+    );
       } else {
         // Has credential but not connected - might need to test connection
         throw new AppError(

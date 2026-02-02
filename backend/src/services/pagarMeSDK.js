@@ -192,17 +192,25 @@ export async function createCustomer(customerData) {
       document: document
     };
 
+    // ✅ CRITICAL: Parse phone properly (handles country code stripping and phone type)
     if (customerData.phone) {
-      const cleanPhone = customerData.phone.replace(/\D/g, '');
-      if (cleanPhone.length >= 10) {
-        requestBody.phones = {
-          mobile_phone: {
-        country_code: '55',
-            area_code: cleanPhone.substring(0, 2),
-            number: cleanPhone.substring(2)
-          }
+      const parsedPhone = parsePhoneForPagarme(customerData.phone);
+      if (parsedPhone) {
+        // ✅ Use correct phone type (mobile_phone or home_phone)
+        const phoneType = parsedPhone.phoneType || 'mobile_phone';
+        const phoneData = {
+          country_code: parsedPhone.country_code,
+          area_code: parsedPhone.area_code,
+          number: parsedPhone.number
         };
-    }
+        
+        requestBody.phones = {
+          [phoneType]: phoneData
+        };
+        console.log('[Pagar.me] Creating customer with phone:', { phoneType, phoneData });
+      } else {
+        console.warn('[Pagar.me] Could not parse phone for customer creation:', customerData.phone);
+      }
     }
 
     console.log('[Pagar.me] Creating customer:', {
@@ -282,7 +290,11 @@ async function searchCustomer(email, document) {
         c.document === document || c.email === email
       );
       if (matchingCustomer) {
-        return { customerId: matchingCustomer.id };
+        return { 
+          customerId: matchingCustomer.id,
+          hasPhone: !!(matchingCustomer.phones?.mobile_phone || matchingCustomer.phones?.home_phone),
+          customer: matchingCustomer
+        };
       }
     }
     return null;
@@ -293,22 +305,331 @@ async function searchCustomer(email, document) {
 }
 
 /**
+ * Parse Brazilian phone number for Pagar.me API
+ * ✅ CRITICAL: Handles country code stripping and proper formatting
+ * 
+ * Brazilian phones: DDD (2 digits) + number (8-9 digits) = 10-11 digits
+ * With country code: 55 + DDD (2) + number (8-9) = 12-13 digits
+ * 
+ * @param {string} phone - Raw phone number
+ * @returns {object|null} Parsed phone for Pagar.me { country_code, area_code, number }
+ */
+function parsePhoneForPagarme(phone) {
+  if (!phone) return null;
+  
+  let cleanPhone = phone.replace(/\D/g, '');
+  const originalLength = cleanPhone.length;
+  
+  console.log('[Pagar.me] Parsing phone:', cleanPhone, 'length:', originalLength);
+  
+  // ✅ Phone should come WITH country code 55 from frontend
+  // Expected format: 55 + DDD (2) + number (8-9) = 12-13 digits
+  // But also accept without country code (10-11 digits) for backward compatibility
+  
+  let countryCode = '55';
+  let areaCode;
+  let number;
+  
+  if (cleanPhone.startsWith('55') && cleanPhone.length >= 12) {
+    // Phone WITH country code: 55 + DDD + number
+    countryCode = '55';
+    areaCode = cleanPhone.substring(2, 4);
+    number = cleanPhone.substring(4);
+    console.log('[Pagar.me] Phone has country code 55. DDD:', areaCode, 'Number:', number);
+  } else if (cleanPhone.length >= 10 && cleanPhone.length <= 11) {
+    // Phone WITHOUT country code (backward compatibility): DDD + number
+    countryCode = '55';
+    areaCode = cleanPhone.substring(0, 2);
+    number = cleanPhone.substring(2);
+    console.log('[Pagar.me] Phone without country code. Adding 55. DDD:', areaCode, 'Number:', number);
+  } else {
+    // Invalid length - try to parse anyway
+    console.warn('[Pagar.me] ⚠️ Unexpected phone length:', originalLength, 'Original:', phone);
+    // Try to extract what we can
+    if (cleanPhone.length >= 8) {
+      areaCode = cleanPhone.substring(0, 2);
+      number = cleanPhone.substring(2);
+    } else {
+      console.error('[Pagar.me] ❌ Phone too short to parse:', cleanPhone);
+      return null;
+    }
+  }
+  
+  // ✅ NO STRICT VALIDATION - Frontend handles all validation
+  // Just determine phone type based on number length (best guess)
+  // Brazilian phones: 9 digits = usually mobile, 8 digits = usually landline
+  const isMobile = number.length === 9;
+  const phoneType = isMobile ? 'mobile_phone' : 'home_phone';
+  
+  console.log('[Pagar.me] ✅ Parsed phone:', {
+    original: phone,
+    originalLength,
+    countryCode,
+    areaCode,
+    number,
+    numberLength: number.length,
+    phoneType,
+    isMobile
+  });
+  
+  return {
+    country_code: countryCode,
+    area_code: areaCode,
+    number: number,
+    phoneType: phoneType // ✅ Include phone type for correct API field
+  };
+}
+
+/**
+ * Get customer data from Pagar.me
+ * @param {string} customerId - Pagar.me customer ID
+ * @returns {Promise<object>} Customer data
+ */
+export async function getCustomer(customerId) {
+  assertId(customerId, 'cus_', 'customer_id');
+
+  try {
+    const apiUrl = `${API_BASE}/customers/${customerId}`;
+    
+    const response = await axios.get(apiUrl, {
+      headers: getAuthHeaders(),
+      timeout: PAGARME_TIMEOUT,
+      httpsAgent: httpsAgent
+    });
+
+    const customer = response.data;
+    const hasPhone = !!(
+      customer.phones?.mobile_phone?.number || 
+      customer.phones?.home_phone?.number
+    );
+
+    console.log('[Pagar.me] Customer data retrieved:', {
+      customerId,
+      hasPhone,
+      phones: customer.phones
+    });
+
+    return {
+      ...customer,
+      hasPhone
+    };
+  } catch (error) {
+    console.error('[Pagar.me] Error getting customer:', {
+      customerId,
+      message: error.message,
+      status: error.response?.status
+    });
+    throw error;
+  }
+}
+
+/**
+ * Update an existing customer in Pagar.me (to add/update phone, name, document)
+ * ✅ CRITICAL: This function VERIFIES the phone was added after update
+ * ✅ CRITICAL: Pagar.me PUT requires 'name' field
+ * ✅ CRITICAL: Pagar.me requires 'document' (CPF/CNPJ) for payment processing
+ * 
+ * @param {string} customerId - Pagar.me customer ID
+ * @param {object} updateData - Data to update
+ * @param {string} updateData.phone - Phone number (required for subscriptions)
+ * @param {string} updateData.name - Customer name (required by Pagar.me PUT)
+ * @param {string} updateData.document - CPF/CNPJ (required for payment processing)
+ * @returns {Promise<object>} Updated customer with verification
+ */
+export async function updateCustomer(customerId, updateData) {
+  assertId(customerId, 'cus_', 'customer_id');
+
+  // Parse phone FIRST to fail early if invalid
+  const parsedPhone = updateData.phone ? parsePhoneForPagarme(updateData.phone) : null;
+  
+  if (updateData.phone && !parsedPhone) {
+    const errorMsg = `Não foi possível processar o telefone: ${updateData.phone}. Use formato DDD + número (ex: 47999998888)`;
+    console.error('[Pagar.me] ❌ Phone parsing failed:', updateData.phone);
+    throw new Error(errorMsg);
+  }
+
+  try {
+    const apiUrl = `${API_BASE}/customers/${customerId}`;
+    
+    const requestBody = {};
+    
+    // ✅ CRITICAL: Pagar.me PUT requires 'name' field
+    if (updateData.name) {
+      requestBody.name = updateData.name;
+    }
+    
+    // ✅ CRITICAL: Add document (CPF/CNPJ) - required for payment processing
+    if (updateData.document) {
+      const cleanDocument = updateData.document.replace(/\D/g, '');
+      if (cleanDocument) {
+        requestBody.document = cleanDocument;
+        requestBody.document_type = cleanDocument.length === 11 ? 'CPF' : 'CNPJ';
+        requestBody.type = cleanDocument.length === 11 ? 'individual' : 'company';
+        console.log('[Pagar.me] Including document in update:', {
+          document: cleanDocument,
+          document_type: requestBody.document_type,
+          type: requestBody.type
+        });
+      }
+    }
+    
+    if (parsedPhone) {
+      // ✅ Use correct phone type based on number length
+      // mobile_phone for 9-digit numbers, home_phone for 8-digit numbers
+      const phoneType = parsedPhone.phoneType || 'mobile_phone';
+      const phoneData = {
+        country_code: parsedPhone.country_code,
+        area_code: parsedPhone.area_code,
+        number: parsedPhone.number
+      };
+      
+      requestBody.phones = {
+        [phoneType]: phoneData
+      };
+      
+      console.log('[Pagar.me] Updating customer phone:', {
+        customerId,
+        phoneType,
+        phoneData,
+        originalInput: updateData.phone
+      });
+    }
+    
+    // Only update if there's data to update
+    if (Object.keys(requestBody).length === 0) {
+      console.log('[Pagar.me] No data to update for customer:', customerId);
+      return { customerId, updated: false, hasPhone: false };
+    }
+
+    console.log('[Pagar.me] PUT /customers/' + customerId, JSON.stringify(requestBody, null, 2));
+
+    // ✅ Use PUT for customer updates (Pagar.me v5 Core API)
+    const response = await axios.put(apiUrl, requestBody, {
+      headers: getAuthHeaders(),
+      timeout: PAGARME_TIMEOUT,
+      httpsAgent: httpsAgent
+    });
+
+    // ✅ CRITICAL: Verify phone was actually added in response (check both types)
+    const phones = response.data.phones || {};
+    const hasPhone = !!(phones.mobile_phone?.number || phones.home_phone?.number);
+
+    console.log('[Pagar.me] Customer update response:', {
+      customerId,
+      hasPhone,
+      responsePhones: phones,
+      updatedAt: response.data.updated_at,
+      sentPhoneType: parsedPhone?.phoneType
+    });
+
+    if (parsedPhone && !hasPhone) {
+      console.error('[Pagar.me] ❌ CRITICAL: Phone was sent but NOT saved!', {
+        sentPhone: parsedPhone,
+        sentPhoneType: parsedPhone.phoneType,
+        responsePhones: phones
+      });
+      // Don't throw - let verification step handle it
+    }
+
+    return {
+      customerId,
+      updated: true,
+      hasPhone,
+      phones: response.data.phones
+    };
+  } catch (error) {
+    const errorData = error.response?.data || {};
+    
+    // ✅ Log FULL error details from Pagar.me
+    console.error('[Pagar.me] ❌ Error updating customer:', {
+      customerId,
+      message: error.message,
+      status: error.response?.status,
+      requestedPhone: parsedPhone,
+      // Full error response from Pagar.me
+      pagarmeResponse: JSON.stringify(errorData, null, 2),
+      pagarmeErrors: errorData.errors,
+      pagarmeMessage: errorData.message
+    });
+    
+    // Extract detailed error message
+    let detailedError = errorData.message || error.message;
+    if (errorData.errors && Array.isArray(errorData.errors)) {
+      detailedError = errorData.errors.map(e => e.message || e).join('; ');
+    }
+    
+    throw new Error(`Falha ao atualizar telefone do cliente: ${detailedError}`);
+  }
+}
+
+/**
  * Get or create customer in Pagar.me
+ * ✅ CRITICAL: Phone is REQUIRED for subscription payments
+ * If customer exists but has no phone, we update them with phone data
+ * 
  * @param {object} customerData - Customer data
  * @param {string} customerData.name - Customer name
  * @param {string} customerData.email - Customer email
  * @param {string} customerData.cpfCnpj - CPF or CNPJ (numbers only)
- * @param {string} customerData.phone - Phone number (optional)
+ * @param {string} customerData.phone - Phone number (REQUIRED for subscriptions)
  * @param {string} customerData.externalId - External ID (user ID from our system)
  * @param {string} customerData.pagarMeCustomerId - Existing Pagar.me customer ID (optional)
  * @returns {Promise<object>} Customer with Pagar.me customer ID
  */
 export async function getOrCreateCustomer(customerData) {
+  console.log('[Pagar.me] getOrCreateCustomer called with:', {
+    hasExistingId: !!customerData.pagarMeCustomerId,
+    email: customerData.email,
+    phone: customerData.phone,
+    phoneLength: customerData.phone?.replace(/\D/g, '').length
+  });
+
+  // ✅ CRITICAL: Phone is REQUIRED for subscriptions
+  if (!customerData.phone) {
+    throw new Error('Telefone é obrigatório para processar pagamentos de assinatura.');
+  }
+
+  // ✅ Parse phone (validation handled by frontend)
+  const parsedPhoneCheck = parsePhoneForPagarme(customerData.phone);
+  if (!parsedPhoneCheck) {
+    throw new Error(`Não foi possível processar o telefone: ${customerData.phone}. Telefone muito curto.`);
+  }
+  
+  console.log('[Pagar.me] Phone parsed successfully:', parsedPhoneCheck);
+
+  // ✅ CRITICAL: If we have an existing customer ID, update with phone and VERIFY
   if (customerData.pagarMeCustomerId) {
     assertId(customerData.pagarMeCustomerId, 'cus_', 'customer_id');
+    
+    console.log('[Pagar.me] Updating existing customer with phone:', customerData.pagarMeCustomerId);
+    
+    // Step 1: Update customer with phone, name AND document (all required by Pagar.me)
+    const updateResult = await updateCustomer(customerData.pagarMeCustomerId, { 
+      phone: customerData.phone,
+      name: customerData.name, // ✅ Required by Pagar.me PUT
+      document: customerData.cpfCnpj // ✅ Required for payment processing
+    });
+    console.log('[Pagar.me] Customer update result:', updateResult);
+    
+    // Step 2: VERIFY phone was actually added by fetching customer
+    console.log('[Pagar.me] Verifying phone was saved...');
+    const verifiedCustomer = await getCustomer(customerData.pagarMeCustomerId);
+    
+    if (!verifiedCustomer.hasPhone) {
+      console.error('[Pagar.me] ❌ CRITICAL: Phone update succeeded but phone NOT in customer profile!', {
+        customerId: customerData.pagarMeCustomerId,
+        sentPhone: customerData.phone,
+        customerPhones: verifiedCustomer.phones
+      });
+      throw new Error('Falha ao salvar telefone no perfil do cliente. O telefone é obrigatório para pagamentos.');
+    }
+    
+    console.log('[Pagar.me] ✅ Phone verified in customer profile:', verifiedCustomer.phones);
+    
     return {
       customerId: customerData.pagarMeCustomerId,
-      externalId: customerData.externalId
+      externalId: customerData.externalId,
+      hasPhone: true
     };
   }
 
@@ -316,13 +637,40 @@ export async function getOrCreateCustomer(customerData) {
   
   const existingCustomer = await searchCustomer(customerData.email, document);
   if (existingCustomer) {
-    console.log('[Pagar.me] Found existing customer:', existingCustomer.customerId);
+    console.log('[Pagar.me] Found existing customer:', existingCustomer.customerId, 'hasPhone:', existingCustomer.hasPhone);
+    
+    // Step 1: Update customer with phone, name AND document (all required by Pagar.me)
+    console.log('[Pagar.me] Updating existing customer with phone...');
+    const updateResult = await updateCustomer(existingCustomer.customerId, { 
+      phone: customerData.phone,
+      name: customerData.name, // ✅ Required by Pagar.me PUT
+      document: customerData.cpfCnpj // ✅ Required for payment processing
+    });
+    console.log('[Pagar.me] Customer update result:', updateResult);
+    
+    // Step 2: VERIFY phone was actually added
+    console.log('[Pagar.me] Verifying phone was saved...');
+    const verifiedCustomer = await getCustomer(existingCustomer.customerId);
+    
+    if (!verifiedCustomer.hasPhone) {
+      console.error('[Pagar.me] ❌ CRITICAL: Phone NOT saved to existing customer!', {
+        customerId: existingCustomer.customerId,
+        sentPhone: customerData.phone,
+        customerPhones: verifiedCustomer.phones
+      });
+      throw new Error('Falha ao salvar telefone no perfil do cliente. O telefone é obrigatório para pagamentos.');
+    }
+    
+    console.log('[Pagar.me] ✅ Phone verified in existing customer profile:', verifiedCustomer.phones);
+    
     return {
       customerId: existingCustomer.customerId,
-      externalId: customerData.externalId
+      externalId: customerData.externalId,
+      hasPhone: true
     };
   }
 
+  // Create new customer (with phone included)
   return await createCustomer(customerData);
 }
 
@@ -500,105 +848,186 @@ export async function getCustomerCards(customerId) {
 /* -------------------------------------------------------------------------- */
 
 /**
- * Create subscription using Pagar.me Orders API (v5)
+ * Create subscription using Pagar.me Subscriptions API (v5)
  * 
- * ⚠️ CRITICAL: In Pagar.me v5, subscriptions are created via Orders API, NOT Subscriptions API
- * Card information MUST be inside payments[].credit_card structure
+ * ✅ CORRECT v5 IMPLEMENTATION: Uses POST /subscriptions endpoint
+ * ❌ NOT /orders - Orders are for one-time payments only, metadata is ignored for billing
+ * 
+ * v5 Subscription Model:
+ * - No plan objects (old v1/v3 model is gone)
+ * - Pricing defined directly in items[].pricing_scheme.price
+ * - Recurrence via interval/interval_count at top level
+ * - card_id at top level (NOT in payments array)
+ * - payment_method at top level
  * 
  * @param {object} subscriptionData - Subscription data
  * @param {string} subscriptionData.customerId - Pagar.me customer ID (required)
- * @param {string} subscriptionData.cardId - Pagar.me card ID (required, must be attached first)
- * @param {string} subscriptionData.cardToken - Pagar.me card token (alternative to cardId)
+ * @param {string} subscriptionData.cardToken - Pagar.me card token (token_xxx) with billing
+ * @param {string} subscriptionData.cardId - Pagar.me card ID (card_xxx) for existing card
  * @param {object} subscriptionData.plan - Plan configuration
  * @param {string} subscriptionData.plan.name - Plan name
  * @param {number} subscriptionData.plan.amount - Amount in cents
  * @param {string} subscriptionData.plan.interval - 'month' or 'year' (default: 'month')
  * @param {number} subscriptionData.plan.intervalCount - Interval count (default: 1)
+ * @param {object} subscriptionData.billing - Billing info for card (name, email, document, address)
+ * @param {object} subscriptionData.billingAddress - Billing address (for card validation)
  * @param {object} subscriptionData.metadata - Additional metadata
- * @returns {Promise<object>} Created subscription order
+ * @returns {Promise<object>} Created subscription with current_cycle status
  */
 export async function createSubscription(subscriptionData) {
   assertId(subscriptionData.customerId, 'cus_', 'customer_id');
 
-  // ✅ CRITICAL: Must have either card_id or card_token
-  if (!subscriptionData.cardId && !subscriptionData.cardToken) {
-    throw new Error('Either card_id or card_token is required');
+  // ✅ Must have either cardToken or cardId
+  if (!subscriptionData.cardToken && !subscriptionData.cardId) {
+    throw new Error('Either cardToken or cardId is required for subscription');
   }
 
-  // ✅ Validate card_id format if provided
+  // ✅ Validate format
   if (subscriptionData.cardId && !subscriptionData.cardId.startsWith('card_')) {
     throw new Error(`Invalid card_id format. Expected card_xxxxx, got: ${subscriptionData.cardId}`);
   }
-
-  // ✅ Validate card_token format if provided
   if (subscriptionData.cardToken && !subscriptionData.cardToken.startsWith('token_')) {
-    throw new Error(`Invalid card_token format. Expected token_xxxxx, got: ${subscriptionData.cardToken}`);
+    throw new Error(`Invalid cardToken format. Expected token_xxxxx, got: ${subscriptionData.cardToken}`);
+  }
+
+  // ✅ CRITICAL: Validate amount is a positive integer (in cents)
+  const amount = subscriptionData.plan.amount;
+  if (!amount || typeof amount !== 'number' || amount < 1 || !Number.isInteger(amount)) {
+    throw new Error(`Invalid amount. Must be a positive integer >= 1 (in cents). Got: ${amount}`);
+  }
+
+  // ✅ Validate billing address if provided (for card validation)
+  let billingAddress = null;
+  if (subscriptionData.billingAddress) {
+    const { line_1, city, state, zip_code, country = 'BR', line_2 } = subscriptionData.billingAddress;
+    
+    if (line_1 && city && state && zip_code) {
+      // Validate state format (2 characters, must be valid Brazilian UF)
+      const validStates = ['AC', 'AL', 'AP', 'AM', 'BA', 'CE', 'DF', 'ES', 'GO', 'MA', 'MT', 'MS', 'MG', 'PA', 'PB', 'PR', 'PE', 'PI', 'RJ', 'RN', 'RS', 'RO', 'RR', 'SC', 'SP', 'SE', 'TO'];
+      const normalizedState = state.toUpperCase().slice(0, 2);
+      
+      if (!validStates.includes(normalizedState)) {
+        console.warn(`[Pagar.me] ⚠️ Invalid state code: ${state}. Using SP as fallback.`);
+      }
+      
+      billingAddress = {
+        line_1: line_1,
+        line_2: line_2 || '',
+        city: city,
+        state: validStates.includes(normalizedState) ? normalizedState : 'SP',
+        zip_code: zip_code.replace(/\D/g, ''),
+        country: country
+      };
+    }
   }
 
   try {
-    // ✅ CRITICAL: Use Orders API, NOT Subscriptions API
-    const apiUrl = `${API_BASE}/orders`;
+    // ✅ CORRECT: Use Subscriptions API for recurring billing
+    const apiUrl = `${API_BASE}/subscriptions`;
 
-    // ✅ Build payment object - card info MUST be inside payments[].credit_card
-    const creditCard = subscriptionData.cardId
-      ? { card_id: subscriptionData.cardId }
-      : { card_token: subscriptionData.cardToken };
-
-    // ✅ CRITICAL: Verify no raw card data
-    if (creditCard.number || creditCard.exp_month || creditCard.cvv || creditCard.holder_name) {
-      throw new Error('❌ SECURITY: Raw card data detected. Only card_id or card_token allowed.');
-    }
-
-    // ✅ CRITICAL: Validate amount is a positive integer (in cents)
-    const amount = subscriptionData.plan.amount;
-    if (!amount || typeof amount !== 'number' || amount < 1 || !Number.isInteger(amount)) {
-      throw new Error(`Invalid amount. Must be a positive integer >= 1 (in cents). Got: ${amount}`);
-    }
-
-    // ✅ Build request body using Orders API structure
-    // ⚠️ CRITICAL: items[].amount must be an integer >= 1 (in cents)
-    // ⚠️ CRITICAL: items[].code is REQUIRED by Pagar.me (HTTP 412 if missing)
-    // ⚠️ CRITICAL: closed: true means charge immediately, false means create order but don't charge
-    // For subscription first payment, we want to charge immediately, so closed: true
+    // ✅ Map interval to Pagar.me format
+    // Pagar.me v5 accepts: day, week, month, year
+    let interval = 'month';
+    let intervalCount = subscriptionData.plan.intervalCount || 1;
     
-    // Generate unique code for the plan (e.g., "pro_monthly", "business_yearly")
-    const planCode = subscriptionData.plan.code || 
-                     `${(subscriptionData.metadata?.plan_id || subscriptionData.plan.name || 'plan').toLowerCase().replace(/\s+/g, '_')}_${subscriptionData.plan.interval || 'monthly'}`;
+    if (subscriptionData.plan.interval === 'year' || subscriptionData.plan.interval === 'annual') {
+      interval = 'year';
+      intervalCount = 1;
+    } else if (subscriptionData.plan.interval === 'semiannual') {
+      interval = 'month';
+      intervalCount = 6;
+    } else if (subscriptionData.plan.interval === 'month' || subscriptionData.plan.interval === 'monthly') {
+      interval = 'month';
+      intervalCount = 1;
+    }
+
+    // ✅ Build v5 subscription request body
+    // Key differences from /orders:
+    // - card with card_token + billing for new cards (recommended)
+    // - OR card_id at TOP LEVEL for existing cards
+    // - payment_method at TOP LEVEL
+    // - items use pricing_scheme.price
+    // - interval/interval_count at TOP LEVEL
+    // - NO payments[] array
+    // - NO closed field
+    
+    // ✅ Build billing object for card (REQUIRED for gateway to process charge)
+    // Gateway error: validation_error | billing | "value" is required
+    const billing = subscriptionData.billing || {};
+    const cardBillingInfo = {
+      value: amount, // ✅ REQUIRED: amount in centavos for gateway charge
+      name: billing.name || 'Customer',
+      email: billing.email || '',
+      document: billing.document || '',
+      document_type: billing.document_type || 'cpf',
+      address: billing.address || billingAddress || {
+        line_1: 'Not provided',
+        city: 'Not provided', 
+        state: 'SP',
+        zip_code: '00000000',
+        country: 'BR'
+      }
+    };
+    
+    // ✅ Build card object based on whether we have token or card_id
+    let cardObject;
+    if (subscriptionData.cardToken) {
+      // ✅ Use token with billing - Pagar.me will create card and charge with billing info
+      cardObject = {
+        token: subscriptionData.cardToken,
+        billing: cardBillingInfo
+      };
+    } else {
+      // ✅ Use existing card_id - billing comes from customer/card
+      cardObject = null; // Will use card_id at top level
+    }
     
     const requestBody = {
       customer_id: subscriptionData.customerId,
+      
+      // ✅ Payment method at top level
+      payment_method: 'credit_card',
+      
+      // ✅ Card: either use card object with token+billing, or card_id for existing card
+      ...(cardObject ? { card: cardObject } : { card_id: subscriptionData.cardId }),
+      
+      // ✅ Items with pricing_scheme
       items: [
         {
-          code: planCode, // ✅ REQUIRED: Unique identifier for the product/plan
-          amount: amount, // ✅ REQUIRED: integer in cents (e.g., 9700 for R$97.00)
-          description: `${subscriptionData.plan.name} (${subscriptionData.plan.interval || 'month'})`,
-          quantity: 1
-        }
-      ],
-      // ✅ CRITICAL: Card info MUST be inside payments[].credit_card
-      payments: [
-        {
-          payment_method: 'credit_card',
-          credit_card: {
-            ...creditCard,
-            // ✅ CRITICAL: Add installments for credit card (1 = single payment, required for immediate charge)
-            installments: 1
-            // Note: capture is not a valid field in Pagar.me v5 - payment is captured automatically when closed: true
+          description: `${subscriptionData.plan.name} (${interval === 'year' ? 'anual' : interval === 'month' && intervalCount === 6 ? 'semestral' : 'mensal'})`,
+          quantity: 1,
+          pricing_scheme: {
+            price: amount // Amount in cents (e.g., 197000 for R$1970.00)
           }
         }
       ],
-      closed: true, // ✅ CRITICAL: true = charge immediately, false = create order but don't charge
+      
+      // ✅ Recurrence at top level
+      interval: interval,
+      interval_count: intervalCount,
+      
+      // ✅ Billing type: prepaid = charge at start, postpaid = charge at end
+      billing_type: 'prepaid',
+      
+      // ✅ minimum_price (centavos) - subscription minimum value
+      minimum_price: amount,
+      
+      // ✅ Installments (required for credit_card)
+      installments: 1,
+      
+      // ✅ Metadata for internal tracking
       metadata: subscriptionData.metadata || {}
     };
 
-    console.log('[Pagar.me] Creating subscription order with Orders API (v5):', {
+    console.log('[Pagar.me] Creating subscription with Subscriptions API (v5):', {
+      endpoint: apiUrl,
       customerId: subscriptionData.customerId,
       cardId: subscriptionData.cardId,
-      cardToken: subscriptionData.cardToken ? subscriptionData.cardToken.substring(0, 20) + '...' : null,
       planName: subscriptionData.plan.name,
-      amount: subscriptionData.plan.amount,
-      payments: JSON.stringify(requestBody.payments, null, 2), // Log payment structure
-      requestBody: JSON.stringify(requestBody, null, 2) // Log full request for debugging
+      amount: amount,
+      interval: interval,
+      intervalCount: intervalCount,
+      requestBody: JSON.stringify(requestBody, null, 2)
     });
 
     const response = await axios.post(apiUrl, requestBody, {
@@ -607,63 +1036,66 @@ export async function createSubscription(subscriptionData) {
       httpsAgent: httpsAgent
     });
 
-    const order = response.data;
+    const subscription = response.data;
 
-    if (!order.id) {
-      throw new Error('Order ID not received from Pagar.me');
+    if (!subscription.id) {
+      throw new Error('Subscription ID not received from Pagar.me');
     }
 
-    console.log('[Pagar.me] ✅ Subscription order created successfully:', {
-      orderId: order.id,
-      status: order.status,
-      customerId: subscriptionData.customerId,
-      charges: order.charges?.length || 0,
-      chargeStatus: order.charges?.[0]?.status || 'unknown',
-      amount: order.amount,
-      closed: order.closed
+    // ✅ Log subscription details
+    console.log('[Pagar.me] ✅ Subscription created successfully:', {
+      subscriptionId: subscription.id,
+      status: subscription.status,
+      customerId: subscription.customer?.id || subscriptionData.customerId,
+      interval: subscription.interval,
+      intervalCount: subscription.interval_count,
+      currentCycle: subscription.current_cycle ? {
+        id: subscription.current_cycle.id,
+        status: subscription.current_cycle.status,
+        startAt: subscription.current_cycle.start_at,
+        endAt: subscription.current_cycle.end_at,
+        billingAt: subscription.current_cycle.billing_at
+      } : null
     });
 
-    // ✅ Extract charge info to verify payment was processed
-    const charge = order.charges?.[0];
+    // ✅ CRITICAL: Verify payment was confirmed
+    // In v5 subscriptions, success means:
+    // - subscription.status === 'active'
+    // - current_cycle.status === 'paid'
+    const currentCycle = subscription.current_cycle;
+    const isPaid = subscription.status === 'active' && currentCycle?.status === 'paid';
     
-    if (!charge) {
-      console.warn('[Pagar.me] ⚠️ No charge found in order response:', {
-        orderId: order.id,
-        orderStatus: order.status
+    if (!isPaid) {
+      console.warn('[Pagar.me] ⚠️ Subscription created but payment not confirmed:', {
+        subscriptionId: subscription.id,
+        subscriptionStatus: subscription.status,
+        cycleStatus: currentCycle?.status,
+        note: 'Check current_cycle.status for payment confirmation. Listen to invoice.paid webhook.'
       });
     } else {
-      console.log('[Pagar.me] Charge details:', {
-        chargeId: charge.id,
-        chargeStatus: charge.status,
-        amount: charge.amount,
-        paidAt: charge.paid_at
+      console.log('[Pagar.me] ✅ Payment confirmed:', {
+        subscriptionId: subscription.id,
+        cycleStatus: currentCycle.status,
+        nextBilling: currentCycle.end_at
       });
     }
 
-    // ✅ Verify payment was actually processed
-    if (order.status !== 'paid' && order.status !== 'closed' && charge?.status !== 'paid') {
-      console.warn('[Pagar.me] ⚠️ Order created but payment not confirmed:', {
-        orderId: order.id,
-        orderStatus: order.status,
-        chargeStatus: charge?.status,
-        note: 'Payment may be pending or failed. Check charge status.'
-      });
-    }
-
-    // ✅ Extract subscription info from order response
-    // Orders API returns order with charges, we need to extract subscription ID if available
-    const subscriptionId = charge?.subscription_id || order.id; // Use order ID as fallback
-
+    // ✅ Return subscription data with proper status
     return {
-      subscriptionId: subscriptionId,
-      orderId: order.id,
-      status: order.status === 'paid' || order.status === 'closed' || charge?.status === 'paid' ? 'active' : order.status,
-      chargeId: charge?.id,
-      chargeStatus: charge?.status,
-      currentPeriodStart: charge?.paid_at ? new Date(charge.paid_at * 1000) : new Date(),
-      currentPeriodEnd: charge?.paid_at 
-        ? new Date((charge.paid_at * 1000) + (subscriptionData.plan.interval === 'year' ? 365 : 30) * 86400000)
-        : null
+      subscriptionId: subscription.id,
+      status: subscription.status, // 'active', 'pending', 'canceled', etc.
+      isPaid: isPaid,
+      currentCycle: currentCycle ? {
+        id: currentCycle.id,
+        status: currentCycle.status,
+        startAt: currentCycle.start_at ? new Date(currentCycle.start_at) : new Date(),
+        endAt: currentCycle.end_at ? new Date(currentCycle.end_at) : null,
+        billingAt: currentCycle.billing_at ? new Date(currentCycle.billing_at) : null
+      } : null,
+      interval: subscription.interval,
+      intervalCount: subscription.interval_count,
+      nextBillingAt: currentCycle?.end_at ? new Date(currentCycle.end_at) : null,
+      createdAt: subscription.created_at ? new Date(subscription.created_at) : new Date()
     };
   } catch (error) {
     const errorData = error.response?.data || {};
@@ -751,6 +1183,226 @@ export async function cancelSubscription(subscriptionId) {
     });
     const errorData = error.response?.data || {};
     throw new Error(`Falha ao cancelar assinatura no Pagar.me: ${errorData.message || error.message}`);
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Subscription Verification (v5)                                            */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Get subscription details from Pagar.me API (v5)
+ * ✅ Use this to verify subscription status
+ * 
+ * Success states:
+ * - subscription.status === 'active'
+ * - current_cycle.status === 'paid'
+ * 
+ * @param {string} subscriptionId - Pagar.me subscription ID (sub_xxx)
+ * @returns {Promise<object>} Subscription data with current_cycle
+ */
+export async function getSubscription(subscriptionId) {
+  assertId(subscriptionId, 'sub_', 'subscription_id');
+
+  try {
+    const apiUrl = `${API_BASE}/subscriptions/${subscriptionId}`;
+
+    console.log('[Pagar.me] Fetching subscription details:', { subscriptionId });
+
+    const response = await axios.get(apiUrl, {
+      headers: getAuthHeaders(),
+      timeout: PAGARME_TIMEOUT,
+      httpsAgent: httpsAgent
+    });
+
+    const subscription = response.data;
+
+    // ✅ Determine if subscription is truly active and paid
+    const isPaid = subscription.status === 'active' && 
+                   subscription.current_cycle?.status === 'paid';
+
+    console.log('[Pagar.me] ✅ Subscription details retrieved:', {
+      subscriptionId: subscription.id,
+      status: subscription.status,
+      cycleStatus: subscription.current_cycle?.status,
+      isPaid,
+      interval: subscription.interval,
+      intervalCount: subscription.interval_count,
+      nextBillingAt: subscription.current_cycle?.end_at
+    });
+
+    return {
+      subscriptionId: subscription.id,
+      status: subscription.status,
+      isPaid,
+      currentCycle: subscription.current_cycle ? {
+        id: subscription.current_cycle.id,
+        status: subscription.current_cycle.status,
+        startAt: subscription.current_cycle.start_at,
+        endAt: subscription.current_cycle.end_at,
+        billingAt: subscription.current_cycle.billing_at
+      } : null,
+      interval: subscription.interval,
+      intervalCount: subscription.interval_count,
+      paymentMethod: subscription.payment_method,
+      customerId: subscription.customer?.id,
+      createdAt: subscription.created_at,
+      updatedAt: subscription.updated_at
+    };
+  } catch (error) {
+    console.error('[Pagar.me] Error fetching subscription:', {
+      subscriptionId,
+      message: error.message,
+      status: error.response?.status,
+      data: error.response?.data
+    });
+    
+    if (error.response?.status === 404) {
+      throw new Error(`Assinatura não encontrada: ${subscriptionId}`);
+    }
+    
+    throw new Error(`Erro ao buscar assinatura: ${error.response?.data?.message || error.message}`);
+  }
+}
+
+/**
+ * Get subscription invoices from Pagar.me API (v5)
+ * ✅ Invoices are the SOURCE OF TRUTH for payment status
+ * 
+ * Check invoice.status === 'paid' to confirm payment
+ * 
+ * @param {string} subscriptionId - Pagar.me subscription ID (sub_xxx)
+ * @returns {Promise<object[]>} List of invoices with payment status
+ */
+export async function getSubscriptionInvoices(subscriptionId) {
+  assertId(subscriptionId, 'sub_', 'subscription_id');
+
+  try {
+    const apiUrl = `${API_BASE}/subscriptions/${subscriptionId}/invoices`;
+
+    console.log('[Pagar.me] Fetching subscription invoices:', { subscriptionId });
+
+    const response = await axios.get(apiUrl, {
+      headers: getAuthHeaders(),
+      timeout: PAGARME_TIMEOUT,
+      httpsAgent: httpsAgent
+    });
+
+    const invoices = response.data?.data || response.data || [];
+
+    console.log('[Pagar.me] ✅ Subscription invoices retrieved:', {
+      subscriptionId,
+      invoiceCount: invoices.length,
+      latestInvoice: invoices[0] ? {
+        id: invoices[0].id,
+        status: invoices[0].status,
+        amount: invoices[0].amount,
+        dueAt: invoices[0].due_at
+      } : null
+    });
+
+    return invoices.map(invoice => ({
+      id: invoice.id,
+      status: invoice.status,
+      amount: invoice.amount,
+      currency: invoice.currency,
+      dueAt: invoice.due_at,
+      paidAt: invoice.paid_at,
+      charge: invoice.charge ? {
+        id: invoice.charge.id,
+        status: invoice.charge.status,
+        paidAt: invoice.charge.paid_at
+      } : null,
+      period: invoice.period ? {
+        startAt: invoice.period.start_at,
+        endAt: invoice.period.end_at
+      } : null
+    }));
+  } catch (error) {
+    console.error('[Pagar.me] Error fetching subscription invoices:', {
+      subscriptionId,
+      message: error.message,
+      status: error.response?.status,
+      data: error.response?.data
+    });
+    
+    if (error.response?.status === 404) {
+      throw new Error(`Assinatura não encontrada: ${subscriptionId}`);
+    }
+    
+    throw new Error(`Erro ao buscar faturas: ${error.response?.data?.message || error.message}`);
+  }
+}
+
+/**
+ * Verify subscription payment status (v5)
+ * ✅ Complete verification: checks subscription + latest invoice
+ * 
+ * Returns true ONLY if:
+ * - subscription.status === 'active'
+ * - current_cycle.status === 'paid'
+ * 
+ * @param {string} subscriptionId - Pagar.me subscription ID (sub_xxx)
+ * @returns {Promise<object>} Verification result with detailed status
+ */
+export async function verifySubscriptionPayment(subscriptionId) {
+  assertId(subscriptionId, 'sub_', 'subscription_id');
+
+  try {
+    // Get subscription details
+    const subscription = await getSubscription(subscriptionId);
+    
+    // Get latest invoices
+    let latestInvoice = null;
+    try {
+      const invoices = await getSubscriptionInvoices(subscriptionId);
+      latestInvoice = invoices[0] || null;
+    } catch (invoiceError) {
+      console.warn('[Pagar.me] Could not fetch invoices:', invoiceError.message);
+    }
+
+    // Determine overall status
+    const isActive = subscription.status === 'active';
+    const isPaid = subscription.isPaid;
+    const invoicePaid = latestInvoice?.status === 'paid';
+
+    const verificationResult = {
+      subscriptionId: subscription.subscriptionId,
+      isValid: isActive && isPaid,
+      status: subscription.status,
+      isPaid,
+      currentCycle: subscription.currentCycle,
+      latestInvoice: latestInvoice ? {
+        id: latestInvoice.id,
+        status: latestInvoice.status,
+        paidAt: latestInvoice.paidAt
+      } : null,
+      nextBillingAt: subscription.currentCycle?.endAt,
+      verifiedAt: new Date().toISOString()
+    };
+
+    console.log('[Pagar.me] ✅ Subscription verification complete:', {
+      subscriptionId,
+      isValid: verificationResult.isValid,
+      subscriptionStatus: subscription.status,
+      cycleStatus: subscription.currentCycle?.status,
+      invoiceStatus: latestInvoice?.status
+    });
+
+    return verificationResult;
+  } catch (error) {
+    console.error('[Pagar.me] Error verifying subscription:', {
+      subscriptionId,
+      message: error.message
+    });
+    
+    return {
+      subscriptionId,
+      isValid: false,
+      status: 'error',
+      error: error.message,
+      verifiedAt: new Date().toISOString()
+    };
   }
 }
 
@@ -969,8 +1621,11 @@ export function validateWebhookSecret(headers, queryToken = null) {
     }
   }
 
+  // Safe debug: help user fix mismatch (never log actual secret)
   console.error('[Pagar.me] ❌ Webhook validation failed - no valid secret found');
   console.error('[Pagar.me] Expected header: X-Pagarme-Webhook-Secret or query param: ?token=...');
+  console.error('[Pagar.me] Debug: query token present=', !!queryToken, 'query token length=', queryToken ? String(queryToken).length : 0, 'expected secret length=', PAGARME_WEBHOOK_SECRET ? PAGARME_WEBHOOK_SECRET.length : 0);
+  console.error('[Pagar.me] Fix: Ensure PAGARME_WEBHOOK_SECRET in .env exactly matches the ?token= value in your Pagar.me webhook URL (no extra spaces or newlines).');
   return false;
 }
 
