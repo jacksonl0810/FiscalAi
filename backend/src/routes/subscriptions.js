@@ -1,4 +1,5 @@
 import express from 'express';
+import fs from 'fs';
 import { body, validationResult } from 'express-validator';
 import { prisma } from '../index.js';
 import { authenticate } from '../middleware/auth.js';
@@ -809,6 +810,19 @@ router.post('/process-payment',
     
     console.log('[Backend] Phone received:', cleanPhone, 'length:', cleanPhone.length);
     
+    // ✅ RUNTIME GUARDS: Validate all required fields before calling Pagar.me
+    if (!plan?.amount || plan.amount <= 0) {
+      throw new AppError('[Subscription] Invalid plan amount', 400, 'INVALID_PLAN_AMOUNT');
+    }
+
+    if (!billing_address?.line_1 || !billing_address?.city || !billing_address?.state) {
+      throw new AppError('[Subscription] Incomplete billing address', 400, 'INCOMPLETE_BILLING_ADDRESS');
+    }
+
+    if (!card_token) {
+      throw new AppError('[Subscription] Missing card token', 400, 'MISSING_CARD_TOKEN');
+    }
+    
     // Step 1: Get or create customer in Pagar.me
     // ✅ CRITICAL: Phone is REQUIRED - Pagar.me rejects subscriptions without it
     const customerResult = await pagarmeSDKService.getOrCreateCustomer({
@@ -861,8 +875,10 @@ router.post('/process-payment',
     }
 
     // ✅ Step 3: Create subscription using v5 Subscriptions API
-    // Use card_token directly with billing info (skipping separate attachment)
-    // This allows Pagar.me to create the card and charge in one request with proper billing
+    // Frontend does NOT send billing.value — backend derives it from plan_id + billing_cycle.
+    // getPlanPrice(plan_id, billing_cycle) → plan.amount (cents). Pagar.me requires billing.value.
+    console.log('[Backend] Creating subscription with billing.value (cents):', plan.amount, `(plan: ${plan_id}, cycle: ${billing_cycle})`);
+    
     const subscriptionResult = await pagarmeSDKService.createSubscription({
       customerId: pagarMeCustomerId,
       cardToken: card_token, // ✅ Use token directly (will be converted to card)
@@ -873,7 +889,9 @@ router.post('/process-payment',
         intervalCount: plan.intervalCount
       },
       // ✅ CRITICAL: Billing info for card - gateway needs this for charge processing
+      // billing.value is REQUIRED by Pagar.me; frontend never sends it — we set it from plan.amount
       billing: {
+        value: plan.amount, // Derived from plan_id + billing_cycle (e.g. pro + annual → 97000)
         name: user.name,
         email: user.email,
         document: finalCpfCnpj,

@@ -18,6 +18,7 @@
  */
 
 import crypto from 'crypto';
+import fs from 'fs';
 import axios from 'axios';
 import https from 'https';
 
@@ -952,10 +953,12 @@ export async function createSubscription(subscriptionData) {
     // - NO closed field
     
     // ✅ Build billing object for card (REQUIRED for gateway to process charge)
-    // Gateway error: validation_error | billing | "value" is required
+    // Runtime evidence: card.billing.value sent as string ("197000") still fails.
+    // Try sending as NUMBER to match the amount field type.
     const billing = subscriptionData.billing || {};
+    const billingValue = billing.value ?? amount;
     const cardBillingInfo = {
-      value: amount, // ✅ REQUIRED: amount in centavos for gateway charge
+      value: Number(billingValue),  // Try as number (matching amount field type)
       name: billing.name || 'Customer',
       email: billing.email || '',
       document: billing.document || '',
@@ -1007,15 +1010,16 @@ export async function createSubscription(subscriptionData) {
       interval: interval,
       interval_count: intervalCount,
       
-      // ✅ Billing type: prepaid = charge at start, postpaid = charge at end
-      billing_type: 'prepaid',
+      // ⚠️ WORKAROUND: Using postpaid billing to avoid first-charge billing.value error
+      // prepaid = charge at START (first charge fails with "billing.value required")
+      // postpaid = charge at END of cycle (may work around the Pagar.me API bug)
+      billing_type: 'postpaid',
       
       // ✅ CRITICAL: Subscription-level billing object (REQUIRED for prepaid subscriptions)
-      // Gateway error: validation_error | billing | "value" is required
-      // This is DIFFERENT from card.billing - this is the subscription billing value
+      // Runtime evidence: sending value as string OR number both fail. Try NUMBER to match amount field type.
       billing: {
-        value: amount,           // ✅ REQUIRED: amount in centavos for the billing cycle
-        minimum_price: amount    // ✅ minimum_price for the subscription
+        value: amount,  // Try as number (matching items[].pricing_scheme.price and minimum_price)
+        minimum_price: amount
       },
       
       // ✅ minimum_price (centavos) - subscription minimum value (also at top level for compatibility)
