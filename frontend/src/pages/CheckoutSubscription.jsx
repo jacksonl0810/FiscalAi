@@ -15,7 +15,8 @@ import {
   Calendar,
   KeyRound,
   FileText,
-  X
+  X,
+  Phone
 } from 'lucide-react';
 import { subscriptionsService } from '@/api/services/subscriptions';
 import { toast } from 'sonner';
@@ -64,6 +65,14 @@ export default function CheckoutSubscription() {
     cvv: ''
   });
   const [cpfCnpj, setCpfCnpj] = useState(user?.cpf_cnpj || '');
+  const [phone, setPhone] = useState('');
+  const [billingAddress, setBillingAddress] = useState({
+    line_1: '',
+    line_2: '',
+    city: '',
+    state: '',
+    zip_code: ''
+  });
 
   const plan = planDetails[planId];
   
@@ -94,6 +103,38 @@ export default function CheckoutSubscription() {
         .replace(/(\d{4})(\d{1,2})$/, '$1-$2')
         .slice(0, 18);
     }
+  };
+
+  // Format phone for display (DDD) 99999-9999
+  // ✅ Strips country code (55) if user accidentally includes it
+  const formatPhone = (value) => {
+    let cleaned = value.replace(/\D/g, '');
+    
+    // Strip Brazil country code if phone is 12+ digits and starts with "55"
+    if (cleaned.startsWith('55') && cleaned.length >= 12) {
+      cleaned = cleaned.substring(2);
+    }
+    
+    // Limit to 11 digits max (DDD 2 + mobile 9)
+    cleaned = cleaned.slice(0, 11);
+    
+    if (cleaned.length <= 10) {
+      // (DD) 9999-9999 (landline)
+      return cleaned
+        .replace(/(\d{2})(\d)/, '($1) $2')
+        .replace(/(\d{4})(\d{1,4})$/, '$1-$2');
+    } else {
+      // (DD) 99999-9999 (mobile)
+      return cleaned
+        .replace(/(\d{2})(\d)/, '($1) $2')
+        .replace(/(\d{5})(\d{1,4})$/, '$1-$2');
+    }
+  };
+
+  // Format CEP for display: 00000-000
+  const formatCep = (value) => {
+    const cleaned = value.replace(/\D/g, '').slice(0, 8);
+    return cleaned.replace(/(\d{5})(\d{1,3})$/, '$1-$2');
   };
 
   // Redirect if invalid plan
@@ -177,6 +218,23 @@ export default function CheckoutSubscription() {
         throw new Error('CPF ou CNPJ inválido. CPF deve ter 11 dígitos e CNPJ deve ter 14 dígitos.');
       }
 
+      // ✅ CRITICAL: Validate phone (required by Pagar.me for subscriptions)
+      // User enters DDD + number (10-11 digits), we ADD country code 55 before sending
+      let cleanPhone = phone.replace(/\D/g, '');
+      
+      // ✅ Strip country code 55 if user accidentally included it
+      if (cleanPhone.startsWith('55') && cleanPhone.length >= 12) {
+        cleanPhone = cleanPhone.substring(2);
+      }
+      
+      // Validate phone format (10-11 digits: DDD 2 + number 8-9)
+      if (!cleanPhone || cleanPhone.length < 10 || cleanPhone.length > 11) {
+        throw new Error('Telefone obrigatório. Informe DDD + número (ex: 47999998888).');
+      }
+      
+      // ✅ ADD country code 55 for Brazil before sending to backend
+      const phoneWithCountryCode = `55${cleanPhone}`;
+
       // Validate card data
       const cardNumber = card.number.replace(/\s/g, '');
       if (cardNumber.length !== 16) {
@@ -211,6 +269,21 @@ export default function CheckoutSubscription() {
         throw new Error('CVV inválido');
       }
 
+      // ✅ CRITICAL: Validate billing address (required by Pagar.me)
+      if (!billingAddress.line_1 || billingAddress.line_1.trim().length < 3) {
+        throw new Error('Endereço de cobrança é obrigatório');
+      }
+      if (!billingAddress.city || billingAddress.city.trim().length < 2) {
+        throw new Error('Cidade é obrigatória');
+      }
+      if (!billingAddress.state || billingAddress.state.trim().length !== 2) {
+        throw new Error('Estado inválido. Use 2 letras (ex: SP, RJ)');
+      }
+      const cleanCep = billingAddress.zip_code.replace(/\D/g, '');
+      if (!cleanCep || cleanCep.length !== 8) {
+        throw new Error('CEP inválido. Deve ter 8 dígitos');
+      }
+
       // ✅ Step 1: Tokenize card via backend (if not already tokenized)
       // Uses cached token if available (prevents duplicate tokenization)
       const finalToken = cardToken ?? await tokenizeCard();
@@ -218,20 +291,40 @@ export default function CheckoutSubscription() {
       // ✅ Step 2: Send only token to backend (no card data)
       // Backend will: create customer -> attach token (creates card) -> create order
       // Ensure billing cycle is valid before sending
+      // ✅ CRITICAL: Include phone - required by Pagar.me for subscription payments
+      // ✅ CRITICAL: Include billing_address - required by Pagar.me for credit card payments
       const response = await subscriptionsService.processPayment({
         plan_id: planId,
         billing_cycle: getValidBillingCycle(billingCycle),
         card_token: finalToken,
-        cpf_cnpj: cleanCpfCnpj
+        cpf_cnpj: cleanCpfCnpj,
+        phone: phoneWithCountryCode,
+        billing_address: {
+          line_1: billingAddress.line_1.trim(),
+          line_2: billingAddress.line_2?.trim() || '',
+          city: billingAddress.city.trim(),
+          state: billingAddress.state.trim().toUpperCase(),
+          zip_code: cleanCep
+        }
       });
 
-      // ✅ Step 3: Payment is always pending until webhook confirms
-      // Status will be updated to 'ativo' when Pagar.me webhook confirms payment
-      toast.success('Pagamento enviado! Aguardando confirmação...', {
-        duration: 5000,
-        description: 'Você será notificado quando o pagamento for aprovado.'
-      });
-      navigate(`/subscription-pending?plan=${planId}&order_id=${response?.pagar_me_order_id || ''}`)
+      // ✅ Step 3: Check if payment was confirmed immediately (v5 subscriptions)
+      // is_paid=true means subscription.status='active' AND current_cycle.status='paid'
+      if (response?.is_paid) {
+        // ✅ Payment confirmed immediately - navigate to success page
+        toast.success('Assinatura ativada com sucesso!', {
+          duration: 5000,
+          description: 'Seu pagamento foi confirmado. Aproveite todos os recursos!'
+        });
+        navigate(`/payment-success?plan=${planId}&status=paid`);
+      } else {
+        // ⏳ Payment pending - waiting for webhook confirmation
+        toast.success('Pagamento enviado! Aguardando confirmação...', {
+          duration: 5000,
+          description: 'Você será notificado quando o pagamento for aprovado.'
+        });
+        navigate(`/subscription-pending?plan=${planId}&subscription_id=${response?.pagar_me_subscription_id || ''}`);
+      }
 
     } catch (error) {
       await handleApiError(error, { operation: 'process_payment', planId });
@@ -519,6 +612,126 @@ export default function CheckoutSubscription() {
                       <FileText className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-500 group-focus-within:text-orange-400 transition-colors" />
                     </div>
                     <p className="mt-1 text-xs text-slate-500">Necessário para emissão de notas fiscais</p>
+                  </div>
+
+                  {/* Phone - REQUIRED for Pagar.me */}
+                  <div>
+                    <label className="block text-sm font-medium text-slate-400 mb-2">
+                      Telefone (com DDD)
+                    </label>
+                    <div className="relative group">
+                      <input
+                        type="tel"
+                        id="phone"
+                        name="phone"
+                        value={phone}
+                        onChange={(e) => setPhone(formatPhone(e.target.value))}
+                        placeholder="(11) 99999-9999"
+                        maxLength={15}
+                        className="w-full px-4 py-4 pl-12 bg-slate-800/30 border border-slate-700/50 rounded-2xl text-white placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-orange-500/50 focus:border-orange-500/50 transition-all duration-300"
+                        required
+                      />
+                      <Phone className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-500 group-focus-within:text-orange-400 transition-colors" />
+                    </div>
+                    <p className="mt-1 text-xs text-slate-500">Obrigatório para processamento do pagamento</p>
+                  </div>
+
+                  {/* Billing Address Section - REQUIRED by Pagar.me */}
+                  <div className="pt-5 mt-5 border-t border-slate-700/30">
+                    <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+                      <Building2 className="w-5 h-5 text-orange-400" />
+                      Endereço de Cobrança
+                    </h3>
+                    <p className="text-xs text-slate-500 mb-4">Endereço vinculado ao cartão de crédito</p>
+
+                    {/* Address Line 1 */}
+                    <div className="mb-4">
+                      <label className="block text-sm font-medium text-slate-400 mb-2">
+                        Endereço
+                      </label>
+                      <input
+                        type="text"
+                        id="address-line1"
+                        name="address_line_1"
+                        value={billingAddress.line_1}
+                        onChange={(e) => setBillingAddress({ ...billingAddress, line_1: e.target.value })}
+                        placeholder="Rua, número"
+                        className="w-full px-4 py-4 bg-slate-800/30 border border-slate-700/50 rounded-2xl text-white placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-orange-500/50 focus:border-orange-500/50 transition-all duration-300"
+                        required
+                      />
+                    </div>
+
+                    {/* Address Line 2 (optional) */}
+                    <div className="mb-4">
+                      <label className="block text-sm font-medium text-slate-400 mb-2">
+                        Complemento <span className="text-slate-600">(opcional)</span>
+                      </label>
+                      <input
+                        type="text"
+                        id="address-line2"
+                        name="address_line_2"
+                        value={billingAddress.line_2}
+                        onChange={(e) => setBillingAddress({ ...billingAddress, line_2: e.target.value })}
+                        placeholder="Apartamento, bloco, etc"
+                        className="w-full px-4 py-4 bg-slate-800/30 border border-slate-700/50 rounded-2xl text-white placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-orange-500/50 focus:border-orange-500/50 transition-all duration-300"
+                      />
+                    </div>
+
+                    {/* City, State, and ZIP in a grid */}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      {/* City */}
+                      <div className="md:col-span-1">
+                        <label className="block text-sm font-medium text-slate-400 mb-2">
+                          Cidade
+                        </label>
+                        <input
+                          type="text"
+                          id="city"
+                          name="city"
+                          value={billingAddress.city}
+                          onChange={(e) => setBillingAddress({ ...billingAddress, city: e.target.value })}
+                          placeholder="São Paulo"
+                          className="w-full px-4 py-4 bg-slate-800/30 border border-slate-700/50 rounded-2xl text-white placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-orange-500/50 focus:border-orange-500/50 transition-all duration-300"
+                          required
+                        />
+                      </div>
+
+                      {/* State */}
+                      <div>
+                        <label className="block text-sm font-medium text-slate-400 mb-2">
+                          Estado
+                        </label>
+                        <input
+                          type="text"
+                          id="state"
+                          name="state"
+                          value={billingAddress.state}
+                          onChange={(e) => setBillingAddress({ ...billingAddress, state: e.target.value.toUpperCase().slice(0, 2) })}
+                          placeholder="SP"
+                          maxLength={2}
+                          className="w-full px-4 py-4 bg-slate-800/30 border border-slate-700/50 rounded-2xl text-white placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-orange-500/50 focus:border-orange-500/50 transition-all duration-300 uppercase"
+                          required
+                        />
+                      </div>
+
+                      {/* ZIP Code */}
+                      <div>
+                        <label className="block text-sm font-medium text-slate-400 mb-2">
+                          CEP
+                        </label>
+                        <input
+                          type="text"
+                          id="zip-code"
+                          name="zip_code"
+                          value={billingAddress.zip_code}
+                          onChange={(e) => setBillingAddress({ ...billingAddress, zip_code: formatCep(e.target.value) })}
+                          placeholder="00000-000"
+                          maxLength={9}
+                          className="w-full px-4 py-4 bg-slate-800/30 border border-slate-700/50 rounded-2xl text-white placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-orange-500/50 focus:border-orange-500/50 transition-all duration-300"
+                          required
+                        />
+                      </div>
+                    </div>
                   </div>
 
               {/* Expiration and CVV */}

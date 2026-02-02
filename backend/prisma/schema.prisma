@@ -219,47 +219,65 @@ model FiscalIntegrationStatus {
 }
 
 model Subscription {
-  id                    String    @id @default(uuid())
-  userId                String    @unique @map("user_id")
-  planId                String    @default("trial") @map("plan_id") // 'pay_per_use', 'essential', 'professional', 'accountant', 'trial'
-  pagarMeSubscriptionId String?   @map("pagar_me_subscription_id") // null for pay-per-use (removed @unique to allow multiple nulls)
-  pagarMePlanId         String?   @map("pagar_me_plan_id") // null for pay-per-use
-  status                String    @default("trial") // 'trial', 'ativo', 'inadimplente', 'cancelado', 'pending'
-  billingCycle          String?   @map("billing_cycle") // 'monthly', 'semiannual', 'annual', 'per_invoice', 'custom'
-  annualDiscountApplied Boolean   @default(false) @map("annual_discount_applied")
-  currentPeriodStart    DateTime? @map("current_period_start")
-  currentPeriodEnd      DateTime? @map("current_period_end")
-  nextBillingAt         DateTime? @map("next_billing_at") // Next billing date for recurring subscriptions
-  canceledAt            DateTime? @map("canceled_at")
-  trialEndsAt           DateTime? @map("trial_ends_at")
-  createdAt             DateTime  @default(now()) @map("created_at")
-  updatedAt             DateTime  @updatedAt @map("updated_at")
+  id                    String             @id @default(uuid())
+  userId                String             @unique @map("user_id")
+  planId                String             @default("trial") @map("plan_id") // 'pay_per_use', 'essential', 'professional', 'accountant', 'trial'
+  pagarMeSubscriptionId String?            @map("pagar_me_subscription_id") // null for pay-per-use (removed @unique to allow multiple nulls)
+  pagarMePlanId         String?            @map("pagar_me_plan_id") // null for pay-per-use
+  status                SubscriptionStatus @default(PENDING) // Strict enum for subscription lifecycle
+  billingCycle          String?            @map("billing_cycle") // 'monthly', 'semiannual', 'annual', 'per_invoice', 'custom'
+  annualDiscountApplied Boolean            @default(false) @map("annual_discount_applied")
+  currentPeriodStart    DateTime?          @map("current_period_start")
+  currentPeriodEnd      DateTime?          @map("current_period_end")
+  nextBillingAt         DateTime?          @map("next_billing_at") // Next billing date for recurring subscriptions
+  canceledAt            DateTime?          @map("canceled_at")
+  trialEndsAt           DateTime?          @map("trial_ends_at")
+  createdAt             DateTime           @default(now()) @map("created_at")
+  updatedAt             DateTime           @updatedAt @map("updated_at")
 
   // Relations
   user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   payments Payment[]
 
   @@index([nextBillingAt, status])
+  @@index([pagarMeSubscriptionId])
   @@map("subscriptions")
 }
 
+enum SubscriptionStatus {
+  PENDING    // Created, first invoice not paid yet
+  ACTIVE     // Last invoice paid, subscription active
+  PAST_DUE   // Payment failed, retry pending
+  TRIAL      // Trial period active
+  CANCELED   // Canceled by user or system
+  EXPIRED    // End date reached (optional)
+}
+
 model Payment {
-  id                   String    @id @default(uuid())
-  subscriptionId       String    @map("subscription_id")
-  pagarMeTransactionId String    @unique @map("pagar_me_transaction_id")
-  amount               Decimal   @db.Decimal(15, 2)
-  status               String // 'pending', 'paid', 'failed', 'refunded'
-  paymentMethod        String    @map("payment_method") // 'credit_card', 'boleto', 'pix'
-  paidAt               DateTime? @map("paid_at")
-  failedAt             DateTime? @map("failed_at")
-  nfseId               String?   @map("nfse_id") // Link to fiscal invoice
-  createdAt            DateTime  @default(now()) @map("created_at")
-  updatedAt            DateTime  @updatedAt @map("updated_at")
+  id                   String        @id @default(uuid())
+  subscriptionId       String        @map("subscription_id")
+  pagarMeInvoiceId     String        @unique @map("pagar_me_invoice_id") // Invoice ID (in_xxx) for idempotency
+  pagarMeTransactionId String?       @map("pagar_me_transaction_id") // Charge/transaction ID (ch_xxx or tran_xxx)
+  amount               Decimal       @db.Decimal(15, 2)
+  status               PaymentStatus // Strict enum for payment status
+  paymentMethod        String        @map("payment_method") // 'credit_card', 'boleto', 'pix'
+  paidAt               DateTime?     @map("paid_at")
+  failedAt             DateTime?     @map("failed_at")
+  failureReason        String?       @map("failure_reason") // Gateway error message
+  nfseId               String?       @map("nfse_id") // Link to fiscal invoice
+  createdAt            DateTime      @default(now()) @map("created_at")
+  updatedAt            DateTime      @updatedAt @map("updated_at")
 
   // Relations
   subscription Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
 
+  @@index([subscriptionId])
   @@map("payments")
+}
+
+enum PaymentStatus {
+  PAID
+  FAILED
 }
 
 model ConversationMessage {

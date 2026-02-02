@@ -208,7 +208,7 @@ export default function FiscalStatusIndicator({ companyId }) {
                 ? rateLimitError 
                 : displayStatus === 'not_connected'
                   ? 'Empresa cadastrada na Nuvem Fiscal. Configure certificado digital ou credenciais municipais para conectar.'
-                  : status.mensagem || 'Verificando status da conexão com a prefeitura...'}
+                : status.mensagem || 'Verificando status da conexão com a prefeitura...'}
           </p>
           {status.ultima_verificacao && !verifyMutation.isPending && !rateLimitError && (
             <p className="text-xs text-gray-600 mt-2">

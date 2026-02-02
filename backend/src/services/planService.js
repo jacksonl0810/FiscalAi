@@ -18,18 +18,12 @@ export async function getActiveSubscription(userId) {
   });
 
   if (!subscription) {
-    // For pay-per-use, user doesn't need a subscription
-    // Return a virtual subscription object
-    return {
-      userId,
-      planId: 'pay_per_use',
-      status: 'ativo',
-      billingCycle: 'per_invoice'
-    };
+    // No subscription - return null (user needs to subscribe)
+    return null;
   }
 
-  // For subscription plans, must be active
-  if (subscription.status !== 'ativo' && subscription.planId !== 'pay_per_use') {
+  // For subscription plans, must be active or trial
+  if (subscription.status !== 'ACTIVE' && subscription.status !== 'TRIAL') {
     throw new AppError('Subscription required', 403, 'SUBSCRIPTION_REQUIRED');
   }
 
@@ -37,7 +31,7 @@ export async function getActiveSubscription(userId) {
 }
 
 /**
- * Get user's current plan (with fallback to pay-per-use)
+ * Get user's current plan
  * @param {string} userId - User ID
  * @returns {Promise<string>} Plan ID
  */
@@ -51,39 +45,37 @@ export async function getUserPlanId(userId) {
     }
   });
 
-  // If no subscription, default to pay-per-use
+  // If no subscription, default to trial (user needs to subscribe)
   if (!subscription) {
-    return 'pay_per_use';
-  }
-
-  // Handle trial status - return 'trial' plan
-  if (subscription.status === 'trial') {
-    // Check if trial is still valid
-    if (subscription.trialEndsAt && new Date() > new Date(subscription.trialEndsAt)) {
-      // Trial expired, but subscription still shows as trial
-      // This shouldn't happen normally, but handle it gracefully
-      return subscription.planId || 'pay_per_use';
-    }
     return 'trial';
   }
 
-  // Handle active subscription
-  if (subscription.status === 'ativo') {
-    return subscription.planId || 'pay_per_use';
-  }
-
-  // Handle pending subscription - check if user is in trial period
-  if (subscription.status === 'pending') {
-    // If there's a trial end date and it hasn't passed, user is still in trial
-    if (subscription.trialEndsAt && new Date() <= new Date(subscription.trialEndsAt)) {
+  // Handle status based on SubscriptionStatus enum
+  switch (subscription.status) {
+    case 'TRIAL':
+      // Check if trial is still valid
+      if (subscription.trialEndsAt && new Date() > new Date(subscription.trialEndsAt)) {
+        return subscription.planId || 'trial';
+      }
       return 'trial';
-    }
-    // Otherwise, pending payment - use the plan they're trying to subscribe to
-    return subscription.planId || 'pay_per_use';
-  }
 
-  // For canceled, inadimplente, or other statuses, default to pay-per-use
-  return 'pay_per_use';
+    case 'ACTIVE':
+      return subscription.planId || 'essential';
+
+    case 'PENDING':
+      // If there's a trial end date and it hasn't passed, user is still in trial
+      if (subscription.trialEndsAt && new Date() <= new Date(subscription.trialEndsAt)) {
+        return 'trial';
+      }
+      return subscription.planId || 'trial';
+
+    case 'PAST_DUE':
+    case 'CANCELED':
+    case 'EXPIRED':
+    default:
+      // For inactive statuses, return trial (limited access)
+      return 'trial';
+  }
 }
 
 /**
@@ -260,61 +252,11 @@ export async function getPlanLimitsSummary(userId) {
   };
 }
 
-/**
- * Check pay-per-use balance (pending payments)
- * For pay-per-use plan, check if user has any unpaid invoice usage records
- * @param {string} userId - User ID
- * @returns {Promise<object>} Balance check result
- */
-export async function checkPayPerUseBalance(userId) {
-  const planId = await getUserPlanId(userId);
-  
-  // Only check for pay-per-use plan
-  if (planId !== 'pay_per_use') {
-    return {
-      allowed: true,
-      isPayPerUse: false,
-      pendingPayments: 0,
-      totalPending: 0
-    };
-  }
-
-  // Count pending payments
-  const pendingUsages = await prisma.invoiceUsage.count({
-    where: {
-      userId,
-      status: 'pending_payment'
-    }
-  });
-
-  // Calculate total pending amount
-  const pendingUsagesWithAmount = await prisma.invoiceUsage.findMany({
-    where: {
-      userId,
-      status: 'pending_payment'
-    },
-    select: {
-      amount: true
-    }
-  });
-
-  const totalPending = pendingUsagesWithAmount.reduce((sum, usage) => sum + usage.amount, 0);
-
-  // For pay-per-use, we allow issuance but user must pay before invoice is created
-  // However, we should warn if there are many pending payments
-  return {
-    allowed: true, // Always allowed, but payment required before invoice creation
-    isPayPerUse: true,
-    pendingPayments: pendingUsages,
-    totalPending: totalPending / 100, // Convert cents to reais
-    warning: pendingUsages > 3 ? `Você tem ${pendingUsages} pagamentos pendentes. Complete os pagamentos antes de emitir mais notas.` : null
-  };
-}
 
 /**
  * Comprehensive plan limits validation before invoice issuance
- * Checks all limits: invoice limit, pay-per-use balance
- * NOTE: Company limit is NOT checked here - it only applies when CREATING new companies, not when using existing ones
+ * Checks all limits: invoice limit
+ * NOTE: Company limit is NOT checked here - it only applies when CREATING new companies
  * @param {string} userId - User ID
  * @param {string} companyId - Company ID (optional, for verification that company exists and belongs to user)
  * @returns {Promise<object>} Validation result with detailed error messages
@@ -324,12 +266,11 @@ export async function validatePlanLimitsForIssuance(userId, companyId = null) {
   const planConfig = getPlanConfig(planId);
   const errors = [];
   const warnings = [];
-  const suggestions = [];
 
   // 1. Check invoice limit
   const invoiceLimit = await checkInvoiceLimit(userId);
   if (!invoiceLimit.allowed) {
-    errors.push({
+    const error = {
       code: 'INVOICE_LIMIT_REACHED',
       message: `Você atingiu o limite de ${invoiceLimit.max} notas fiscais deste mês.`,
       details: {
@@ -338,12 +279,12 @@ export async function validatePlanLimitsForIssuance(userId, companyId = null) {
         remaining: invoiceLimit.remaining
       },
       suggestions: []
-    });
+    };
 
     // Add upgrade suggestions
     if (invoiceLimit.upgradeOptions && invoiceLimit.upgradeOptions.length > 0) {
       invoiceLimit.upgradeOptions.forEach(plan => {
-        errors[errors.length - 1].suggestions.push({
+        error.suggestions.push({
           type: 'upgrade',
           planId: plan.planId,
           planName: plan.name,
@@ -352,13 +293,7 @@ export async function validatePlanLimitsForIssuance(userId, companyId = null) {
       });
     }
 
-    // Add pay-per-use suggestion if not already on it
-    if (planId !== 'pay_per_use') {
-      errors[errors.length - 1].suggestions.push({
-        type: 'pay_per_use',
-        message: 'Ou use a opção Pay per Use (R$9 por nota) para emitir sem limites mensais'
-      });
-    }
+    errors.push(error);
   } else if (!invoiceLimit.unlimited && invoiceLimit.remaining <= 5) {
     // Warning when close to limit
     warnings.push({
@@ -371,8 +306,6 @@ export async function validatePlanLimitsForIssuance(userId, companyId = null) {
   }
 
   // 2. Verify company exists and belongs to user (if companyId provided)
-  // NOTE: We do NOT check company limit here - company limit only applies when CREATING new companies
-  // Users should be able to emit invoices for existing companies even if they've reached their company limit
   if (companyId) {
     const company = await prisma.company.findFirst({
       where: {
@@ -391,40 +324,14 @@ export async function validatePlanLimitsForIssuance(userId, companyId = null) {
     }
   }
 
-  // 3. Check pay-per-use balance
-  const payPerUseBalance = await checkPayPerUseBalance(userId);
-  if (payPerUseBalance.isPayPerUse && payPerUseBalance.pendingPayments > 0) {
-    if (payPerUseBalance.pendingPayments > 3) {
-      errors.push({
-        code: 'PAY_PER_USE_PENDING_PAYMENTS',
-        message: `Você tem ${payPerUseBalance.pendingPayments} pagamentos pendentes (R$ ${payPerUseBalance.totalPending.toFixed(2)}). Complete os pagamentos antes de emitir mais notas.`,
-        details: {
-          pendingPayments: payPerUseBalance.pendingPayments,
-          totalPending: payPerUseBalance.totalPending
-        },
-        suggestions: [{
-          type: 'complete_payments',
-          message: 'Acesse "Notas Fiscais" para completar os pagamentos pendentes'
-        }]
-      });
-    } else {
-      warnings.push({
-        code: 'PAY_PER_USE_PENDING_WARNING',
-        message: `Você tem ${payPerUseBalance.pendingPayments} pagamento${payPerUseBalance.pendingPayments > 1 ? 's' : ''} pendente${payPerUseBalance.pendingPayments > 1 ? 's' : ''}. Complete o pagamento para finalizar a emissão.`,
-        pendingPayments: payPerUseBalance.pendingPayments
-      });
-    }
-  }
-
   return {
     valid: errors.length === 0,
     planId,
-    planName: planConfig.name,
+    planName: planConfig?.name || 'Trial',
     errors,
     warnings,
     invoiceLimit,
     companyLimit: companyId ? await checkCompanyLimit(userId) : null,
-    payPerUseBalance,
     upgradeOptions: getUpgradeOptions(planId)
   };
 }

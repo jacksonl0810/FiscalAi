@@ -997,7 +997,8 @@ export async function createSubscription(subscriptionData) {
           description: `${subscriptionData.plan.name} (${interval === 'year' ? 'anual' : interval === 'month' && intervalCount === 6 ? 'semestral' : 'mensal'})`,
           quantity: 1,
           pricing_scheme: {
-            price: amount // Amount in cents (e.g., 197000 for R$1970.00)
+            scheme_type: 'unit',  // ✅ REQUIRED: pricing type
+            price: amount         // Amount in cents (e.g., 9700 for R$97.00)
           }
         }
       ],
@@ -1009,7 +1010,15 @@ export async function createSubscription(subscriptionData) {
       // ✅ Billing type: prepaid = charge at start, postpaid = charge at end
       billing_type: 'prepaid',
       
-      // ✅ minimum_price (centavos) - subscription minimum value
+      // ✅ CRITICAL: Subscription-level billing object (REQUIRED for prepaid subscriptions)
+      // Gateway error: validation_error | billing | "value" is required
+      // This is DIFFERENT from card.billing - this is the subscription billing value
+      billing: {
+        value: amount,           // ✅ REQUIRED: amount in centavos for the billing cycle
+        minimum_price: amount    // ✅ minimum_price for the subscription
+      },
+      
+      // ✅ minimum_price (centavos) - subscription minimum value (also at top level for compatibility)
       minimum_price: amount,
       
       // ✅ Installments (required for credit_card)
@@ -1403,164 +1412,6 @@ export async function verifySubscriptionPayment(subscriptionId) {
       error: error.message,
       verifiedAt: new Date().toISOString()
     };
-  }
-}
-
-/* -------------------------------------------------------------------------- */
-/* Orders API (for one-time payments, not subscriptions)                     */
-/* -------------------------------------------------------------------------- */
-
-/**
- * Get order status from Pagar.me API
- * @param {string} orderId - Pagar.me order ID (e.g., or_xxxxx)
- * @returns {Promise<object>} Order data with status
- */
-export async function getOrderStatus(orderId) {
-  if (!orderId || !orderId.startsWith('or_')) {
-    throw new Error(`Invalid order ID format. Expected or_xxxxx, got: ${orderId}`);
-  }
-
-  try {
-    const apiUrl = `${API_BASE}/orders/${orderId}`;
-
-    console.log('[Pagar.me] Fetching order status:', { orderId });
-
-    const response = await axios.get(apiUrl, {
-      headers: getAuthHeaders(),
-      timeout: PAGARME_TIMEOUT,
-      httpsAgent: httpsAgent
-    });
-
-    const order = response.data;
-
-    console.log('[Pagar.me] ✅ Order status retrieved:', {
-      orderId: order.id,
-      status: order.status,
-      amount: order.amount,
-      charges: order.charges?.length || 0
-    });
-
-    return {
-      id: order.id,
-      status: order.status,
-      amount: order.amount,
-      charges: order.charges || [],
-      customer_id: order.customer_id,
-      metadata: order.metadata || {}
-    };
-  } catch (error) {
-    console.error('[Pagar.me] Error fetching order status:', {
-      orderId,
-      message: error.message,
-      status: error.response?.status,
-      data: error.response?.data
-    });
-
-    if (error.response?.status === 404) {
-      throw new Error(`Order not found: ${orderId}`);
-    }
-
-    const errorData = error.response?.data || {};
-    throw new Error(`Failed to fetch order status: ${errorData.message || error.message}`);
-  }
-}
-
-/**
- * Create order for one-time payment (e.g., pay-per-use invoices)
- * ⚠️ NOTE: This is for one-time payments only, NOT for subscriptions
- * Use createSubscription() for recurring payments
- * 
- * @param {object} orderData - Order data
- * @param {object} orderData.customer - Customer data
- * @param {object} orderData.payment - Payment data
- * @param {number} orderData.amount - Amount in cents
- * @param {string} orderData.planName - Description
- * @param {object} orderData.metadata - Additional metadata
- * @returns {Promise<object>} Created order
- */
-export async function createOrder(orderData) {
-  try {
-    const apiUrl = `${API_BASE}/orders`;
-
-    const requestBody = {
-      customer: {
-        name: orderData.customer.name,
-        email: orderData.customer.email,
-        document: orderData.customer.document?.replace(/\D/g, ''),
-        type: orderData.customer.type || (orderData.customer.document?.replace(/\D/g, '').length === 11 ? 'individual' : 'company')
-      },
-      items: [
-        {
-          code: orderData.code || `invoice_${Date.now()}`, // ✅ REQUIRED: Unique identifier for the product/item
-          amount: orderData.amount,
-          description: orderData.planName || 'One-time payment',
-          quantity: 1
-        }
-      ],
-      payments: [
-        {
-          payment_method: orderData.payment?.method || 'credit_card',
-          credit_card: {
-            installments: 1,
-            statement_descriptor: 'FISCALAI'
-          }
-        }
-      ]
-    };
-
-    // Add card token if provided
-    if (orderData.payment?.card_token) {
-      requestBody.payments[0].credit_card.card_token = orderData.payment.card_token;
-    } else if (orderData.payment?.card_id) {
-      requestBody.payments[0].credit_card.card_id = orderData.payment.card_id;
-    }
-
-    if (orderData.metadata) {
-      requestBody.metadata = orderData.metadata;
-    }
-
-    const response = await axios.post(apiUrl, requestBody, {
-      headers: getAuthHeaders(),
-      timeout: PAGARME_TIMEOUT,
-      httpsAgent: httpsAgent
-    });
-
-    return {
-      orderId: response.data.id,
-      status: response.data.status,
-      charges: response.data.charges
-    };
-  } catch (error) {
-    const errorData = error.response?.data || {};
-    const statusCode = error.response?.status;
-    const gatewayResponse = errorData.gateway_response || {};
-    const gatewayCode = gatewayResponse.code;
-    const gatewayErrors = gatewayResponse.errors || [];
-
-    console.error('[Pagar.me] Error creating order:', {
-      message: error.message,
-      response: error.response?.data,
-      status: statusCode,
-      gatewayCode: gatewayCode,
-      gatewayErrors: gatewayErrors
-    });
-
-    // ✅ CRITICAL: Detect HTTP 412 (Precondition Failed) - missing required fields like 'code'
-    if (statusCode === 412 || gatewayCode === '412') {
-      const missingField = gatewayErrors.find(e => e.message?.includes('Code')) || 
-                          gatewayErrors.find(e => e.message?.includes('code')) ||
-                          gatewayErrors[0];
-      const errorMsg = missingField?.message || 'Missing required field in order items';
-      throw new Error(`Erro de integração: ${errorMsg}. Por favor, tente novamente mais tarde.`);
-    }
-
-    const errorMessage = errorData.message || error.message;
-    if (gatewayErrors.length > 0) {
-      const gatewayMsg = gatewayErrors.map(e => e.message).join(', ');
-      throw new Error(`Falha ao criar pedido no Pagar.me: ${errorMessage} | ${gatewayMsg}`);
-    }
-    
-    throw new Error(`Falha ao criar pedido no Pagar.me: ${errorMessage}`);
   }
 }
 

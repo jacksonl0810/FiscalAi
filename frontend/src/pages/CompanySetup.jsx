@@ -184,23 +184,23 @@ export default function CompanySetup() {
               });
             } else {
               // New company registered successfully
-              toast.success('✓ Integração Fiscal Ativada!\n\nEmpresa registrada com sucesso na Nuvem Fiscal', {
-                duration: 5000,
-                style: {
-                  background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)',
-                  border: '1px solid rgba(34, 197, 94, 0.3)',
-                  borderRadius: '16px',
-                  padding: '16px',
-                  boxShadow: '0 10px 40px rgba(34, 197, 94, 0.2)',
-                  color: '#fff',
-                  whiteSpace: 'pre-line',
-                },
-              });
-              await notificationsService.create({
-                titulo: "Empresa registrada",
-                mensagem: "Empresa registrada com sucesso na Nuvem Fiscal!",
-                tipo: "sucesso"
-              });
+            toast.success('✓ Integração Fiscal Ativada!\n\nEmpresa registrada com sucesso na Nuvem Fiscal', {
+              duration: 5000,
+              style: {
+                background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)',
+                border: '1px solid rgba(34, 197, 94, 0.3)',
+                borderRadius: '16px',
+                padding: '16px',
+                boxShadow: '0 10px 40px rgba(34, 197, 94, 0.2)',
+                color: '#fff',
+                whiteSpace: 'pre-line',
+              },
+            });
+            await notificationsService.create({
+              titulo: "Empresa registrada",
+              mensagem: "Empresa registrada com sucesso na Nuvem Fiscal!",
+              tipo: "sucesso"
+            });
             }
           } else if (nuvemResult.status === 'not_configured') {
             toast.info('ℹ️ Integração Fiscal Pendente\n\nNuvem Fiscal não configurado. Empresa salva localmente.', {
