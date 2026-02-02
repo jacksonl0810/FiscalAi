@@ -25,7 +25,7 @@ export async function getSubscriptionsToBillToday() {
 
   const subscriptions = await prisma.subscription.findMany({
     where: {
-      status: 'ativo',
+      status: 'ACTIVE',
       nextBillingAt: {
         gte: today,
         lt: tomorrow
@@ -182,7 +182,7 @@ export async function createSubscriptionCharge(subscription) {
     await prisma.subscription.update({
       where: { id: subscription.id },
       data: {
-        status: 'inadimplente'
+        status: 'PAST_DUE'
       }
     });
 

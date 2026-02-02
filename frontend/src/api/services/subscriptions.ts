@@ -127,21 +127,75 @@ export const subscriptionsService = {
    * 2. Frontend sends only token to backend (PCI compliant)
    * 3. Backend creates/gets customer
    * 4. Backend attaches token to customer → creates card automatically
-   * 5. Backend creates subscription with created card_id
+   * 5. Backend creates subscription via POST /subscriptions (v5)
    * 
    * ⚠️ IMPORTANT:
    * - card_token MUST be token_xxxxx format
    * - Backend NEVER receives card number, CVV, or any card data
    * - Card is created automatically when token is attached (v5 requirement)
    * - cpf_cnpj is required for Pagar.me customer creation
+   * - phone is REQUIRED for Pagar.me subscription payments (at least one phone)
+   * 
+   * ✅ RESPONSE:
+   * - is_paid: true = payment confirmed immediately (subscription active)
+   * - is_paid: false = waiting for webhook confirmation
+   * - pagar_me_subscription_id: Pagar.me subscription ID (sub_xxx)
    */
   processPayment: async (data: {
     plan_id: string;
     billing_cycle?: 'monthly' | 'semiannual' | 'annual';
     card_token: string; // ✅ Must be token (token_xxxxx) from tokenization
     cpf_cnpj: string; // ✅ Required for Pagar.me customer creation (CPF: 11 digits, CNPJ: 14 digits)
-  }) => {
+    phone: string; // ✅ REQUIRED for Pagar.me subscription - must have at least one customer phone
+    billing_address: { // ✅ REQUIRED for credit card payments
+      line_1: string;
+      line_2?: string;
+      city: string;
+      state: string;
+      zip_code: string;
+    };
+  }): Promise<{
+    subscription_id: string;
+    pagar_me_subscription_id: string;
+    status: string;
+    is_paid: boolean;
+    plan_id: string;
+    current_cycle?: {
+      id: string;
+      status: string;
+      startAt: string;
+      endAt: string;
+    };
+    next_billing_at?: string;
+    message: string;
+  }> => {
     const response = await apiClient.post('/subscriptions/process-payment', data);
+    return response.data.data || response.data;
+  },
+
+  /**
+   * Verify subscription status directly with Pagar.me (v5)
+   * ✅ Use this to confirm payment was actually processed
+   * 
+   * Returns:
+   * - isValid: true if subscription.status='active' AND current_cycle.status='paid'
+   */
+  verifySubscription: async (): Promise<{
+    isValid: boolean;
+    status: string;
+    isPaid?: boolean;
+    subscriptionId?: string;
+    pagarMeSubscriptionId?: string;
+    currentCycle?: {
+      id: string;
+      status: string;
+      startAt: string;
+      endAt: string;
+    };
+    nextBillingAt?: string;
+    verifiedAt?: string;
+  }> => {
+    const response = await apiClient.get('/subscriptions/verify');
     return response.data.data || response.data;
   },
 

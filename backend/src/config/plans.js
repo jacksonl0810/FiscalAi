@@ -40,25 +40,6 @@ export const PLANS = {
     ],
     billingCycle: 'monthly'
   },
-  pay_per_use: {
-    planId: 'pay_per_use',
-    name: 'Pay per Use',
-    description: 'Pague apenas pelo que usar',
-    monthlyPrice: 0, // No monthly fee
-    annualPrice: null, // Not applicable
-    perInvoicePrice: 900, // R$9.00 in cents
-    maxCompanies: 1,
-    maxInvoicesPerMonth: null, // Unlimited
-    features: [
-      '1 empresa (CNPJ)',
-      'Notas fiscais ilimitadas',
-      'R$9 por nota fiscal emitida',
-      'Assistente IA completo',
-      'Comando por voz',
-      'Sem assinatura mensal'
-    ],
-    billingCycle: 'per_invoice'
-  },
   essential: {
     planId: 'essential',
     name: 'Essential',
@@ -126,7 +107,6 @@ const PLAN_ID_MAPPING = {
   'pro': 'pro', // Frontend 'pro' (R$97) - uses pro plan directly
   'business': 'business', // Frontend 'business' (R$197) - uses business plan directly
   // Backend plan IDs (no mapping needed)
-  'pay_per_use': 'pay_per_use',
   'essential': 'essential',
   'professional': 'professional',
   'accountant': 'accountant'
@@ -180,7 +160,7 @@ export function getPlanConfig(planId) {
  * @returns {array} Array of upgrade options
  */
 export function getUpgradeOptions(currentPlanId) {
-  const planOrder = ['pay_per_use', 'essential', 'professional', 'accountant'];
+  const planOrder = ['trial', 'essential', 'pro', 'professional', 'business', 'accountant'];
   const currentIndex = planOrder.indexOf(currentPlanId);
   
   if (currentIndex === -1 || currentIndex === planOrder.length - 1) {

@@ -11,7 +11,7 @@ export default function SubscriptionPending() {
   const { user, refreshUser } = useAuth();
   const [searchParams] = useSearchParams();
   const planId = searchParams.get('plan');
-  const orderId = searchParams.get('order_id');
+  const subscriptionId = searchParams.get('subscription_id') || searchParams.get('order_id'); // Support both v5 and legacy
   
   const [isPolling, setIsPolling] = useState(true);
   const [pollCount, setPollCount] = useState(0);

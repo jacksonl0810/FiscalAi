@@ -48,8 +48,6 @@ async function seedPlans() {
         planType = 'trial';
       } else if (configPlan.billingCycle === 'annual' || configPlan.billingCycle === 'yearly') {
         planType = 'yearly';
-      } else if (configPlan.billingCycle === 'per_invoice') {
-        planType = 'pay_per_use';
       } else if (configPlan.billingCycle === 'custom') {
         planType = 'custom';
       }
@@ -63,9 +61,6 @@ async function seedPlans() {
       } else if (planType === 'trial') {
         interval = 'day';
         intervalCount = 7; // 7-day trial
-      } else if (planType === 'pay_per_use') {
-        interval = 'month'; // Pay per use is still monthly billing, but per invoice
-        intervalCount = 1;
       }
 
       // Prepare plan data
