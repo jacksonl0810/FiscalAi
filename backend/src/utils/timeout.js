@@ -8,7 +8,7 @@
 export const TIMEOUTS = {
   NUVEM_FISCAL: 30000,      // 30 seconds
   OPENAI: 60000,            // 60 seconds (GPT can take longer)
-  PAGARME: 30000,           // 30 seconds
+  STRIPE: 30000,            // 30 seconds
   DEFAULT: 30000            // 30 seconds default
 };
 
@@ -47,14 +47,14 @@ export async function fetchWithTimeout(url, options = {}, timeoutMs = TIMEOUTS.D
 
 /**
  * Get timeout for a specific service
- * @param {string} service - Service name ('nuvem_fiscal', 'openai', 'pagarme')
+ * @param {string} service - Service name ('nuvem_fiscal', 'openai', 'stripe')
  * @returns {number} Timeout in milliseconds
  */
 export function getTimeout(service) {
   const serviceTimeouts = {
     'nuvem_fiscal': TIMEOUTS.NUVEM_FISCAL,
     'openai': TIMEOUTS.OPENAI,
-    'pagarme': TIMEOUTS.PAGARME
+    'stripe': TIMEOUTS.STRIPE
   };
 
   return serviceTimeouts[service.toLowerCase()] || TIMEOUTS.DEFAULT;

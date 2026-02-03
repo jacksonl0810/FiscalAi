@@ -5,7 +5,7 @@ import { body, validationResult } from 'express-validator';
 import { prisma } from '../lib/prisma.js';
 import { authenticate } from '../middleware/auth.js';
 import { asyncHandler, AppError } from '../middleware/errorHandler.js';
-import { createCustomer } from '../services/pagarMeSDK.js';
+import { createOrUpdateCustomer } from '../services/stripeSDK.js';
 import { authLimiter } from '../middleware/rateLimiter.js';
 import { sendWelcomeEmail } from '../services/email.js';
 import {
@@ -83,31 +83,33 @@ router.post('/register', authLimiter, [
     }
   });
 
-  // Create customer in Pagar.me (optional - can be done later with CPF/CNPJ)
-  let pagarMeCustomerId = null;
+  // Create customer in Stripe (optional - can be done later during checkout)
+  let stripeCustomerId = null;
   try {
     if (req.body.cpf_cnpj) {
-      const customerResult = await createCustomer({
-        externalId: user.id,
-        name: user.name,
+      const customer = await createOrUpdateCustomer({
         email: user.email,
-        cpfCnpj: req.body.cpf_cnpj,
-        phone: req.body.phone || ''
+        name: user.name,
+        phone: req.body.phone || '',
+        metadata: {
+          userId: user.id,
+          cpfCnpj: req.body.cpf_cnpj
+        }
       });
-      pagarMeCustomerId = customerResult.customerId;
+      stripeCustomerId = customer.id;
 
-      // Update user with Pagar.me customer ID
+      // Update user with Stripe customer ID
       await prisma.user.update({
         where: { id: user.id },
         data: {
-          pagarMeCustomerId: customerResult.customerId,
+          stripeCustomerId: customer.id,
           cpfCnpj: req.body.cpf_cnpj.replace(/\D/g, '') // Store numbers only
         }
       });
     }
   } catch (error) {
-    // Log error but don't fail registration if Pagar.me fails
-    console.error('Failed to create Pagar.me customer during registration:', error);
+    // Log error but don't fail registration if Stripe fails
+    console.error('Failed to create Stripe customer during registration:', error);
     // User can complete registration and add payment info later
   }
 
@@ -340,26 +342,26 @@ router.get('/me', authenticate, asyncHandler(async (req, res) => {
         currentPeriodEnd = subscription.trialEndsAt;
       }
     }
-    // ✅ PRIORITY 3: Canceled but still in paid period
-    else if (subscription.status === 'cancelado' && subscription.currentPeriodEnd) {
+    // ✅ PRIORITY 3: Canceled but still in paid period (DB enum is 'CANCELED')
+    else if ((subscription.status === 'CANCELED' || subscription.status === 'cancelado') && subscription.currentPeriodEnd) {
       const periodEnd = new Date(subscription.currentPeriodEnd);
       
       if (now <= periodEnd) {
         subscriptionStatus = 'ativo'; // Frontend sees as active
-        plan = subscription.pagarMePlanId;
+        plan = subscription.planId;
         currentPeriodEnd = subscription.currentPeriodEnd;
         daysRemaining = Math.max(0, Math.ceil((periodEnd - now) / (1000 * 60 * 60 * 24)));
       } else {
         subscriptionStatus = 'cancelado';
-        plan = subscription.pagarMePlanId;
+        plan = subscription.planId;
         currentPeriodEnd = subscription.currentPeriodEnd;
         daysRemaining = 0;
       }
     }
-    // ✅ PRIORITY 4: Active subscription
-    else if (subscription.status === 'ativo') {
+    // ✅ PRIORITY 4: Active subscription (DB enum is 'ACTIVE'; support legacy 'ativo')
+    else if (subscription.status === 'ACTIVE' || subscription.status === 'ativo') {
       subscriptionStatus = 'ativo';
-      plan = subscription.pagarMePlanId;
+      plan = subscription.planId;
       currentPeriodEnd = subscription.currentPeriodEnd;
       
       if (currentPeriodEnd) {
@@ -369,14 +371,14 @@ router.get('/me', authenticate, asyncHandler(async (req, res) => {
     // ✅ PRIORITY 5: Pending payment (no active trial)
     else if (subscription.status === 'pending') {
       subscriptionStatus = 'pending';
-      plan = subscription.pagarMePlanId;
+      plan = subscription.planId;
       daysRemaining = 0;
       currentPeriodEnd = null;
     }
     // Other statuses
     else {
       subscriptionStatus = subscription.status;
-      plan = subscription.pagarMePlanId;
+      plan = subscription.planId;
       currentPeriodEnd = subscription.currentPeriodEnd;
       
       if (currentPeriodEnd) {

@@ -162,7 +162,7 @@ export default function VoiceButton({ onVoiceInput, disabled }) {
       whileHover={{ scale: 1.05 }}
       whileTap={{ scale: 0.95 }}
       onClick={handleClick}
-      disabled={disabled}
+      disabled={disabled || isTranscribing}
       className={`relative w-14 h-14 rounded-2xl flex items-center justify-center transition-all duration-300 ${
         isRecording
           ? 'bg-gradient-to-br from-red-500 via-red-600 to-red-500 text-white shadow-lg shadow-red-500/30 border border-red-400/30'
@@ -170,7 +170,6 @@ export default function VoiceButton({ onVoiceInput, disabled }) {
           ? 'bg-gradient-to-br from-blue-500 via-blue-600 to-blue-500 text-white shadow-lg shadow-blue-500/30 border border-blue-400/30'
           : 'bg-gradient-to-br from-orange-500 via-orange-600 to-orange-500 text-white hover:from-orange-600 hover:via-orange-500 hover:to-orange-600 shadow-lg shadow-orange-500/30 hover:shadow-xl hover:shadow-orange-500/40 border border-orange-400/30'
       } ${disabled || isTranscribing ? 'opacity-50 cursor-not-allowed' : ''}`}
-      disabled={disabled || isTranscribing}
     >
       <AnimatePresence mode="wait">
         {isTranscribing ? (

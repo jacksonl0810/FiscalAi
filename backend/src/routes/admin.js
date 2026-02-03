@@ -604,7 +604,7 @@ router.get('/settings', asyncHandler(async (req, res) => {
     environment: process.env.NODE_ENV || 'development',
     nuvemFiscalConfigured: !!(process.env.NUVEM_FISCAL_CLIENT_ID && process.env.NUVEM_FISCAL_CLIENT_SECRET),
     nuvemFiscalEnvironment: process.env.NUVEM_FISCAL_ENVIRONMENT || 'sandbox',
-    pagarMeConfigured: !!(process.env.PAGARME_API_KEY),
+    stripeConfigured: !!(process.env.STRIPE_SECRET_KEY),
     emailConfigured: process.env.EMAIL_ENABLED === 'true',
     version: '1.0.0'
   };

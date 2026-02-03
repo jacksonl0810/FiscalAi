@@ -1,6 +1,10 @@
 /**
  * Plan Configuration
  * Defines all available subscription plans and their limits
+ * 
+ * STRIPE INTEGRATION:
+ * Each plan has Stripe price IDs for monthly and annual billing cycles.
+ * These are used when creating subscriptions via the Stripe API.
  */
 
 export const PLANS = {
@@ -20,7 +24,12 @@ export const PLANS = {
       'Assistente IA completo',
       'Comando por voz'
     ],
-    billingCycle: 'monthly'
+    billingCycle: 'monthly',
+    // Stripe Price IDs
+    stripePrices: {
+      monthly: 'price_1SwaPi44Zn6Patb48BLYX5vd',
+      annual: 'price_1SwaQK44Zn6Patb4ubEELerv'
+    }
   },
   business: {
     planId: 'business',
@@ -38,7 +47,12 @@ export const PLANS = {
       'Multiusuários',
       'API de integração'
     ],
-    billingCycle: 'monthly'
+    billingCycle: 'monthly',
+    // Stripe Price IDs
+    stripePrices: {
+      monthly: 'price_1SwaZW44Zn6Patb4KAFJRtUm',
+      annual: 'price_1SwabA44Zn6Patb4tgKG4LyX'
+    }
   },
   essential: {
     planId: 'essential',
@@ -241,6 +255,31 @@ export function getBillingCycleConfig(billingCycle) {
         days: 30
       };
   }
+}
+
+/**
+ * Get Stripe price ID for a plan and billing cycle
+ * @param {string} planId - Plan identifier (pro, business, etc.)
+ * @param {string} billingCycle - 'monthly' or 'annual'
+ * @returns {string|null} Stripe price ID or null if not found
+ */
+export function getStripePriceId(planId, billingCycle = 'monthly') {
+  const normalizedId = normalizePlanId(planId);
+  const plan = PLANS[normalizedId];
+  
+  if (!plan || !plan.stripePrices) {
+    return null;
+  }
+  
+  // Map billing cycles to Stripe price keys
+  const cycleMap = {
+    'monthly': 'monthly',
+    'annual': 'annual',
+    'semiannual': 'annual' // Treat semiannual as annual for Stripe
+  };
+  
+  const stripeCycle = cycleMap[billingCycle] || 'monthly';
+  return plan.stripePrices[stripeCycle] || null;
 }
 
 export default PLANS;

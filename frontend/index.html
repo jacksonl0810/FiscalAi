@@ -3,15 +3,12 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="google" content="notranslate" />
+    <!-- CSP is set by backend when serving SPA (see backend/src/index.js) -->
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="manifest" href="/manifest.json" />
     <meta name="theme-color" content="#0a0a0f" />
     <title>MAY - Assistente Fiscal IA</title>
-    <!-- 
-      Pagar.me V5 uses server-side tokenization via API, not client-side scripts.
-      Card tokenization is handled by the backend at /api/subscriptions/tokenize-card
-    -->
   </head>
   <body>
     <div id="root"></div>

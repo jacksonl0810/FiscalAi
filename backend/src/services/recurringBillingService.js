@@ -1,39 +1,39 @@
 /**
  * Recurring Billing Service
- * Handles automatic rebilling for subscriptions based on billing cycle
+ * Handles subscription status monitoring and syncing with Stripe
  * 
- * This service implements the recurring billing logic as described in the guide:
- * - Pagar.me does NOT automatically rebill
- * - We must create orders ourselves on a schedule
- * - Uses cron job to check subscriptions that need billing
+ * NOTE: Stripe automatically handles recurring billing through its subscription system.
+ * This service is used to:
+ * - Sync local database with Stripe status
+ * - Handle trial expiration
+ * - Send reminder notifications
  */
 
 import { prisma } from '../index.js';
-import * as pagarmeSDKService from './pagarMeSDK.js';
-import { getPlanConfig, getPlanPrice, getBillingCycleConfig } from '../config/plans.js';
+import { getPlanConfig } from '../config/plans.js';
 import { sendSubscriptionStatusEmail } from './email.js';
+import * as stripeSDK from './stripeSDK.js';
 
 /**
- * Get subscriptions that need to be billed today
- * @returns {Promise<Array>} Array of subscriptions to bill
+ * Get subscriptions that need status sync
+ * @returns {Promise<Array>} Array of subscriptions to sync
  */
-export async function getSubscriptionsToBillToday() {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const tomorrow = new Date(today);
-  tomorrow.setDate(tomorrow.getDate() + 1);
-
+export async function getSubscriptionsToSync() {
   const subscriptions = await prisma.subscription.findMany({
     where: {
-      status: 'ACTIVE',
-      nextBillingAt: {
-        gte: today,
-        lt: tomorrow
+      status: {
+        in: ['ACTIVE', 'PAST_DUE', 'PENDING']
       },
-      billingCycle: {
-        in: ['monthly', 'semiannual', 'annual']
+      stripeSubscriptionId: {
+        not: null,
+        notIn: ['']
       },
-      canceledAt: null
+      // Don't sync trial subscriptions (they don't have real Stripe subscriptions)
+      NOT: {
+        stripeSubscriptionId: {
+          startsWith: 'trial_'
+        }
+      }
     },
     include: {
       user: {
@@ -41,7 +41,7 @@ export async function getSubscriptionsToBillToday() {
           id: true,
           name: true,
           email: true,
-          pagarMeCustomerId: true
+          stripeCustomerId: true
         }
       }
     }
@@ -51,156 +51,112 @@ export async function getSubscriptionsToBillToday() {
 }
 
 /**
- * Calculate next billing date based on billing cycle
- * @param {string} billingCycle - 'monthly', 'semiannual', or 'annual'
- * @param {Date} startDate - Start date (defaults to now)
- * @returns {Date} Next billing date
+ * Get trial subscriptions that are expiring soon
+ * @returns {Promise<Array>} Array of expiring trial subscriptions
  */
-function calculateNextBillingDate(billingCycle, startDate = new Date()) {
-  const date = new Date(startDate);
-  
-  switch (billingCycle) {
-    case 'annual':
-      date.setFullYear(date.getFullYear() + 1);
-      break;
-    case 'semiannual':
-      date.setMonth(date.getMonth() + 6);
-      break;
-    case 'monthly':
-    default:
-      date.setMonth(date.getMonth() + 1);
-      break;
-  }
-  
-  return date;
+export async function getExpiringTrials() {
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  tomorrow.setHours(23, 59, 59, 999);
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const trials = await prisma.subscription.findMany({
+    where: {
+      status: 'TRIAL',
+      trialEndsAt: {
+        gte: today,
+        lte: tomorrow
+      }
+    },
+    include: {
+      user: {
+        select: {
+          id: true,
+          name: true,
+          email: true
+        }
+      }
+    }
+  });
+
+  return trials;
 }
 
 /**
- * Create subscription charge for recurring billing
+ * Sync subscription status with Stripe
  * @param {object} subscription - Subscription object with user
- * @returns {Promise<object>} Result of billing attempt
+ * @returns {Promise<object>} Result of sync attempt
  */
-export async function createSubscriptionCharge(subscription) {
-  const { user, billingCycle, pagarMePlanId } = subscription;
+export async function syncSubscriptionWithStripe(subscription) {
+  const { stripeSubscriptionId, user } = subscription;
 
-  if (!user.pagarMeCustomerId) {
-    throw new Error(`User ${user.id} does not have Pagar.me customer ID`);
+  if (!stripeSubscriptionId || stripeSubscriptionId.startsWith('trial_')) {
+    return {
+      success: true,
+      subscriptionId: subscription.id,
+      message: 'Skipped - trial or no Stripe subscription'
+    };
   }
-
-  if (!pagarMePlanId) {
-    throw new Error(`Subscription ${subscription.id} does not have plan ID`);
-  }
-
-  const planConfig = getPlanConfig(pagarMePlanId);
-  if (!planConfig) {
-    throw new Error(`Plan ${pagarMePlanId} not found`);
-  }
-
-  const planAmount = getPlanPrice(pagarMePlanId, billingCycle);
-  if (planAmount === null) {
-    throw new Error(`Plan ${pagarMePlanId} does not support billing cycle ${billingCycle}`);
-  }
-
-  const billingConfig = getBillingCycleConfig(billingCycle);
-
-  const plan = {
-    name: planConfig.name,
-    amount: planAmount,
-    planId: pagarMePlanId,
-    interval: billingConfig.interval,
-    intervalCount: billingConfig.intervalCount
-  };
 
   try {
-    const customer = await prisma.user.findUnique({
-      where: { id: user.id },
-      select: { pagarMeCustomerId: true }
-    });
-
-    if (!customer?.pagarMeCustomerId) {
-      throw new Error('Customer not found in Pagar.me');
-    }
-
-    let customerCards;
-    try {
-      customerCards = await pagarmeSDKService.getCustomerCards(customer.pagarMeCustomerId);
-    } catch (error) {
-      console.error('[RecurringBilling] Error fetching customer cards:', error);
-      throw new Error('Não foi possível acessar os cartões do cliente');
-    }
+    const stripeSubscription = await stripeSDK.getSubscription(stripeSubscriptionId);
     
-    if (!customerCards || customerCards.length === 0) {
-      throw new Error('Nenhum método de pagamento encontrado para o cliente');
-    }
-
-    const defaultCard = customerCards.find(card => card.status === 'active') || customerCards[0];
+    // Map Stripe status to our enum
+    const statusMap = {
+      'incomplete': 'PENDING',
+      'incomplete_expired': 'EXPIRED',
+      'trialing': 'TRIAL',
+      'active': 'ACTIVE',
+      'past_due': 'PAST_DUE',
+      'canceled': 'CANCELED',
+      'unpaid': 'PAST_DUE'
+    };
     
-    if (!defaultCard || !defaultCard.id) {
-      throw new Error('Cartão padrão inválido');
-    }
-
-    const subscriptionResult = await pagarmeSDKService.createSubscription({
-      customerId: customer.pagarMeCustomerId,
-      cardId: defaultCard.id,
-      plan: {
-        name: plan.name,
-        amount: plan.amount,
-        interval: plan.interval,
-        intervalCount: plan.intervalCount,
-        code: plan.planId
-      },
-      metadata: {
-        type: 'subscription',
-        user_id: user.id,
-        plan_id: pagarMePlanId,
-        billing_cycle: billingCycle,
-        recurring: 'true',
-        subscription_id: subscription.id
-      }
-    });
-
-    const nextBillingDate = calculateNextBillingDate(billingCycle);
+    const newStatus = statusMap[stripeSubscription.status] || subscription.status;
+    const statusChanged = newStatus !== subscription.status;
 
     await prisma.subscription.update({
       where: { id: subscription.id },
       data: {
-        nextBillingAt: nextBillingDate,
-        pagarMeSubscriptionId: subscriptionResult.orderId || subscriptionResult.subscriptionId
+        status: newStatus,
+        currentPeriodStart: new Date(stripeSubscription.current_period_start * 1000),
+        currentPeriodEnd: new Date(stripeSubscription.current_period_end * 1000),
+        canceledAt: stripeSubscription.canceled_at 
+          ? new Date(stripeSubscription.canceled_at * 1000) 
+          : null
       }
     });
+
+    // Send notification if status changed to past_due
+    if (statusChanged && newStatus === 'PAST_DUE') {
+      await prisma.notification.create({
+        data: {
+          userId: user.id,
+          titulo: 'Pagamento Pendente',
+          mensagem: 'Houve um problema com o pagamento da sua assinatura. Por favor, atualize seu método de pagamento.',
+          tipo: 'erro'
+        }
+      });
+
+      if (user.email) {
+        sendSubscriptionStatusEmail(user, 'inadimplente').catch(err => {
+          console.error('[RecurringBilling] Failed to send email:', err);
+        });
+      }
+    }
 
     return {
       success: true,
       subscriptionId: subscription.id,
-      orderId: subscriptionResult.orderId,
-      amount: plan.amount,
-      nextBillingAt: nextBillingDate
+      stripeStatus: stripeSubscription.status,
+      localStatus: newStatus,
+      statusChanged
     };
   } catch (error) {
-    console.error(`[RecurringBilling] Error billing subscription ${subscription.id}:`, error);
-
-    await prisma.subscription.update({
-      where: { id: subscription.id },
-      data: {
-        status: 'PAST_DUE'
-      }
-    });
-
-    await prisma.notification.create({
-      data: {
-        userId: user.id,
-        titulo: 'Falha no Pagamento Recorrente',
-        mensagem: `Não foi possível processar o pagamento da sua assinatura. Por favor, atualize seu método de pagamento.`,
-        tipo: 'erro'
-      }
-    });
-
-    if (user.email) {
-      sendSubscriptionStatusEmail(user, 'inadimplente').catch(err => {
-        console.error('[RecurringBilling] Failed to send email:', err);
-      });
-    }
-
+    console.error(`[RecurringBilling] Error syncing subscription ${subscription.id}:`, error);
+    
     return {
       success: false,
       subscriptionId: subscription.id,
@@ -210,16 +166,63 @@ export async function createSubscriptionCharge(subscription) {
 }
 
 /**
- * Process all subscriptions that need billing today
- * @returns {Promise<object>} Results of billing process
+ * Handle expiring trial subscription
+ * @param {object} subscription - Trial subscription object
+ * @returns {Promise<object>} Result
  */
-export async function processRecurringBilling() {
-  console.log('[RecurringBilling] Starting recurring billing process...');
+export async function handleExpiringTrial(subscription) {
+  const { user } = subscription;
 
-  const subscriptions = await getSubscriptionsToBillToday();
+  try {
+    // Check if notification already sent recently
+    const recentNotification = await prisma.notification.findFirst({
+      where: {
+        userId: user.id,
+        titulo: 'Seu Trial Termina Amanhã!',
+        createdAt: {
+          gte: new Date(Date.now() - 24 * 60 * 60 * 1000) // Last 24 hours
+        }
+      }
+    });
+
+    if (!recentNotification) {
+      await prisma.notification.create({
+        data: {
+          userId: user.id,
+          titulo: 'Seu Trial Termina Amanhã!',
+          mensagem: 'Seu período de teste gratuito termina amanhã. Assine agora para continuar usando todos os recursos!',
+          tipo: 'alerta'
+        }
+      });
+    }
+
+    return {
+      success: true,
+      subscriptionId: subscription.id,
+      message: 'Trial expiration notification sent'
+    };
+  } catch (error) {
+    console.error(`[RecurringBilling] Error handling expiring trial ${subscription.id}:`, error);
+    
+    return {
+      success: false,
+      subscriptionId: subscription.id,
+      error: error.message
+    };
+  }
+}
+
+/**
+ * Process subscription status sync with Stripe
+ * @returns {Promise<object>} Results of sync process
+ */
+export async function processSubscriptionSync() {
+  console.log('[RecurringBilling] Starting subscription sync with Stripe...');
+
+  const subscriptions = await getSubscriptionsToSync();
   
   if (subscriptions.length === 0) {
-    console.log('[RecurringBilling] No subscriptions to bill today');
+    console.log('[RecurringBilling] No subscriptions to sync');
     return {
       total: 0,
       successful: 0,
@@ -228,7 +231,7 @@ export async function processRecurringBilling() {
     };
   }
 
-  console.log(`[RecurringBilling] Found ${subscriptions.length} subscription(s) to bill`);
+  console.log(`[RecurringBilling] Found ${subscriptions.length} subscription(s) to sync`);
 
   const results = {
     total: subscriptions.length,
@@ -238,36 +241,66 @@ export async function processRecurringBilling() {
   };
 
   for (const subscription of subscriptions) {
-    try {
-      const result = await createSubscriptionCharge(subscription);
-      results.results.push(result);
-      
-      if (result.success) {
-        results.successful++;
-        console.log(`[RecurringBilling] ✅ Successfully billed subscription ${subscription.id}`);
-      } else {
-        results.failed++;
-        console.error(`[RecurringBilling] ❌ Failed to bill subscription ${subscription.id}: ${result.error}`);
-      }
-    } catch (error) {
+    const result = await syncSubscriptionWithStripe(subscription);
+    results.results.push(result);
+    
+    if (result.success) {
+      results.successful++;
+    } else {
       results.failed++;
-      results.results.push({
-        success: false,
-        subscriptionId: subscription.id,
-        error: error.message
-      });
-      console.error(`[RecurringBilling] ❌ Error processing subscription ${subscription.id}:`, error);
     }
   }
 
-  console.log(`[RecurringBilling] Billing process completed: ${results.successful} successful, ${results.failed} failed`);
+  console.log(`[RecurringBilling] Sync completed: ${results.successful} successful, ${results.failed} failed`);
 
   return results;
 }
 
 /**
+ * Process expiring trials
+ * @returns {Promise<object>} Results of trial processing
+ */
+export async function processExpiringTrials() {
+  console.log('[RecurringBilling] Checking for expiring trials...');
+
+  const trials = await getExpiringTrials();
+  
+  if (trials.length === 0) {
+    console.log('[RecurringBilling] No expiring trials found');
+    return { total: 0, processed: 0 };
+  }
+
+  console.log(`[RecurringBilling] Found ${trials.length} expiring trial(s)`);
+
+  let processed = 0;
+  for (const trial of trials) {
+    const result = await handleExpiringTrial(trial);
+    if (result.success) processed++;
+  }
+
+  return { total: trials.length, processed };
+}
+
+/**
+ * Main recurring billing process
+ * Combines all recurring billing tasks
+ * @returns {Promise<object>} Combined results
+ */
+export async function processRecurringBilling() {
+  console.log('[RecurringBilling] Starting recurring billing process...');
+
+  const syncResults = await processSubscriptionSync();
+  const trialResults = await processExpiringTrials();
+
+  return {
+    sync: syncResults,
+    trials: trialResults
+  };
+}
+
+/**
  * Start recurring billing monitoring (call from scheduler)
- * Runs daily at 2 AM to check for subscriptions that need billing
+ * Runs daily at 2 AM to check subscriptions
  */
 export async function startRecurringBillingMonitoring() {
   console.log('[RecurringBilling] Starting recurring billing monitoring...');
@@ -280,8 +313,10 @@ export async function startRecurringBillingMonitoring() {
     }
   };
 
+  // Run immediately
   await runBilling();
 
+  // Schedule next run
   const scheduleNextRun = () => {
     const now = new Date();
     const tomorrow = new Date(now);

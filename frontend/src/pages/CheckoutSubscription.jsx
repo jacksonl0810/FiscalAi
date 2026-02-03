@@ -13,15 +13,16 @@ import {
   Zap,
   Building2,
   Calendar,
-  KeyRound,
   FileText,
   X,
   Phone
 } from 'lucide-react';
+import { Elements, CardElement, useStripe, useElements } from '@stripe/react-stripe-js';
+import { stripePromise } from '@/lib/stripe';
 import { subscriptionsService } from '@/api/services/subscriptions';
 import { toast } from 'sonner';
 import { useAuth } from '@/lib/AuthContext';
-import { handleApiError } from '@/utils/errorHandler';
+import { handleApiError, getTranslatedError } from '@/utils/errorHandler';
 
 const planDetails = {
   pro: {
@@ -42,14 +43,36 @@ const planDetails = {
   }
 };
 
-export default function CheckoutSubscription() {
-  const [searchParams] = useSearchParams();
+// Stripe CardElement styling
+const CARD_ELEMENT_OPTIONS = {
+  style: {
+    base: {
+      fontSize: '16px',
+      color: '#ffffff',
+      fontFamily: 'Inter, system-ui, sans-serif',
+      fontSmoothing: 'antialiased',
+      '::placeholder': {
+        color: '#64748b',
+      },
+      iconColor: '#f97316',
+    },
+    invalid: {
+      color: '#ef4444',
+      iconColor: '#ef4444',
+    },
+  },
+  hidePostalCode: true,
+};
+
+// Inner checkout form that uses Stripe hooks
+function CheckoutForm({ planId, plan }) {
+  const stripe = useStripe();
+  const elements = useElements();
   const navigate = useNavigate();
   const { user } = useAuth();
-  const planId = searchParams.get('plan');
-  const billingCycleParam = searchParams.get('billing_cycle') || 'monthly';
+  const [searchParams] = useSearchParams();
+  const billingCycleParam = searchParams.get('billing_cycle') || searchParams.get('cycle') || 'monthly';
   
-  // Validate billing cycle parameter - helper function to ensure type safety
   const validBillingCycles = ['monthly', 'semiannual', 'annual'];
   const getValidBillingCycle = (value) => {
     return validBillingCycles.includes(value) ? value : 'monthly';
@@ -57,13 +80,7 @@ export default function CheckoutSubscription() {
   
   const [isProcessing, setIsProcessing] = useState(false);
   const [billingCycle, setBillingCycle] = useState(getValidBillingCycle(billingCycleParam));
-  const [card, setCard] = useState({
-    number: '',
-    holder_name: '',
-    exp_month: '',
-    exp_year: '',
-    cvv: ''
-  });
+  const [cardError, setCardError] = useState(null);
   const [cpfCnpj, setCpfCnpj] = useState(user?.cpf_cnpj || '');
   const [phone, setPhone] = useState('');
   const [billingAddress, setBillingAddress] = useState({
@@ -74,8 +91,6 @@ export default function CheckoutSubscription() {
     zip_code: ''
   });
 
-  const plan = planDetails[planId];
-  
   const getPriceForBillingCycle = () => {
     if (billingCycle === 'semiannual') {
       return planId === 'pro' ? 540 : 1100;
@@ -89,13 +104,11 @@ export default function CheckoutSubscription() {
   const formatCpfCnpj = (value) => {
     const cleaned = value.replace(/\D/g, '');
     if (cleaned.length <= 11) {
-      // CPF: 000.000.000-00
       return cleaned
         .replace(/(\d{3})(\d)/, '$1.$2')
         .replace(/(\d{3})(\d)/, '$1.$2')
         .replace(/(\d{3})(\d{1,2})$/, '$1-$2');
     } else {
-      // CNPJ: 00.000.000/0000-00
       return cleaned
         .replace(/(\d{2})(\d)/, '$1.$2')
         .replace(/(\d{3})(\d)/, '$1.$2')
@@ -105,110 +118,49 @@ export default function CheckoutSubscription() {
     }
   };
 
-  // Format phone for display (DDD) 99999-9999
-  // ✅ Strips country code (55) if user accidentally includes it
+  // Format phone for display
   const formatPhone = (value) => {
     let cleaned = value.replace(/\D/g, '');
-    
-    // Strip Brazil country code if phone is 12+ digits and starts with "55"
     if (cleaned.startsWith('55') && cleaned.length >= 12) {
       cleaned = cleaned.substring(2);
     }
-    
-    // Limit to 11 digits max (DDD 2 + mobile 9)
     cleaned = cleaned.slice(0, 11);
     
     if (cleaned.length <= 10) {
-      // (DD) 9999-9999 (landline)
       return cleaned
         .replace(/(\d{2})(\d)/, '($1) $2')
         .replace(/(\d{4})(\d{1,4})$/, '$1-$2');
     } else {
-      // (DD) 99999-9999 (mobile)
       return cleaned
         .replace(/(\d{2})(\d)/, '($1) $2')
         .replace(/(\d{5})(\d{1,4})$/, '$1-$2');
     }
   };
 
-  // Format CEP for display: 00000-000
+  // Format CEP for display
   const formatCep = (value) => {
     const cleaned = value.replace(/\D/g, '').slice(0, 8);
     return cleaned.replace(/(\d{5})(\d{1,3})$/, '$1-$2');
   };
 
-  // Redirect if invalid plan
-  useEffect(() => {
-    if (!planId || !plan) {
-      toast.error('Plano inválido');
-      navigate('/pricing');
+  // Handle card element changes
+  const handleCardChange = (event) => {
+    if (event.error) {
+      setCardError(event.error.message);
+    } else {
+      setCardError(null);
     }
-  }, [planId, plan, navigate]);
-
-  // ✅ State for card_token (persistent, race-safe)
-  const [cardToken, setCardToken] = useState(null);
-
-  // ✅ Tokenize card via backend (v5-compliant)
-  // Backend handles Pagar.me tokenization and returns token_xxxxx
-  const tokenizeCard = async () => {
-    // Normalize card data
-    const cardNumber = card.number.replace(/\s/g, '');
-    const holderName = card.holder_name.trim().toUpperCase();
-    const expMonth = parseInt(card.exp_month.trim(), 10);
-    const expYearRaw = parseInt(card.exp_year.trim(), 10);
-    // Convert 2-digit year to 4-digit for Pagar.me (e.g., 24 -> 2024)
-    const expYear = expYearRaw < 100 ? 2000 + expYearRaw : expYearRaw;
-    const cvv = card.cvv.trim();
-
-    // Final validation before API call
-    if (isNaN(expMonth) || expMonth < 1 || expMonth > 12) {
-      throw new Error('Mês de validade inválido. Use um valor entre 01 e 12');
-    }
-    if (isNaN(expYear) || expYear < new Date().getFullYear()) {
-      throw new Error('Ano de validade inválido ou expirado');
-    }
-
-    // ✅ Call backend tokenization endpoint
-    const result = await subscriptionsService.tokenizeCard({
-      number: cardNumber,
-      holder_name: holderName,
-      exp_month: expMonth,
-      exp_year: expYear,
-      cvv: cvv
-    });
-
-    // ✅ Backend returns token (token_xxxxx)
-    // Pagar.me /tokens with public key returns token_xxxxx
-    // Card will be created when token is attached to customer
-    if (!result.token || !result.token.startsWith('token_')) {
-      throw new Error('Falha ao tokenizar cartão: formato inválido recebido do backend');
-    }
-
-    // Store token in state (persistent, prevents re-tokenization)
-    // Card will be created automatically when token is attached to customer
-    setCardToken(result.token);
-
-    console.log('[Card Tokenization] ✅ Card tokenized successfully:', {
-      token: result.token.substring(0, 20) + '...',
-      card_last4: result.card?.last_four_digits || 'N/A',
-      card_brand: result.card?.brand || 'N/A'
-    });
-
-    return result.token;
-  };
-
-  const formatCardNumber = (value) => {
-    const cleaned = value.replace(/\D/g, '');
-    const chunks = cleaned.match(/.{1,4}/g) || [];
-    return chunks.join(' ').slice(0, 19); // 16 digits + 3 spaces
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     
-    // ✅ Race condition protection - prevent double submission
-    if (isProcessing) return;
+    if (!stripe || !elements) {
+      toast.error('Stripe não carregado. Aguarde...');
+      return;
+    }
     
+    if (isProcessing) return;
     setIsProcessing(true);
 
     try {
@@ -218,58 +170,17 @@ export default function CheckoutSubscription() {
         throw new Error('CPF ou CNPJ inválido. CPF deve ter 11 dígitos e CNPJ deve ter 14 dígitos.');
       }
 
-      // ✅ CRITICAL: Validate phone (required by Pagar.me for subscriptions)
-      // User enters DDD + number (10-11 digits), we ADD country code 55 before sending
+      // Validate phone
       let cleanPhone = phone.replace(/\D/g, '');
-      
-      // ✅ Strip country code 55 if user accidentally included it
       if (cleanPhone.startsWith('55') && cleanPhone.length >= 12) {
         cleanPhone = cleanPhone.substring(2);
       }
-      
-      // Validate phone format (10-11 digits: DDD 2 + number 8-9)
       if (!cleanPhone || cleanPhone.length < 10 || cleanPhone.length > 11) {
         throw new Error('Telefone obrigatório. Informe DDD + número (ex: 47999998888).');
       }
-      
-      // ✅ ADD country code 55 for Brazil before sending to backend
       const phoneWithCountryCode = `55${cleanPhone}`;
 
-      // Validate card data
-      const cardNumber = card.number.replace(/\s/g, '');
-      if (cardNumber.length !== 16) {
-        throw new Error('Número do cartão inválido');
-      }
-
-      if (!card.holder_name || card.holder_name.length < 3) {
-        throw new Error('Nome do titular inválido');
-      }
-
-      // Validate and normalize expiration month
-      const expMonthRaw = card.exp_month.trim();
-      const expMonth = parseInt(expMonthRaw, 10);
-      
-      if (isNaN(expMonth) || expMonth < 1 || expMonth > 12) {
-        throw new Error('Mês de validade inválido. Use um valor entre 01 e 12');
-      }
-
-      // Validate and normalize expiration year
-      const expYearRaw = card.exp_year.trim();
-      const expYear = parseInt(expYearRaw, 10);
-      
-      // Convert 2-digit year to 4-digit (e.g., 24 -> 2024)
-      const fullYear = expYear < 100 ? 2000 + expYear : expYear;
-      const currentYear = new Date().getFullYear();
-      
-      if (isNaN(expYear) || fullYear < currentYear) {
-        throw new Error('Ano de validade inválido ou expirado');
-      }
-
-      if (!card.cvv || card.cvv.length < 3) {
-        throw new Error('CVV inválido');
-      }
-
-      // ✅ CRITICAL: Validate billing address (required by Pagar.me)
+      // Validate billing address
       if (!billingAddress.line_1 || billingAddress.line_1.trim().length < 3) {
         throw new Error('Endereço de cobrança é obrigatório');
       }
@@ -284,19 +195,39 @@ export default function CheckoutSubscription() {
         throw new Error('CEP inválido. Deve ter 8 dígitos');
       }
 
-      // ✅ Step 1: Tokenize card via backend (if not already tokenized)
-      // Uses cached token if available (prevents duplicate tokenization)
-      const finalToken = cardToken ?? await tokenizeCard();
+      // Step 1: Create PaymentMethod using Stripe.js
+      console.log('[Stripe] Creating PaymentMethod...');
+      const cardElement = elements.getElement(CardElement);
+      
+      const { error: pmError, paymentMethod } = await stripe.createPaymentMethod({
+        type: 'card',
+        card: cardElement,
+        billing_details: {
+          name: user?.name,
+          email: user?.email,
+          phone: phoneWithCountryCode,
+          address: {
+            line1: billingAddress.line_1.trim(),
+            line2: billingAddress.line_2?.trim() || undefined,
+            city: billingAddress.city.trim(),
+            state: billingAddress.state.trim().toUpperCase(),
+            postal_code: cleanCep,
+            country: 'BR',
+          },
+        },
+      });
 
-      // ✅ Step 2: Send only token to backend (no card data)
-      // Backend will: create customer -> attach token (creates card) -> create order
-      // Ensure billing cycle is valid before sending
-      // ✅ CRITICAL: Include phone - required by Pagar.me for subscription payments
-      // ✅ CRITICAL: Include billing_address - required by Pagar.me for credit card payments
+      if (pmError) {
+        throw new Error(pmError.message);
+      }
+
+      console.log('[Stripe] PaymentMethod created:', paymentMethod.id);
+
+      // Step 2: Send to backend
       const response = await subscriptionsService.processPayment({
         plan_id: planId,
         billing_cycle: getValidBillingCycle(billingCycle),
-        card_token: finalToken,
+        payment_method_id: paymentMethod.id,
         cpf_cnpj: cleanCpfCnpj,
         phone: phoneWithCountryCode,
         billing_address: {
@@ -308,34 +239,44 @@ export default function CheckoutSubscription() {
         }
       });
 
-      // ✅ Step 3: Check if payment was confirmed immediately (v5 subscriptions)
-      // is_paid=true means subscription.status='active' AND current_cycle.status='paid'
+      console.log('[Stripe] Backend response:', response);
+
+      // Step 3: Handle 3D Secure if needed
+      if (response?.client_secret && response?.status === 'incomplete') {
+        console.log('[Stripe] Confirming payment with 3D Secure...');
+        const { error: confirmError } = await stripe.confirmCardPayment(
+          response.client_secret
+        );
+
+        if (confirmError) {
+          throw new Error(confirmError.message);
+        }
+      }
+
+      // Success!
       if (response?.is_paid) {
-        // ✅ Payment confirmed immediately - navigate to success page
         toast.success('Assinatura ativada com sucesso!', {
           duration: 5000,
           description: 'Seu pagamento foi confirmado. Aproveite todos os recursos!'
         });
         navigate(`/payment-success?plan=${planId}&status=paid`);
       } else {
-        // ⏳ Payment pending - waiting for webhook confirmation
         toast.success('Pagamento enviado! Aguardando confirmação...', {
           duration: 5000,
           description: 'Você será notificado quando o pagamento for aprovado.'
         });
-        navigate(`/subscription-pending?plan=${planId}&subscription_id=${response?.pagar_me_subscription_id || ''}`);
+        navigate(`/subscription-pending?plan=${planId}&subscription_id=${response?.stripe_subscription_id || ''}`);
       }
 
     } catch (error) {
-      await handleApiError(error, { operation: 'process_payment', planId });
+      console.error('[Stripe] Error:', error);
+      const message = await getTranslatedError(error, { operation: 'process_payment', planId });
+      toast.error('Pagamento não concluído', { description: message, duration: 6000 });
+      navigate(`/payment-failed?error=${encodeURIComponent(message)}`, { replace: true });
     } finally {
       setIsProcessing(false);
     }
   };
-
-  if (!plan) {
-    return null;
-  }
 
   const PlanIcon = plan.icon;
   const isPro = planId === 'pro';
@@ -346,8 +287,6 @@ export default function CheckoutSubscription() {
       <div className="fixed inset-0 pointer-events-none overflow-hidden">
         <div className={`absolute top-1/4 right-1/4 w-[600px] h-[600px] bg-gradient-radial ${isPro ? 'from-orange-500/10' : 'from-violet-500/10'} via-transparent to-transparent blur-3xl`} />
         <div className={`absolute bottom-1/4 left-1/4 w-[500px] h-[500px] bg-gradient-radial ${isPro ? 'from-amber-500/8' : 'from-purple-500/8'} via-transparent to-transparent blur-3xl`} />
-        
-        {/* Subtle grid */}
         <div 
           className="absolute inset-0 opacity-[0.015]"
           style={{
@@ -371,27 +310,20 @@ export default function CheckoutSubscription() {
             transition={{ delay: 0.2 }}
             className="lg:col-span-2 relative"
           >
-            {/* Card glow */}
             <div className={`absolute -inset-1 bg-gradient-to-br ${isPro ? 'from-orange-500/20 via-amber-500/10 to-orange-600/20' : 'from-violet-500/20 via-purple-500/10 to-violet-600/20'} rounded-[32px] blur-2xl opacity-50`} />
             
             <div className={`relative h-full rounded-3xl overflow-hidden bg-gradient-to-b ${isPro ? 'from-[#12100d] via-[#0d0b09] to-[#0a0908]' : 'from-[#110d14] via-[#0c0a0f] to-[#09070a]'} border ${isPro ? 'border-orange-500/20' : 'border-violet-500/20'}`}>
-              {/* Top accent line */}
               <div className={`absolute top-0 left-6 right-6 h-px bg-gradient-to-r from-transparent ${isPro ? 'via-orange-400/50' : 'via-violet-400/50'} to-transparent`} />
               
-              {/* Noise texture */}
-              <div className="absolute inset-0 opacity-[0.015]" style={{
-                backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E")`
-              }} />
-
               <div className="relative p-8">
                 {/* Back button */}
                 <motion.button
                   whileHover={{ x: -4 }}
-              onClick={() => navigate('/pricing')}
+                  onClick={() => navigate('/pricing')}
                   className="flex items-center gap-2 text-slate-500 hover:text-white mb-8 transition-colors text-sm"
-            >
-              <ArrowLeft className="w-4 h-4" />
-              Voltar para planos
+                >
+                  <ArrowLeft className="w-4 h-4" />
+                  Voltar para planos
                 </motion.button>
 
                 {/* Plan badge */}
@@ -402,61 +334,38 @@ export default function CheckoutSubscription() {
                   </div>
                 </div>
 
-                {/* Plan name and description */}
+                {/* Plan name */}
                 <div className="mb-8">
                   <h2 className="text-3xl font-bold text-white mb-2 flex items-center gap-3">
                     <span className={`w-10 h-10 rounded-xl ${isPro ? 'bg-gradient-to-br from-orange-500/20 to-amber-500/10' : 'bg-gradient-to-br from-violet-500/20 to-purple-500/10'} flex items-center justify-center`}>
                       <Sparkles className={`w-5 h-5 ${isPro ? 'text-orange-400' : 'text-violet-400'}`} />
                     </span>
-                MAY {plan.name}
-              </h2>
+                    MAY {plan.name}
+                  </h2>
                   <p className="text-slate-500">{plan.description}</p>
-            </div>
+                </div>
 
                 {/* Billing Cycle Selector */}
                 <div className="mb-6">
                   <div className="flex items-center justify-center gap-2 p-1 bg-slate-800/30 rounded-xl border border-slate-700/50">
-                    <button
-                      type="button"
-                      onClick={() => setBillingCycle('monthly')}
-                      className={`flex-1 px-3 py-2 rounded-lg text-xs font-semibold transition-all ${
-                        billingCycle === 'monthly'
-                          ? isPro
-                            ? 'bg-orange-500/20 text-orange-300 border border-orange-500/40'
-                            : 'bg-violet-500/20 text-violet-300 border border-violet-500/40'
-                          : 'text-slate-500 hover:text-slate-300'
-                      }`}
-                    >
-                      Mensal
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setBillingCycle('semiannual')}
-                      className={`flex-1 px-3 py-2 rounded-lg text-xs font-semibold transition-all ${
-                        billingCycle === 'semiannual'
-                          ? isPro
-                            ? 'bg-orange-500/20 text-orange-300 border border-orange-500/40'
-                            : 'bg-violet-500/20 text-violet-300 border border-violet-500/40'
-                          : 'text-slate-500 hover:text-slate-300'
-                      }`}
-                    >
-                      Semestral
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setBillingCycle('annual')}
-                      className={`flex-1 px-3 py-2 rounded-lg text-xs font-semibold transition-all ${
-                        billingCycle === 'annual'
-                          ? isPro
-                            ? 'bg-orange-500/20 text-orange-300 border border-orange-500/40'
-                            : 'bg-violet-500/20 text-violet-300 border border-violet-500/40'
-                          : 'text-slate-500 hover:text-slate-300'
-                      }`}
-                    >
-                      Anual
-                    </button>
+                    {['monthly', 'semiannual', 'annual'].map((cycle) => (
+                      <button
+                        key={cycle}
+                        type="button"
+                        onClick={() => setBillingCycle(cycle)}
+                        className={`flex-1 px-3 py-2 rounded-lg text-xs font-semibold transition-all ${
+                          billingCycle === cycle
+                            ? isPro
+                              ? 'bg-orange-500/20 text-orange-300 border border-orange-500/40'
+                              : 'bg-violet-500/20 text-violet-300 border border-violet-500/40'
+                            : 'text-slate-500 hover:text-slate-300'
+                        }`}
+                      >
+                        {cycle === 'monthly' ? 'Mensal' : cycle === 'semiannual' ? 'Semestral' : 'Anual'}
+                      </button>
+                    ))}
                   </div>
-            </div>
+                </div>
 
                 {/* Price */}
                 <div className="mb-8">
@@ -464,31 +373,19 @@ export default function CheckoutSubscription() {
                     <span className="text-slate-500 text-xl">R$</span>
                     <span className="text-5xl font-bold text-white mx-1">{getPriceForBillingCycle()}</span>
                     <span className="text-slate-500 text-lg">
-                      {billingCycle === 'monthly' ? '/mês' :
-                       billingCycle === 'semiannual' ? '/semestre' :
-                       '/ano'}
+                      {billingCycle === 'monthly' ? '/mês' : billingCycle === 'semiannual' ? '/semestre' : '/ano'}
                     </span>
-              </div>
+                  </div>
                   <p className={`text-xs ${isPro ? 'text-orange-400/70' : 'text-violet-400/70'} mt-2`}>
-                    💳 {billingCycle === 'monthly' ? 'Cobrado mensalmente' :
-                        billingCycle === 'semiannual' ? 'Cobrado semestralmente' :
-                        'Cobrado anualmente'} • Cancele quando quiser
+                    💳 {billingCycle === 'monthly' ? 'Cobrado mensalmente' : billingCycle === 'semiannual' ? 'Cobrado semestralmente' : 'Cobrado anualmente'} • Cancele quando quiser
                   </p>
-                  {billingCycle !== 'monthly' && (
-                    <p className="text-xs text-slate-500 mt-2">
-                      {billingCycle === 'semiannual' 
-                        ? `R$ ${(getPriceForBillingCycle() / 6).toFixed(2)}/mês equivalente`
-                        : `R$ ${(getPriceForBillingCycle() / 12).toFixed(2)}/mês equivalente`}
-                    </p>
-                  )}
-            </div>
+                </div>
 
-                {/* Divider */}
                 <div className={`h-px mb-6 bg-gradient-to-r from-transparent ${isPro ? 'via-orange-500/20' : 'via-violet-500/20'} to-transparent`} />
 
                 {/* Features */}
                 <div className="space-y-4 mb-8">
-              {plan.features.map((feature, index) => (
+                  {plan.features.map((feature, index) => (
                     <motion.div 
                       key={index} 
                       initial={{ opacity: 0, x: -10 }}
@@ -501,15 +398,15 @@ export default function CheckoutSubscription() {
                       </div>
                       <span className="text-slate-400 text-sm">{feature}</span>
                     </motion.div>
-              ))}
-            </div>
+                  ))}
+                </div>
 
                 {/* Security badges */}
                 <div className="space-y-3 pt-6 border-t border-white/5">
                   <div className="flex items-center gap-3 text-xs text-slate-500">
                     <Shield className="w-4 h-4 text-emerald-500/70" />
-                <span>Pagamento seguro processado por Pagar.me</span>
-              </div>
+                    <span>Pagamento seguro processado por Stripe</span>
+                  </div>
                   <div className="flex items-center gap-3 text-xs text-slate-500">
                     <Lock className="w-4 h-4 text-emerald-500/70" />
                     <span>Dados criptografados com SSL 256-bit</span>
@@ -526,17 +423,10 @@ export default function CheckoutSubscription() {
             transition={{ delay: 0.3 }}
             className="lg:col-span-3 relative"
           >
-            {/* Card glow */}
             <div className="absolute -inset-1 bg-gradient-to-br from-slate-500/10 via-slate-400/5 to-slate-500/10 rounded-[32px] blur-2xl opacity-30" />
             
             <div className="relative rounded-3xl overflow-hidden bg-gradient-to-b from-[#0f1014] via-[#0c0d10] to-[#09090c] border border-slate-700/30">
-              {/* Top accent line */}
               <div className="absolute top-0 left-6 right-6 h-px bg-gradient-to-r from-transparent via-slate-500/30 to-transparent" />
-              
-              {/* Noise texture */}
-              <div className="absolute inset-0 opacity-[0.015]" style={{
-                backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E")`
-              }} />
 
               <div className="relative p-8">
                 {/* Header */}
@@ -546,51 +436,33 @@ export default function CheckoutSubscription() {
                   </div>
                   <div>
                     <h3 className="text-xl font-bold text-white">Dados do Cartão</h3>
-                    <p className="text-xs text-slate-500">Preencha os dados do seu cartão de crédito</p>
-            </div>
-          </div>
+                    <p className="text-xs text-slate-500">Pagamento seguro via Stripe</p>
+                  </div>
+                </div>
 
                 <form onSubmit={handleSubmit} className="space-y-5">
-              {/* Card Number */}
-              <div>
+                  {/* Stripe Card Element */}
+                  <div>
                     <label className="block text-sm font-medium text-slate-400 mb-2">
-                  Número do Cartão
-                </label>
-                    <div className="relative group">
-                  <input
-                    type="text"
-                    id="card-number"
-                    name="card_number"
-                    value={card.number}
-                    onChange={(e) => setCard({ ...card, number: formatCardNumber(e.target.value) })}
-                    placeholder="0000 0000 0000 0000"
-                    maxLength={19}
-                        className="w-full px-4 py-4 pl-12 bg-slate-800/30 border border-slate-700/50 rounded-2xl text-white placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-orange-500/50 focus:border-orange-500/50 transition-all duration-300 text-lg tracking-wider"
-                    required
-                  />
-                      <CreditCard className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-500 group-focus-within:text-orange-400 transition-colors" />
-                </div>
-              </div>
-
-              {/* Cardholder Name */}
-              <div>
-                    <label className="block text-sm font-medium text-slate-400 mb-2">
-                  Nome do Titular
-                </label>
-                    <div className="relative group">
-                  <input
-                    type="text"
-                    id="card-holder-name"
-                    name="card_holder_name"
-                    value={card.holder_name}
-                    onChange={(e) => setCard({ ...card, holder_name: e.target.value.toUpperCase() })}
-                    placeholder="NOME COMO NO CARTÃO"
-                        className="w-full px-4 py-4 pl-12 bg-slate-800/30 border border-slate-700/50 rounded-2xl text-white placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-orange-500/50 focus:border-orange-500/50 transition-all duration-300 uppercase tracking-wide"
-                    required
-                  />
-                      <User className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-500 group-focus-within:text-orange-400 transition-colors" />
-                </div>
-              </div>
+                      Cartão de Crédito
+                    </label>
+                    <div className={`p-4 bg-slate-800/30 border rounded-2xl transition-all duration-300 ${
+                      cardError 
+                        ? 'border-red-500/50 ring-2 ring-red-500/20' 
+                        : 'border-slate-700/50 focus-within:ring-2 focus-within:ring-orange-500/50 focus-within:border-orange-500/50'
+                    }`}>
+                      <CardElement 
+                        options={CARD_ELEMENT_OPTIONS} 
+                        onChange={handleCardChange}
+                      />
+                    </div>
+                    {cardError && (
+                      <p className="mt-2 text-sm text-red-400">{cardError}</p>
+                    )}
+                    <p className="mt-2 text-xs text-slate-600">
+                      Número do cartão, validade e CVV
+                    </p>
+                  </div>
 
                   {/* CPF/CNPJ */}
                   <div>
@@ -600,8 +472,6 @@ export default function CheckoutSubscription() {
                     <div className="relative group">
                       <input
                         type="text"
-                        id="cpf-cnpj"
-                        name="cpf_cnpj"
                         value={cpfCnpj}
                         onChange={(e) => setCpfCnpj(formatCpfCnpj(e.target.value))}
                         placeholder="000.000.000-00 ou 00.000.000/0000-00"
@@ -611,10 +481,9 @@ export default function CheckoutSubscription() {
                       />
                       <FileText className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-500 group-focus-within:text-orange-400 transition-colors" />
                     </div>
-                    <p className="mt-1 text-xs text-slate-500">Necessário para emissão de notas fiscais</p>
                   </div>
 
-                  {/* Phone - REQUIRED for Pagar.me */}
+                  {/* Phone */}
                   <div>
                     <label className="block text-sm font-medium text-slate-400 mb-2">
                       Telefone (com DDD)
@@ -622,8 +491,6 @@ export default function CheckoutSubscription() {
                     <div className="relative group">
                       <input
                         type="tel"
-                        id="phone"
-                        name="phone"
                         value={phone}
                         onChange={(e) => setPhone(formatPhone(e.target.value))}
                         placeholder="(11) 99999-9999"
@@ -633,167 +500,66 @@ export default function CheckoutSubscription() {
                       />
                       <Phone className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-500 group-focus-within:text-orange-400 transition-colors" />
                     </div>
-                    <p className="mt-1 text-xs text-slate-500">Obrigatório para processamento do pagamento</p>
                   </div>
 
-                  {/* Billing Address Section - REQUIRED by Pagar.me */}
+                  {/* Billing Address Section */}
                   <div className="pt-5 mt-5 border-t border-slate-700/30">
                     <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
                       <Building2 className="w-5 h-5 text-orange-400" />
                       Endereço de Cobrança
                     </h3>
-                    <p className="text-xs text-slate-500 mb-4">Endereço vinculado ao cartão de crédito</p>
 
-                    {/* Address Line 1 */}
-                    <div className="mb-4">
-                      <label className="block text-sm font-medium text-slate-400 mb-2">
-                        Endereço
-                      </label>
+                    <div className="space-y-4">
                       <input
                         type="text"
-                        id="address-line1"
-                        name="address_line_1"
                         value={billingAddress.line_1}
                         onChange={(e) => setBillingAddress({ ...billingAddress, line_1: e.target.value })}
                         placeholder="Rua, número"
                         className="w-full px-4 py-4 bg-slate-800/30 border border-slate-700/50 rounded-2xl text-white placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-orange-500/50 focus:border-orange-500/50 transition-all duration-300"
                         required
                       />
-                    </div>
 
-                    {/* Address Line 2 (optional) */}
-                    <div className="mb-4">
-                      <label className="block text-sm font-medium text-slate-400 mb-2">
-                        Complemento <span className="text-slate-600">(opcional)</span>
-                      </label>
                       <input
                         type="text"
-                        id="address-line2"
-                        name="address_line_2"
                         value={billingAddress.line_2}
                         onChange={(e) => setBillingAddress({ ...billingAddress, line_2: e.target.value })}
-                        placeholder="Apartamento, bloco, etc"
+                        placeholder="Complemento (opcional)"
                         className="w-full px-4 py-4 bg-slate-800/30 border border-slate-700/50 rounded-2xl text-white placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-orange-500/50 focus:border-orange-500/50 transition-all duration-300"
                       />
-                    </div>
 
-                    {/* City, State, and ZIP in a grid */}
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                      {/* City */}
-                      <div className="md:col-span-1">
-                        <label className="block text-sm font-medium text-slate-400 mb-2">
-                          Cidade
-                        </label>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                         <input
                           type="text"
-                          id="city"
-                          name="city"
                           value={billingAddress.city}
                           onChange={(e) => setBillingAddress({ ...billingAddress, city: e.target.value })}
-                          placeholder="São Paulo"
-                          className="w-full px-4 py-4 bg-slate-800/30 border border-slate-700/50 rounded-2xl text-white placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-orange-500/50 focus:border-orange-500/50 transition-all duration-300"
+                          placeholder="Cidade"
+                          className="md:col-span-1 px-4 py-4 bg-slate-800/30 border border-slate-700/50 rounded-2xl text-white placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-orange-500/50 focus:border-orange-500/50 transition-all duration-300"
                           required
                         />
-                      </div>
-
-                      {/* State */}
-                      <div>
-                        <label className="block text-sm font-medium text-slate-400 mb-2">
-                          Estado
-                        </label>
                         <input
                           type="text"
-                          id="state"
-                          name="state"
                           value={billingAddress.state}
                           onChange={(e) => setBillingAddress({ ...billingAddress, state: e.target.value.toUpperCase().slice(0, 2) })}
-                          placeholder="SP"
+                          placeholder="UF"
                           maxLength={2}
-                          className="w-full px-4 py-4 bg-slate-800/30 border border-slate-700/50 rounded-2xl text-white placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-orange-500/50 focus:border-orange-500/50 transition-all duration-300 uppercase"
+                          className="px-4 py-4 bg-slate-800/30 border border-slate-700/50 rounded-2xl text-white placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-orange-500/50 focus:border-orange-500/50 transition-all duration-300 uppercase"
                           required
                         />
-                      </div>
-
-                      {/* ZIP Code */}
-                      <div>
-                        <label className="block text-sm font-medium text-slate-400 mb-2">
-                          CEP
-                        </label>
                         <input
                           type="text"
-                          id="zip-code"
-                          name="zip_code"
                           value={billingAddress.zip_code}
                           onChange={(e) => setBillingAddress({ ...billingAddress, zip_code: formatCep(e.target.value) })}
-                          placeholder="00000-000"
+                          placeholder="CEP"
                           maxLength={9}
-                          className="w-full px-4 py-4 bg-slate-800/30 border border-slate-700/50 rounded-2xl text-white placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-orange-500/50 focus:border-orange-500/50 transition-all duration-300"
+                          className="px-4 py-4 bg-slate-800/30 border border-slate-700/50 rounded-2xl text-white placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-orange-500/50 focus:border-orange-500/50 transition-all duration-300"
                           required
                         />
                       </div>
                     </div>
                   </div>
 
-              {/* Expiration and CVV */}
-              <div className="grid grid-cols-3 gap-4">
-                <div>
-                      <label className="block text-sm font-medium text-slate-400 mb-2">
-                    Mês
-                  </label>
-                      <div className="relative group">
-                  <input
-                          type="text"
-                    id="card-exp-month"
-                    name="card_exp_month"
-                    value={card.exp_month}
-                          onChange={(e) => setCard({ ...card, exp_month: e.target.value.replace(/\D/g, '').slice(0, 2) })}
-                    placeholder="MM"
-                          maxLength={2}
-                          className="w-full px-4 py-4 pl-11 bg-slate-800/30 border border-slate-700/50 rounded-2xl text-white placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-orange-500/50 focus:border-orange-500/50 transition-all duration-300 text-center text-lg"
-                    required
-                  />
-                        <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 group-focus-within:text-orange-400 transition-colors" />
-                      </div>
-                </div>
-                <div>
-                      <label className="block text-sm font-medium text-slate-400 mb-2">
-                    Ano
-                  </label>
-                  <input
-                        type="text"
-                    id="card-exp-year"
-                    name="card_exp_year"
-                    value={card.exp_year}
-                        onChange={(e) => setCard({ ...card, exp_year: e.target.value.replace(/\D/g, '').slice(0, 2) })}
-                    placeholder="AA"
-                        maxLength={2}
-                        className="w-full px-4 py-4 bg-slate-800/30 border border-slate-700/50 rounded-2xl text-white placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-orange-500/50 focus:border-orange-500/50 transition-all duration-300 text-center text-lg"
-                    required
-                  />
-                </div>
-                <div>
-                      <label className="block text-sm font-medium text-slate-400 mb-2">
-                    CVV
-                  </label>
-                      <div className="relative group">
-                  <input
-                          type="password"
-                    id="card-cvv"
-                    name="card_cvv"
-                    value={card.cvv}
-                    onChange={(e) => setCard({ ...card, cvv: e.target.value.replace(/\D/g, '').slice(0, 4) })}
-                          placeholder="•••"
-                    maxLength={4}
-                          className="w-full px-4 py-4 pl-11 bg-slate-800/30 border border-slate-700/50 rounded-2xl text-white placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-orange-500/50 focus:border-orange-500/50 transition-all duration-300 text-center text-lg tracking-widest"
-                    required
-                  />
-                        <KeyRound className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 group-focus-within:text-orange-400 transition-colors" />
-                      </div>
-                </div>
-              </div>
-
-              {/* User Info Display */}
-              {user && (
+                  {/* User Info Display */}
+                  {user && (
                     <div className="pt-5 mt-5 border-t border-slate-700/30">
                       <div className="flex items-center gap-4 p-4 rounded-2xl bg-slate-800/20 border border-slate-700/30">
                         <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-orange-500/20 to-amber-500/10 flex items-center justify-center">
@@ -801,93 +567,56 @@ export default function CheckoutSubscription() {
                         </div>
                         <div>
                           <p className="text-xs text-slate-500 mb-0.5">Assinatura para</p>
-                  <p className="text-white font-medium">{user.name}</p>
+                          <p className="text-white font-medium">{user.name}</p>
                           <p className="text-sm text-slate-500">{user.email}</p>
                         </div>
                       </div>
-                </div>
-              )}
+                    </div>
+                  )}
 
-              {/* Action Buttons */}
-              <div className="flex gap-4 mt-6">
-                {/* Cancel Button */}
-                <motion.button
-                  type="button"
-                  onClick={() => navigate('/pricing')}
-                  disabled={isProcessing}
-                  whileHover={isProcessing ? {} : { scale: 1.02, y: -2 }}
-                  whileTap={isProcessing ? {} : { scale: 0.98 }}
-                  className={`relative flex-1 py-5 px-6 rounded-2xl text-base font-semibold transition-all duration-300 flex items-center justify-center gap-3 overflow-hidden group ${
-                    isProcessing 
-                      ? 'bg-slate-800/20 text-slate-500 cursor-not-allowed border border-slate-700/20' 
-                      : 'bg-gradient-to-br from-slate-800/50 via-slate-800/40 to-slate-900/50 text-slate-200 hover:text-white border border-slate-700/60 hover:border-slate-600/80 hover:bg-slate-800/60 backdrop-blur-md shadow-lg shadow-black/20 hover:shadow-xl hover:shadow-black/30'
-                  }`}
-                >
-                  {/* Subtle shine effect on hover */}
-                  {!isProcessing && (
-                    <>
-                      <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-700 -translate-x-full group-hover:translate-x-full" />
-                      <div className="absolute inset-0 bg-gradient-to-b from-white/5 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
-                    </>
-                  )}
-                  <X className="w-5 h-5 relative z-10 transition-transform duration-300 group-hover:rotate-90" />
-                  <span className="relative z-10 tracking-wide">Cancelar</span>
-                </motion.button>
+                  {/* Action Buttons */}
+                  <div className="flex gap-4 mt-6">
+                    <motion.button
+                      type="button"
+                      onClick={() => navigate('/pricing')}
+                      disabled={isProcessing}
+                      whileHover={isProcessing ? {} : { scale: 1.02 }}
+                      whileTap={isProcessing ? {} : { scale: 0.98 }}
+                      className="flex-1 py-5 px-6 rounded-2xl text-base font-semibold transition-all duration-300 flex items-center justify-center gap-3 bg-slate-800/50 text-slate-200 hover:text-white border border-slate-700/60 hover:border-slate-600/80 disabled:opacity-50"
+                    >
+                      <X className="w-5 h-5" />
+                      Cancelar
+                    </motion.button>
 
-                {/* Submit Button */}
-                <motion.button
-                  type="submit"
-                  disabled={isProcessing}
-                  whileHover={isProcessing ? {} : { scale: 1.02, y: -2 }}
-                  whileTap={isProcessing ? {} : { scale: 0.98 }}
-                  className={`relative flex-1 py-5 px-6 rounded-2xl text-base font-bold transition-all duration-300 flex items-center justify-center gap-3 overflow-hidden group ${
-                    isProcessing 
-                      ? 'bg-slate-700/40 text-slate-400 cursor-not-allowed border border-slate-700/30' 
-                      : `bg-gradient-to-r ${isPro ? 'from-orange-500 via-orange-600 to-amber-500 hover:from-orange-400 hover:via-orange-500 hover:to-amber-400' : 'from-violet-500 via-violet-600 to-purple-500 hover:from-violet-400 hover:via-violet-500 hover:to-purple-400'} text-white border-2 ${isPro ? 'border-orange-400/40 hover:border-orange-300/60' : 'border-violet-400/40 hover:border-violet-300/60'} shadow-2xl ${isPro ? 'shadow-orange-500/40 hover:shadow-orange-500/50' : 'shadow-violet-500/40 hover:shadow-violet-500/50'} hover:shadow-[0_0_40px_rgba(249,115,22,0.4)]`
-                  }`}
-                >
-                  {/* Animated gradient overlay */}
-                  {!isProcessing && (
-                    <>
-                      <div className={`absolute inset-0 bg-gradient-to-r ${isPro ? 'from-orange-300/30 via-amber-300/30 to-orange-300/30' : 'from-violet-300/30 via-purple-300/30 to-violet-300/30'} opacity-0 group-hover:opacity-100 transition-opacity duration-500`} />
-                      <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-700 -translate-x-full group-hover:translate-x-full" />
-                      <div className="absolute inset-0 bg-gradient-to-b from-white/20 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
-                    </>
-                  )}
-                  
-                  {/* Outer glow effect */}
-                  {!isProcessing && (
-                    <div className={`absolute -inset-0.5 bg-gradient-to-r ${isPro ? 'from-orange-500 to-amber-500' : 'from-violet-500 to-purple-500'} rounded-2xl opacity-0 group-hover:opacity-40 blur-md transition-opacity duration-300 -z-10`} />
-                  )}
-                  
-                  {/* Inner highlight */}
-                  {!isProcessing && (
-                    <div className="absolute top-0 left-0 right-0 h-1/2 bg-gradient-to-b from-white/20 to-transparent rounded-t-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
-                  )}
-                  
-                  {isProcessing ? (
-                    <>
-                      <Loader2 className="w-5 h-5 animate-spin relative z-10" />
-                      <span className="relative z-10">Processando pagamento...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Lock className="w-5 h-5 relative z-10 drop-shadow-lg transition-transform duration-300 group-hover:scale-110" />
-                      <span className="relative z-10 drop-shadow-md tracking-wide">
-                        Confirmar Pagamento — R$ {getPriceForBillingCycle()},00
-                      </span>
-                    </>
-                  )}
-                </motion.button>
-              </div>
+                    <motion.button
+                      type="submit"
+                      disabled={isProcessing || !stripe}
+                      whileHover={isProcessing ? {} : { scale: 1.02 }}
+                      whileTap={isProcessing ? {} : { scale: 0.98 }}
+                      className={`flex-1 py-5 px-6 rounded-2xl text-base font-bold transition-all duration-300 flex items-center justify-center gap-3 ${
+                        isProcessing || !stripe
+                          ? 'bg-slate-700/40 text-slate-400 cursor-not-allowed'
+                          : `bg-gradient-to-r ${isPro ? 'from-orange-500 via-orange-600 to-amber-500 hover:from-orange-400' : 'from-violet-500 via-violet-600 to-purple-500 hover:from-violet-400'} text-white shadow-2xl ${isPro ? 'shadow-orange-500/40' : 'shadow-violet-500/40'}`
+                      }`}
+                    >
+                      {isProcessing ? (
+                        <>
+                          <Loader2 className="w-5 h-5 animate-spin" />
+                          Processando...
+                        </>
+                      ) : (
+                        <>
+                          <Lock className="w-5 h-5" />
+                          Confirmar — R$ {getPriceForBillingCycle()},00
+                        </>
+                      )}
+                    </motion.button>
+                  </div>
 
                   {/* Terms */}
-                  <p className="text-xs text-center text-slate-600 mt-4 leading-relaxed">
+                  <p className="text-xs text-center text-slate-600 mt-4">
                     Ao confirmar, você concorda com nossos{' '}
                     <span className="text-slate-400 hover:text-white cursor-pointer">termos de serviço</span>
-                    {' '}e autoriza a cobrança recorrente {billingCycle === 'monthly' ? 'mensal' :
-                                                           billingCycle === 'semiannual' ? 'semestral' :
-                                                           'anual'} de R$ {getPriceForBillingCycle()},00
                   </p>
 
                   {/* Security footer */}
@@ -902,15 +631,41 @@ export default function CheckoutSubscription() {
                     </div>
                     <div className="flex items-center gap-2 text-xs text-slate-600">
                       <CreditCard className="w-4 h-4" />
-                      Pagar.me
+                      Stripe
                     </div>
                   </div>
-            </form>
-          </div>
+                </form>
+              </div>
             </div>
           </motion.div>
         </div>
       </motion.div>
     </div>
+  );
+}
+
+// Main component that wraps everything with Stripe Elements
+export default function CheckoutSubscription() {
+  const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const planId = searchParams.get('plan');
+  const plan = planDetails[planId];
+
+  // Redirect if invalid plan
+  useEffect(() => {
+    if (!planId || !plan) {
+      toast.error('Plano inválido');
+      navigate('/pricing');
+    }
+  }, [planId, plan, navigate]);
+
+  if (!plan) {
+    return null;
+  }
+
+  return (
+    <Elements stripe={stripePromise}>
+      <CheckoutForm planId={planId} plan={plan} />
+    </Elements>
   );
 }

@@ -1,6 +1,8 @@
 /**
  * Webhook Routes
- * Handles webhooks from Nuvem Fiscal and Pagar.me
+ * Handles webhooks from Nuvem Fiscal
+ * 
+ * Note: Stripe webhooks are handled in /routes/subscriptions.js
  */
 
 import express from 'express';
