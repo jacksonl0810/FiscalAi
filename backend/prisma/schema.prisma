@@ -16,12 +16,15 @@ model User {
   passwordHash      String? @map("password_hash") // Optional for Google auth users
   name              String
   avatar            String?
-  pagarMeCustomerId String? @map("pagar_me_customer_id")
+  
+  // Stripe customer ID (replaces pagarMeCustomerId)
+  stripeCustomerId  String? @unique @map("stripe_customer_id")
+  
   cpfCnpj           String? @map("cpf_cnpj")
-  phone             String? // Phone number for Pagar.me customer profile
+  phone             String? // Phone number for payment provider
   isAdmin           Boolean @default(false) @map("is_admin")
 
-  // Billing address (required by Pagar.me for credit card payments)
+  // Billing address (required by payment providers for credit card payments)
   addressLine1      String? @map("address_line_1")
   addressLine2      String? @map("address_line_2")
   city              String?
@@ -219,28 +222,31 @@ model FiscalIntegrationStatus {
 }
 
 model Subscription {
-  id                    String             @id @default(uuid())
-  userId                String             @unique @map("user_id")
-  planId                String             @default("trial") @map("plan_id") // 'pay_per_use', 'essential', 'professional', 'accountant', 'trial'
-  pagarMeSubscriptionId String?            @map("pagar_me_subscription_id") // null for pay-per-use (removed @unique to allow multiple nulls)
-  pagarMePlanId         String?            @map("pagar_me_plan_id") // null for pay-per-use
-  status                SubscriptionStatus @default(PENDING) // Strict enum for subscription lifecycle
-  billingCycle          String?            @map("billing_cycle") // 'monthly', 'semiannual', 'annual', 'per_invoice', 'custom'
-  annualDiscountApplied Boolean            @default(false) @map("annual_discount_applied")
-  currentPeriodStart    DateTime?          @map("current_period_start")
-  currentPeriodEnd      DateTime?          @map("current_period_end")
-  nextBillingAt         DateTime?          @map("next_billing_at") // Next billing date for recurring subscriptions
-  canceledAt            DateTime?          @map("canceled_at")
-  trialEndsAt           DateTime?          @map("trial_ends_at")
-  createdAt             DateTime           @default(now()) @map("created_at")
-  updatedAt             DateTime           @updatedAt @map("updated_at")
+  id                   String             @id @default(uuid())
+  userId               String             @unique @map("user_id")
+  planId               String             @default("trial") @map("plan_id") // 'essential', 'professional', 'accountant', 'trial'
+  
+  // Stripe subscription and price IDs (replaces Pagar.me fields)
+  stripeSubscriptionId String?            @unique @map("stripe_subscription_id")
+  stripePriceId        String?            @map("stripe_price_id")
+  
+  status               SubscriptionStatus @default(PENDING) // Strict enum for subscription lifecycle
+  billingCycle         String?            @map("billing_cycle") // 'monthly', 'semiannual', 'annual'
+  annualDiscountApplied Boolean           @default(false) @map("annual_discount_applied")
+  currentPeriodStart   DateTime?          @map("current_period_start")
+  currentPeriodEnd     DateTime?          @map("current_period_end")
+  nextBillingAt        DateTime?          @map("next_billing_at") // Next billing date for recurring subscriptions
+  canceledAt           DateTime?          @map("canceled_at")
+  trialEndsAt          DateTime?          @map("trial_ends_at")
+  createdAt            DateTime           @default(now()) @map("created_at")
+  updatedAt            DateTime           @updatedAt @map("updated_at")
 
   // Relations
   user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   payments Payment[]
 
   @@index([nextBillingAt, status])
-  @@index([pagarMeSubscriptionId])
+  @@index([stripeSubscriptionId])
   @@map("subscriptions")
 }
 
@@ -254,19 +260,21 @@ enum SubscriptionStatus {
 }
 
 model Payment {
-  id                   String        @id @default(uuid())
-  subscriptionId       String        @map("subscription_id")
-  pagarMeInvoiceId     String        @unique @map("pagar_me_invoice_id") // Invoice ID (in_xxx) for idempotency
-  pagarMeTransactionId String?       @map("pagar_me_transaction_id") // Charge/transaction ID (ch_xxx or tran_xxx)
-  amount               Decimal       @db.Decimal(15, 2)
-  status               PaymentStatus // Strict enum for payment status
-  paymentMethod        String        @map("payment_method") // 'credit_card', 'boleto', 'pix'
-  paidAt               DateTime?     @map("paid_at")
-  failedAt             DateTime?     @map("failed_at")
-  failureReason        String?       @map("failure_reason") // Gateway error message
-  nfseId               String?       @map("nfse_id") // Link to fiscal invoice
-  createdAt            DateTime      @default(now()) @map("created_at")
-  updatedAt            DateTime      @updatedAt @map("updated_at")
+  id                String        @id @default(uuid())
+  subscriptionId    String        @map("subscription_id")
+  
+  // Stripe invoice ID (nullable to preserve existing Pagar.me data)
+  stripeInvoiceId   String?       @unique @map("stripe_invoice_id")
+  
+  amount            Decimal       @db.Decimal(15, 2)
+  status            PaymentStatus // Strict enum for payment status
+  paymentMethod     String        @map("payment_method") // 'credit_card', 'boleto', 'pix'
+  paidAt            DateTime?     @map("paid_at")
+  failedAt          DateTime?     @map("failed_at")
+  failureReason     String?       @map("failure_reason") // Gateway error message
+  nfseId            String?       @map("nfse_id") // Link to fiscal invoice
+  createdAt         DateTime      @default(now()) @map("created_at")
+  updatedAt         DateTime      @updatedAt @map("updated_at")
 
   // Relations
   subscription Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)

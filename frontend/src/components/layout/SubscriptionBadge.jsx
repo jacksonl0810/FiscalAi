@@ -89,11 +89,10 @@ export default function SubscriptionBadge() {
   const { data: subscriptionStatus, isLoading } = useQuery({
     queryKey: ['subscription-status'],
     queryFn: subscriptionsService.getStatus,
-    staleTime: 5 * 60 * 1000, // Consider data fresh for 5 minutes
-    gcTime: 10 * 60 * 1000, // Keep in cache for 10 minutes
-    refetchOnWindowFocus: false,
-    refetchOnMount: false, // Don't refetch when component mounts if data is fresh
-    refetchOnReconnect: false
+    staleTime: 2 * 60 * 1000, // 2 minutes - refetch sooner after payment
+    gcTime: 10 * 60 * 1000,
+    refetchOnWindowFocus: true, // Refetch when user returns to tab (e.g. after payment success)
+    refetchOnMount: true // Refetch when component mounts so badge updates after navigation
   });
 
   if (isLoading) {
@@ -102,37 +101,33 @@ export default function SubscriptionBadge() {
     );
   }
 
-  // ✅ PRIORITY: Active subscription status from API takes precedence over user data
-  // Get status and plan from subscriptionStatus first (most accurate)
-  let status = subscriptionStatus?.status || user?.subscription_status || 'trial';
-  let planId = subscriptionStatus?.plan_id || user?.plan || 'trial';
+  // ✅ PRIORITY: Prefer subscription-status API, then auth user (plan/subscription_status)
+  // Auth now returns subscription_status: 'ativo' and plan: 'pro'|'business' when DB is ACTIVE
+  let status = subscriptionStatus?.status ?? user?.subscription_status ?? 'trial';
+  let planId = subscriptionStatus?.plan_id ?? user?.plan ?? 'trial';
   const daysRemaining = subscriptionStatus?.days_remaining ?? user?.trial_days_remaining;
   
-  // ✅ CRITICAL FIX: If status is 'ativo' (active), always use the plan_id from subscription
-  // Don't fallback to trial - user has a paid subscription!
-  if (status === 'ativo' && subscriptionStatus?.plan_id) {
-    planId = subscriptionStatus.plan_id; // Use the actual plan from subscription (pro/business)
-  }
+  // ✅ Normalize: backend can return 'ACTIVE' (status API) or 'ativo' (auth); config expects 'ativo'
+  if (status === 'ACTIVE') status = 'ativo';
   
-  // ✅ CRITICAL FIX: If we have an active subscription, never show trial status
-  // Active paid subscription always takes priority over trial
+  // ✅ When active, plan must be pro/business from API or user — never show Trial for paid plan
   if (status === 'ativo') {
-    // User has active paid subscription - ensure we're not showing trial
-    // This prevents showing "Trial" when user has purchased a plan
+    const paidPlan = subscriptionStatus?.plan_id || user?.plan;
+    if (paidPlan && paidPlan !== 'trial') planId = paidPlan;
   }
 
   // ✅ FIX: Don't show "pending" status if user is just browsing checkout
   // Only show pending if there's an actual payment transaction
   // If status is pending but no payment was attempted, treat as no subscription
   if (status === 'pending') {
-    // Check if there's actually a payment attempt (subscription exists with pending status)
+    // Check if there's actually a payment attempt (subscription with pending status has plan_id)
     // If user is just on checkout page, don't show pending status
     const hasActiveTrial = user?.is_in_trial && user?.trial_days_remaining > 0;
     if (hasActiveTrial) {
       // User has active trial, show trial status instead
       status = 'trial';
-    } else if (!subscriptionStatus?.subscription_id) {
-      // No subscription ID means no actual payment attempt yet
+    } else if (!subscriptionStatus?.plan_id) {
+      // No plan_id means no actual subscription record yet
       // Don't show pending, show as if no subscription
       status = null;
     }

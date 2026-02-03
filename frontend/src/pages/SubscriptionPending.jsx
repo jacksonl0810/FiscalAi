@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
 import { ArrowRight, Clock, Bell, Sparkles, CreditCard, Shield, CheckCircle, XCircle, RefreshCw, Loader2, Home } from "lucide-react";
 import { useAuth } from "@/lib/AuthContext";
@@ -8,6 +9,7 @@ import { toast } from "sonner";
 
 export default function SubscriptionPending() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { user, refreshUser } = useAuth();
   const [searchParams] = useSearchParams();
   const planId = searchParams.get('plan');
@@ -69,12 +71,13 @@ export default function SubscriptionPending() {
         const status = await subscriptionsService.getStatus();
         setCurrentStatus(status.status);
 
-        if (status.status === 'ativo') {
+        // Backend returns 'ACTIVE' (English); support 'ativo' for backward compatibility
+        const isActive = status.status === 'ACTIVE' || status.status === 'ativo';
+        if (isActive) {
           // ✅ Immediately stop polling and mark as confirmed
           stopPolling();
           paymentConfirmedRef.current = true;
           
-          // Batch state updates to prevent multiple re-renders
           setPaymentConfirmed(true);
           setIsPolling(false);
           
@@ -83,13 +86,19 @@ export default function SubscriptionPending() {
             duration: 5000 
           });
           
-          // Delay refreshUser and navigation to allow UI transition to complete
-          setTimeout(async () => {
-          if (refreshUser) await refreshUser();
-            navigate('/dashboard');
-          }, 2500);
+          const plan = planId || status.plan_id || 'pro';
+          const successUrl = `/payment-success?plan=${encodeURIComponent(plan)}&status=paid`;
+          queryClient.invalidateQueries({ queryKey: ['subscription-status'] });
+          // Redirect soon; don't block on refreshUser so Stripe/network errors can't block redirect
+          setTimeout(() => {
+            try {
+              navigate(successUrl, { replace: true });
+            } finally {
+              refreshUser?.().catch(() => {});
+            }
+          }, 600);
           return;
-        } else if (status.status === 'inadimplente') {
+        } else if (status.status === 'PAST_DUE' || status.status === 'inadimplente') {
           // ✅ Immediately stop polling
           stopPolling();
           setIsPolling(false);
@@ -110,13 +119,10 @@ export default function SubscriptionPending() {
       }
     };
 
-    // Initial check after a short delay
-    const initialDelay = setTimeout(() => {
-          checkStatus();
-    }, 500);
-    
-    // Set up interval (every 10 seconds - reduced frequency)
-    intervalRef.current = setInterval(checkStatus, 10000);
+    // First check soon so we redirect quickly when already ACTIVE
+    const initialDelay = setTimeout(checkStatus, 200);
+    // Poll every 3s so we catch ACTIVE soon after webhook updates (was 10s)
+    intervalRef.current = setInterval(checkStatus, 3000);
 
     // Set up timeout to stop polling after 2 minutes
     timeoutRef.current = setTimeout(() => {
@@ -502,7 +508,7 @@ export default function SubscriptionPending() {
               className="mt-8 flex items-center justify-center gap-2 text-xs text-slate-600"
             >
               <Shield className="w-3.5 h-3.5" />
-              <span>Pagamento processado com segurança via Pagar.me</span>
+              <span>Pagamento processado com segurança via Stripe</span>
             </motion.div>
           </div>
         </div>

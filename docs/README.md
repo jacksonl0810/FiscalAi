@@ -1,66 +1,64 @@
-# FiscalAI Documentation
+# Documentation Index
 
-Welcome to the FiscalAI project documentation. All documentation files are organized in this folder for easy access.
+## Stripe Integration
 
----
+### Getting Started
+- **[STRIPE_FRONTEND_GUIDE.md](../STRIPE_FRONTEND_GUIDE.md)** - Complete guide for migrating from Pagar.me to Stripe on the frontend
 
-## 📚 Documentation Index
+### Content Security Policy (CSP)
+- **[CSP_STRIPE_FIX.md](CSP_STRIPE_FIX.md)** - Troubleshooting CSP issues with Stripe.js ⭐ **START HERE if Stripe isn't loading**
+- **[nginx-stripe.conf](nginx-stripe.conf)** - Production-ready nginx configuration for Stripe
+- **[cloudflare-stripe-setup.md](cloudflare-stripe-setup.md)** - Step-by-step Cloudflare setup for Stripe
 
-### Implementation Documentation
-- **[IMPLEMENTATION_COMPLETE_SUMMARY.md](./IMPLEMENTATION_COMPLETE_SUMMARY.md)** - Complete Implementation Overview (Phase 1 & 2)
-- **[TECHNICAL_REQUIREMENTS.md](./TECHNICAL_REQUIREMENTS.md)** - Technical Requirements & Specifications
+### Deployment
+- **[DEPLOYMENT_CHECKLIST.md](DEPLOYMENT_CHECKLIST.md)** - Complete deployment checklist with verification steps
 
-### Deployment & Operations
-- **[DEPLOYMENT_READY.md](./DEPLOYMENT_READY.md)** - Deployment Checklist & Guide
-- **[MIGRATION_GUIDE.md](./MIGRATION_GUIDE.md)** - Database Migration Guide
-- **[TESTING_CHECKLIST.md](./TESTING_CHECKLIST.md)** - Comprehensive Testing Guide
+## Other Documentation
+- **[NUVEM_FISCAL_OPTIONAL.md](NUVEM_FISCAL_OPTIONAL.md)** - Optional Nuvem Fiscal integration
+- **[README.md](README.md)** - Project overview (if exists in root)
 
-### Integration Documentation
-- **[NUVEM_FISCAL_INTEGRATION.md](./NUVEM_FISCAL_INTEGRATION.md)** - Nuvem Fiscal API Integration
-- **[NUVEM_FISCAL_OPTIONAL.md](./NUVEM_FISCAL_OPTIONAL.md)** - Optional Nuvem Fiscal Configuration
-- **[FISCAL_CONNECTION_VERIFICATION.md](./FISCAL_CONNECTION_VERIFICATION.md)** - Fiscal Connection Verification
-- **[PAGARME_SETUP.md](./PAGARME_SETUP.md)** - Pagar.me Payment Integration Setup
-- **[WEBHOOK_IMPLEMENTATION.md](./WEBHOOK_IMPLEMENTATION.md)** - Webhook Setup & Implementation
-- **[OPENAI_SETUP.md](./OPENAI_SETUP.md)** - OpenAI AI Assistant Setup
+## Quick Links
 
-### Security & API
-- **[SECURITY_AUDIT.md](./SECURITY_AUDIT.md)** - Security Audit & Best Practices
-- **[API_RESPONSE_FORMAT.md](./API_RESPONSE_FORMAT.md)** - API Response Format Standards
-- **[BACKEND_API.md](./BACKEND_API.md)** - Backend API Specification
+### Having Issues?
 
-### Master Documentation
-- **[COMPLETE_DOCUMENTATION.md](./COMPLETE_DOCUMENTATION.md)** - Complete Documentation Index
-- **[README.md](./README.md)** - This file
+| Symptom | Check This |
+|---------|-----------|
+| 🔴 Stripe card field is blank | [CSP_STRIPE_FIX.md](CSP_STRIPE_FIX.md) |
+| 🔴 Console shows CSP violations | [CSP_STRIPE_FIX.md](CSP_STRIPE_FIX.md) |
+| 🔴 "Failed to load Stripe.js" | Run `scripts/check-csp.sh` |
+| 🔴 Multiple CSP headers | [nginx-stripe.conf](nginx-stripe.conf) or [cloudflare-stripe-setup.md](cloudflare-stripe-setup.md) |
+| 🔴 Webhook returns 400 error | [WEBHOOK_RAW_BODY_FIX.md](WEBHOOK_RAW_BODY_FIX.md) ⭐ |
+| 🔴 "Webhook signature verification failed" | [WEBHOOK_RAW_BODY_FIX.md](WEBHOOK_RAW_BODY_FIX.md) |
+| 🔴 Payment succeeds but status stays PENDING | [WEBHOOK_INVALID_DATE_FIX.md](WEBHOOK_INVALID_DATE_FIX.md) ⭐⭐ |
+| 🔴 "Invalid Date" error in webhook logs | [WEBHOOK_INVALID_DATE_FIX.md](WEBHOOK_INVALID_DATE_FIX.md) |
+| 🔴 Webhook logs "no subscription" with undefined ID | [STRIPE_API_2026_INVOICE_FIX.md](STRIPE_API_2026_INVOICE_FIX.md) ⭐⭐⭐ |
+| 🔴 "Invoice paid but no subscription" in logs | [STRIPE_API_2026_INVOICE_FIX.md](STRIPE_API_2026_INVOICE_FIX.md) |
+| 📋 Ready to deploy? | [DEPLOYMENT_CHECKLIST.md](DEPLOYMENT_CHECKLIST.md) |
 
----
+### Tools
 
-## 🚀 Quick Start
+- **`scripts/check-csp.sh`** - Diagnose CSP configuration issues
+  ```bash
+  ./scripts/check-csp.sh https://mayassessorfiscal.com.br
+  ```
 
-**New to the project?**
-1. Start with [COMPLETE_DOCUMENTATION.md](./COMPLETE_DOCUMENTATION.md) for overview
-2. Read [IMPLEMENTATION_COMPLETE_SUMMARY.md](./IMPLEMENTATION_COMPLETE_SUMMARY.md) for implementation status
-3. Follow [DEPLOYMENT_READY.md](./DEPLOYMENT_READY.md) for setup instructions
+## Migration Status
 
-**Setting up?**
-1. Follow [MIGRATION_GUIDE.md](./MIGRATION_GUIDE.md) for database setup
-2. Check [DEPLOYMENT_READY.md](./DEPLOYMENT_READY.md) for deployment checklist
-3. Use [TESTING_CHECKLIST.md](./TESTING_CHECKLIST.md) for testing
+The Pagar.me → Stripe migration is **complete**. All code is ready for deployment.
 
-**Integrating?**
-1. See [NUVEM_FISCAL_INTEGRATION.md](./NUVEM_FISCAL_INTEGRATION.md) for fiscal integration
-2. Check [PAGARME_SETUP.md](./PAGARME_SETUP.md) for payment setup
-3. Review [WEBHOOK_IMPLEMENTATION.md](./WEBHOOK_IMPLEMENTATION.md) for webhooks
+### What's Done ✅
+- Backend Stripe SDK integration
+- Frontend Stripe Elements UI
+- Webhook handlers for Stripe events
+- CSP configuration for Stripe.js
+- Customer Portal integration
+- Test mode ready
 
----
+### What You Need to Do ⚠️
+1. Add Stripe API keys to production `.env` (see backend `.env.example`)
+2. Create Stripe Prices in dashboard (Pro monthly/annual, Business monthly/annual)
+3. Configure CSP on your web server (nginx or Cloudflare)
+4. Set up webhook endpoint in Stripe dashboard
+5. Deploy and test with test card: `4242 4242 4242 4242`
 
-## 📋 Documentation Status
-
-All documentation has been consolidated into the `/docs` folder. No duplicate files remain in the root directory.
-
-**Last Updated:** 2026-01-XX  
-**Total Documentation Files:** 14  
-**Status:** All redundant files removed, documentation consolidated
-
----
-
-**All documentation is organized and ready for use!**
+See [DEPLOYMENT_CHECKLIST.md](DEPLOYMENT_CHECKLIST.md) for complete steps.

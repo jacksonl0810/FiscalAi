@@ -40,7 +40,7 @@ export { prisma };
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// CORS configuration - Enhanced for Pagar.me checkout flow
+// CORS configuration - Enhanced for payment checkout flow
 const corsOrigins = process.env.CORS_ORIGIN?.split(',') || ['http://localhost:5173'];
 const isDevelopment = process.env.NODE_ENV !== 'production';
 
@@ -77,7 +77,14 @@ app.use(cors({
 }));
 
 // Body parser middleware
-app.use(express.json());
+// IMPORTANT: Stripe webhook needs raw body, so we exclude it from JSON parsing
+app.use((req, res, next) => {
+  if (req.originalUrl === '/api/subscriptions/stripe-webhook') {
+    next(); // Skip JSON parsing for Stripe webhook
+  } else {
+    express.json()(req, res, next);
+  }
+});
 app.use(express.urlencoded({ extended: true }));
 
 // Cookie parser for OAuth state management
@@ -114,6 +121,29 @@ app.use('/api/webhooks', webhooksRoutes);
 app.use('/api/monitoring', monitoringRoutes);
 app.use('/api/accountant-review', accountantReviewRoutes);
 app.use('/api/admin', adminRoutes);
+
+// Content-Security-Policy for SPA (Stripe, hCaptcha, Vite/React)
+// Must allow inline scripts for Stripe.js and payment iframes
+const cspDirectives = [
+  "default-src 'self'",
+  "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://js.stripe.com https://m.stripe.network https://hcaptcha.com https://*.hcaptcha.com",
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+  "font-src 'self' https://fonts.gstatic.com data:",
+  "img-src 'self' data: blob: https: http:",
+  "frame-src 'self' https://js.stripe.com https://hooks.stripe.com https://m.stripe.network https://hcaptcha.com https://*.hcaptcha.com",
+  "connect-src 'self' https://js.stripe.com https://api.stripe.com https://m.stripe.network https://r.stripe.com https://hcaptcha.com https://*.hcaptcha.com wss: ws:",
+  "worker-src 'self' blob:",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'"
+].join('; ');
+
+app.use((req, res, next) => {
+  if (!req.path.startsWith('/api')) {
+    res.setHeader('Content-Security-Policy', cspDirectives);
+  }
+  next();
+});
 
 // Serve static files from frontend build (must be AFTER API routes)
 app.use(express.static(frontendBuildDir, {

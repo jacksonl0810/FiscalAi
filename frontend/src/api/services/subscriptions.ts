@@ -8,7 +8,7 @@ export interface CreateCheckoutParams {
 }
 
 export interface SubscriptionStatus {
-  status: 'trial' | 'ativo' | 'pending' | 'inadimplente' | 'cancelado';
+  status: 'trial' | 'ACTIVE' | 'PENDING' | 'PAST_DUE' | 'CANCELED' | 'TRIAL' | string;
   plan_id?: string;
   current_period_end?: string;
   days_remaining?: number;
@@ -24,16 +24,40 @@ export interface TrialEligibility {
   message: string;
 }
 
+export interface ProcessPaymentParams {
+  plan_id: string;
+  billing_cycle?: 'monthly' | 'semiannual' | 'annual';
+  payment_method_id: string; // Stripe PaymentMethod ID (pm_xxx)
+  cpf_cnpj?: string;
+  phone?: string;
+  billing_address?: {
+    line_1: string;
+    line_2?: string;
+    city: string;
+    state: string;
+    zip_code: string;
+  };
+}
+
+export interface ProcessPaymentResponse {
+  subscription_id: string;
+  stripe_subscription_id: string;
+  status: string;
+  is_paid: boolean;
+  plan_id: string;
+  client_secret?: string; // For 3D Secure confirmation
+  current_period_end?: string;
+  message: string;
+}
+
 export const subscriptionsService = {
   /**
    * Start subscription flow
    * For trial: activates immediately
-   * For paid plans: creates PENDING subscription and returns checkout URL
-   * 👉 Subscriptions become ACTIVE only after webhook confirms payment
+   * For paid plans: redirects to checkout page
    */
   createCheckout: async (params: CreateCheckoutParams) => {
     const response = await apiClient.post('/subscriptions/start', params);
-    // Backend returns { status, message, data: { checkout_url, ... } }
     return response.data.data || response.data;
   },
 
@@ -64,6 +88,7 @@ export const subscriptionsService = {
 
   /**
    * Cancel active subscription
+   * Subscription will remain active until end of billing period
    */
   cancel: async () => {
     const response = await apiClient.post('/subscriptions/cancel');
@@ -71,129 +96,78 @@ export const subscriptionsService = {
   },
 
   /**
-   * Create or update customer data in Pagar.me
+   * Reactivate a canceled subscription
+   * Only works if subscription was canceled but still within billing period
    */
-  createCustomer: async (data: {
-    cpf_cnpj: string;
-    phone?: string;
-  }) => {
-    const response = await apiClient.post('/subscriptions/create-customer', data);
+  reactivate: async () => {
+    const response = await apiClient.post('/subscriptions/reactivate');
     return response.data.data || response.data;
   },
 
   /**
-   * Confirm checkout (for test/simulated payments only)
-   * In production, webhooks handle this automatically
-   */
-  confirmCheckout: async (planId: string, sessionId?: string) => {
-    const response = await apiClient.post('/subscriptions/confirm-checkout', {
-      plan_id: planId,
-      session_id: sessionId
-    });
-    return response.data.data || response.data;
-  },
-
-  /**
-   * Tokenize card (v5-compliant)
-   * Converts raw card data to token via backend
+   * Process subscription payment with Stripe
    * 
-   * ✅ V5-COMPLIANT FLOW:
-   * 1. Frontend sends card data to backend /tokenize-card endpoint
-   * 2. Backend tokenizes with Pagar.me and returns token_xxxxx
-   * 3. Frontend stores token and uses it for payment
-   * 4. Backend creates card when token is attached to customer
+   * ✅ STRIPE FLOW:
+   * 1. Frontend creates PaymentMethod via Stripe.js → gets pm_xxxxx
+   * 2. Frontend sends payment_method_id to backend
+   * 3. Backend creates/gets Stripe customer
+   * 4. Backend attaches payment method to customer
+   * 5. Backend creates subscription
    * 
    * ⚠️ IMPORTANT:
-   * - Returns token (token_xxxxx), NOT card_id
-   * - Card is created automatically when token is attached to customer
-   * - Card data never persists in frontend
-   */
-  tokenizeCard: async (data: {
-    number: string;
-    holder_name: string;
-    exp_month: number;
-    exp_year: number;
-    cvv: string;
-  }) => {
-    const response = await apiClient.post('/subscriptions/tokenize-card', data);
-    return response.data.data || response.data;
-  },
-
-  /**
-   * Process subscription payment with card_token
-   * 
-   * ✅ V5-COMPLIANT FLOW:
-   * 1. Frontend tokenizes card via /tokenize-card → gets token_xxxxx
-   * 2. Frontend sends only token to backend (PCI compliant)
-   * 3. Backend creates/gets customer
-   * 4. Backend attaches token to customer → creates card automatically
-   * 5. Backend creates subscription via POST /subscriptions (v5)
-   * 
-   * ⚠️ IMPORTANT:
-   * - card_token MUST be token_xxxxx format
-   * - Backend NEVER receives card number, CVV, or any card data
-   * - Card is created automatically when token is attached (v5 requirement)
-   * - cpf_cnpj is required for Pagar.me customer creation
-   * - phone is REQUIRED for Pagar.me subscription payments (at least one phone)
+   * - payment_method_id MUST be pm_xxxxx format from Stripe.js
+   * - If client_secret is returned, confirm payment with stripe.confirmCardPayment()
    * 
    * ✅ RESPONSE:
    * - is_paid: true = payment confirmed immediately (subscription active)
-   * - is_paid: false = waiting for webhook confirmation
-   * - pagar_me_subscription_id: Pagar.me subscription ID (sub_xxx)
+   * - is_paid: false = needs confirmation or waiting for webhook
+   * - client_secret: use for 3D Secure confirmation if present
    */
-  processPayment: async (data: {
-    plan_id: string;
-    billing_cycle?: 'monthly' | 'semiannual' | 'annual';
-    card_token: string; // ✅ Must be token (token_xxxxx) from tokenization
-    cpf_cnpj: string; // ✅ Required for Pagar.me customer creation (CPF: 11 digits, CNPJ: 14 digits)
-    phone: string; // ✅ REQUIRED for Pagar.me subscription - must have at least one customer phone
-    billing_address: { // ✅ REQUIRED for credit card payments
-      line_1: string;
-      line_2?: string;
-      city: string;
-      state: string;
-      zip_code: string;
-    };
-  }): Promise<{
-    subscription_id: string;
-    pagar_me_subscription_id: string;
-    status: string;
-    is_paid: boolean;
-    plan_id: string;
-    current_cycle?: {
-      id: string;
-      status: string;
-      startAt: string;
-      endAt: string;
-    };
-    next_billing_at?: string;
-    message: string;
-  }> => {
+  processPayment: async (data: ProcessPaymentParams): Promise<ProcessPaymentResponse> => {
     const response = await apiClient.post('/subscriptions/process-payment', data);
     return response.data.data || response.data;
   },
 
   /**
-   * Verify subscription status directly with Pagar.me (v5)
+   * Create a SetupIntent for adding a payment method
+   * Returns clientSecret for Stripe.js confirmSetup
+   */
+  createSetupIntent: async () => {
+    const response = await apiClient.post('/subscriptions/create-setup-intent');
+    return response.data.data || response.data;
+  },
+
+  /**
+   * Update default payment method
+   * @param paymentMethodId - Stripe PaymentMethod ID (pm_xxx)
+   */
+  updatePaymentMethod: async (paymentMethodId: string) => {
+    const response = await apiClient.post('/subscriptions/update-payment-method', {
+      payment_method_id: paymentMethodId
+    });
+    return response.data.data || response.data;
+  },
+
+  /**
+   * Get Stripe Customer Portal URL
+   * Redirects user to Stripe's hosted portal for managing subscription
+   */
+  getPortalUrl: async (): Promise<{ url: string }> => {
+    const response = await apiClient.get('/subscriptions/portal');
+    return response.data.data || response.data;
+  },
+
+  /**
+   * Verify subscription status directly with Stripe
    * ✅ Use this to confirm payment was actually processed
-   * 
-   * Returns:
-   * - isValid: true if subscription.status='active' AND current_cycle.status='paid'
    */
   verifySubscription: async (): Promise<{
     isValid: boolean;
     status: string;
-    isPaid?: boolean;
+    stripeStatus?: string;
     subscriptionId?: string;
-    pagarMeSubscriptionId?: string;
-    currentCycle?: {
-      id: string;
-      status: string;
-      startAt: string;
-      endAt: string;
-    };
-    nextBillingAt?: string;
-    verifiedAt?: string;
+    stripeSubscriptionId?: string;
+    currentPeriodEnd?: string;
   }> => {
     const response = await apiClient.get('/subscriptions/verify');
     return response.data.data || response.data;
@@ -205,6 +179,44 @@ export const subscriptionsService = {
   getLimits: async () => {
     const response = await apiClient.get('/subscriptions/limits');
     return response.data.data || response.data;
+  },
+
+  // ============================================
+  // DEPRECATED - Kept for backward compatibility
+  // ============================================
+
+  /**
+   * @deprecated Use Stripe.js createPaymentMethod instead
+   * This endpoint no longer exists in the backend
+   */
+  tokenizeCard: async (_data: {
+    number: string;
+    holder_name: string;
+    exp_month: number;
+    exp_year: number;
+    cvv: string;
+  }) => {
+    console.warn('[subscriptionsService] tokenizeCard is deprecated. Use Stripe.js createPaymentMethod instead.');
+    throw new Error('Card tokenization should be done via Stripe.js on the frontend');
+  },
+
+  /**
+   * @deprecated Use createCheckout instead
+   */
+  createCustomer: async (_data: {
+    cpf_cnpj: string;
+    phone?: string;
+  }) => {
+    console.warn('[subscriptionsService] createCustomer is deprecated. Customers are created automatically during checkout.');
+    throw new Error('Customer creation is now automatic during checkout');
+  },
+
+  /**
+   * @deprecated Not needed with Stripe - webhooks handle confirmation
+   */
+  confirmCheckout: async (_planId: string, _sessionId?: string) => {
+    console.warn('[subscriptionsService] confirmCheckout is deprecated. Stripe webhooks handle confirmation automatically.');
+    throw new Error('Checkout confirmation is now handled by Stripe webhooks');
   }
 };
 

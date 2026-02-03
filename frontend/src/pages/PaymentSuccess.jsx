@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { CheckCircle, Sparkles, ArrowRight, Loader2, Zap, Building2, Gift, Shield, Star } from "lucide-react";
 import { useAuth } from "@/lib/AuthContext";
@@ -34,6 +35,7 @@ const LIFECYCLE_STATES = {
 
 export default function PaymentSuccess() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [searchParams] = useSearchParams();
   const { user, refreshUser, isLoadingAuth } = useAuth();
   const [lifecycle, setLifecycle] = useState(LIFECYCLE_STATES.INIT);
@@ -67,6 +69,7 @@ export default function PaymentSuccess() {
         if (paymentStatusParam === 'paid') {
           setLifecycle(LIFECYCLE_STATES.SUCCESS);
           refreshUser?.().catch(() => {});
+          queryClient.invalidateQueries({ queryKey: ['subscription-status'] });
           return;
         }
 
@@ -96,7 +99,9 @@ export default function PaymentSuccess() {
           return;
         }
 
-        if (user?.subscription_status === 'ativo' && user?.plan === planId) {
+        // Auth can return 'ativo' or 'ACTIVE' depending on backend path
+        const isActive = user?.subscription_status === 'ativo' || user?.subscription_status === 'ACTIVE';
+        if (isActive && user?.plan === planId) {
           setLifecycle(LIFECYCLE_STATES.SUCCESS);
           return;
         }

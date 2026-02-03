@@ -15,7 +15,9 @@ import {
   Shield,
   Zap,
   Building2,
-  X
+  X,
+  ExternalLink,
+  Settings
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { subscriptionsService } from "@/api/services/subscriptions";
@@ -67,6 +69,22 @@ export default function SubscriptionSettings() {
     onError: async (error) => {
       const { handleApiError } = await import('@/utils/errorHandler');
       await handleApiError(error, { operation: 'cancel_subscription' });
+    }
+  });
+
+  // Stripe Customer Portal - manage payment methods, view invoices, etc.
+  const portalMutation = useMutation({
+    mutationFn: () => subscriptionsService.getPortalUrl(),
+    onSuccess: (data) => {
+      if (data?.url) {
+        window.location.href = data.url;
+      } else {
+        toast.error('Não foi possível abrir o portal de pagamento');
+      }
+    },
+    onError: async (error) => {
+      const { handleApiError } = await import('@/utils/errorHandler');
+      await handleApiError(error, { operation: 'open_billing_portal' });
     }
   });
 
@@ -204,6 +222,34 @@ export default function SubscriptionSettings() {
             >
               Ver Planos
               <ArrowRight className="w-4 h-4 ml-2" />
+            </Button>
+          </div>
+        )}
+
+        {/* Manage Billing - Stripe Customer Portal */}
+        {(status === 'ativo' || status === 'inadimplente') && (
+          <div className="glass-card rounded-2xl p-6 border border-white/10">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 rounded-xl bg-blue-500/20 flex items-center justify-center">
+                <Settings className="w-5 h-5 text-blue-400" />
+              </div>
+              <div>
+                <h3 className="font-semibold text-white">Gerenciar Pagamento</h3>
+                <p className="text-sm text-gray-400">Atualizar cartão, ver faturas</p>
+              </div>
+            </div>
+            <Button
+              onClick={() => portalMutation.mutate()}
+              disabled={portalMutation.isPending}
+              className="w-full bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white"
+            >
+              {portalMutation.isPending ? (
+                <Loader2 className="w-4 h-4 animate-spin mr-2" />
+              ) : (
+                <CreditCard className="w-4 h-4 mr-2" />
+              )}
+              Abrir Portal de Pagamento
+              <ExternalLink className="w-4 h-4 ml-2" />
             </Button>
           </div>
         )}

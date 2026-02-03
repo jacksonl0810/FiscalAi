@@ -13,10 +13,6 @@ export const AuthProvider = ({ children }) => {
   const MIN_CHECK_INTERVAL = 5000;
   const MIN_FORCE_INTERVAL = 1000;
 
-  useEffect(() => {
-    checkAuth();
-  }, []);
-
   const checkAuth = useCallback(async (force = false) => {
     if (isCheckingRef.current) return;
     
@@ -70,6 +66,21 @@ export const AuthProvider = ({ children }) => {
       isCheckingRef.current = false;
     }
   }, []);
+
+  useEffect(() => {
+    checkAuth();
+  }, [checkAuth]);
+
+  // Refetch user when tab becomes visible (e.g. after payment in another tab / return to app)
+  useEffect(() => {
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && isAuthenticated) {
+        checkAuth(true);
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', onVisibilityChange);
+  }, [isAuthenticated, checkAuth]);
 
   const login = useCallback(async (email, password) => {
     try {
