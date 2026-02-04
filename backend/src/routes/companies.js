@@ -422,12 +422,19 @@ router.post('/:id/register-fiscal', asyncHandler(async (req, res) => {
       }
     });
 
+    // For existing companies, certificate verification is REQUIRED for security
+    // This ensures the user actually owns the company before linking it
+    const requiresCertificateVerification = registrationResult.alreadyExists === true;
+    
     sendSuccess(res, registrationResult.message, {
       nuvemFiscalId: registrationResult.nuvemFiscalId,
       status: 'not_connected', // Company registered but certificate still needed
-      message: 'Empresa registrada na Nuvem Fiscal com sucesso. Agora configure o certificado digital para habilitar a emissão de notas fiscais.',
+      message: requiresCertificateVerification
+        ? 'Empresa já existe na Nuvem Fiscal. Para vincular esta empresa à sua conta, faça upload do certificado digital (e-CNPJ) para verificar a propriedade.'
+        : 'Empresa registrada na Nuvem Fiscal com sucesso. Agora configure o certificado digital para habilitar a emissão de notas fiscais.',
       nextStep: 'upload_certificate',
-      alreadyExists: registrationResult.alreadyExists || false
+      alreadyExists: registrationResult.alreadyExists || false,
+      requiresCertificateVerification: requiresCertificateVerification
     });
   } catch (error) {
     console.error('[Companies] Error registering in Nuvem Fiscal:', error);
@@ -721,8 +728,46 @@ router.post('/:id/certificate', (req, res, next) => {
     throw new AppError('Certificate password is required', 400, 'MISSING_PASSWORD');
   }
 
-  // Import credential service
+  // Import services
   const { storeFiscalCredential } = await import('../services/fiscalCredentialService.js');
+  const { verifyCertificateOwnership, parseCertificate } = await import('../services/certificateParserService.js');
+
+  // Parse and verify certificate CNPJ matches company CNPJ
+  // This is required for security - ensures user owns the company
+  if (company.cnpj) {
+    console.log('[Companies] Verifying certificate ownership for CNPJ:', company.cnpj);
+    
+    const verification = await verifyCertificateOwnership(certificateBase64, password, company.cnpj);
+    
+    if (!verification.verified) {
+      console.error('[Companies] Certificate verification failed:', verification.error, verification.message);
+      throw new AppError(verification.message, 400, verification.error || 'CERTIFICATE_VERIFICATION_FAILED');
+    }
+    
+    console.log('[Companies] Certificate ownership verified successfully');
+    
+    // Set expiration date from certificate if not provided
+    if (!expiresAt && verification.expiresAt) {
+      expiresAt = verification.expiresAt;
+    }
+  } else {
+    // If company has no CNPJ yet, just parse to validate the certificate format
+    console.log('[Companies] Company has no CNPJ, validating certificate format only');
+    try {
+      const certInfo = await parseCertificate(certificateBase64, password);
+      if (!certInfo.valid) {
+        if (certInfo.expired) {
+          throw new AppError(`Certificado expirado em ${new Date(certInfo.validity.notAfter).toLocaleDateString('pt-BR')}`, 400, 'CERTIFICATE_EXPIRED');
+        }
+      }
+      // Set expiration from certificate
+      if (!expiresAt && certInfo.validity?.notAfter) {
+        expiresAt = certInfo.validity.notAfter;
+      }
+    } catch (parseError) {
+      throw new AppError(parseError.message || 'Erro ao validar certificado', 400, 'CERTIFICATE_INVALID');
+    }
+  }
 
   // Store certificate locally
   const credential = await storeFiscalCredential(

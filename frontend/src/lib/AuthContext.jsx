@@ -88,10 +88,9 @@ export const AuthProvider = ({ children }) => {
       setAuthError(null);
 
       const response = await authService.login({ email, password });
+      // Set user directly from response - no need for extra API call
       setUser(response.user);
       setIsAuthenticated(true);
-      
-      await checkAuth(true);
       
       return response;
     } catch (error) {
@@ -103,7 +102,7 @@ export const AuthProvider = ({ children }) => {
     } finally {
       setIsLoadingAuth(false);
     }
-  }, [checkAuth]);
+  }, []);
 
   const register = useCallback(async (name, email, password) => {
     try {
@@ -111,10 +110,9 @@ export const AuthProvider = ({ children }) => {
       setAuthError(null);
 
       const response = await authService.register({ name, email, password });
+      // Set user directly from response - no need for extra API call
       setUser(response.user);
       setIsAuthenticated(true);
-      
-      await checkAuth(true);
       
       return response;
     } catch (error) {
@@ -126,7 +124,7 @@ export const AuthProvider = ({ children }) => {
     } finally {
       setIsLoadingAuth(false);
     }
-  }, [checkAuth]);
+  }, []);
 
   const logout = useCallback(async () => {
     try {
@@ -148,10 +146,9 @@ export const AuthProvider = ({ children }) => {
       setToken(response.token);
       setRefreshToken(response.refreshToken);
       
+      // Set user directly from response - no need for extra API call
       setUser(response.user);
       setIsAuthenticated(true);
-      
-      await checkAuth(true);
       
       return response;
     } catch (error) {
@@ -163,7 +160,7 @@ export const AuthProvider = ({ children }) => {
     } finally {
       setIsLoadingAuth(false);
     }
-  }, [checkAuth]);
+  }, []);
 
   const navigateToLogin = useCallback(() => {
     window.location.href = '/login';
@@ -177,6 +174,16 @@ export const AuthProvider = ({ children }) => {
   const refreshUser = useCallback(async () => {
     await checkAuth(true); // Force refresh, bypass debounce
   }, [checkAuth]);
+
+  // Set user directly without API call (used by OAuth callback)
+  const setUserDirectly = useCallback((userData) => {
+    if (userData) {
+      setUser(userData);
+      setIsAuthenticated(true);
+      setIsLoadingAuth(false);
+      setAuthError(null);
+    }
+  }, []);
 
   // Memoize context value to prevent unnecessary re-renders
   const value = useMemo(() => ({
@@ -193,7 +200,8 @@ export const AuthProvider = ({ children }) => {
     checkAuth,
     clearError,
     refreshUser,
-  }), [user, isAuthenticated, isLoadingAuth, authError, login, register, logout, loginWithGoogle, navigateToLogin, checkAuth, clearError, refreshUser]);
+    setUserDirectly,
+  }), [user, isAuthenticated, isLoadingAuth, authError, login, register, logout, loginWithGoogle, navigateToLogin, checkAuth, clearError, refreshUser, setUserDirectly]);
 
   return (
     <AuthContext.Provider value={value}>

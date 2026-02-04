@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useState, useRef, useCallback } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "@/lib/AuthContext";
 import { setToken, setRefreshToken } from "@/api/services";
@@ -8,29 +8,25 @@ import { toast } from "sonner";
 /**
  * Google OAuth Callback Page
  * Handles the redirect from Google OAuth and processes the tokens
+ * 
+ * Standard OAuth 2.0 flow:
+ * 1. User clicks "Login with Google" -> redirected to Google
+ * 2. Google authenticates -> redirects back to backend /api/auth/google/callback
+ * 3. Backend validates, creates/finds user -> redirects here with tokens + user data
+ * 4. This page stores tokens and sets user state directly (no extra API call)
+ * 5. Redirects to dashboard
  */
 export default function GoogleCallback() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { refreshUser } = useAuth();
+  const { setUserDirectly, refreshUser } = useAuth();
   const [status, setStatus] = useState("processing"); // processing, success, error
   const [errorMessage, setErrorMessage] = useState("");
   
-  // Prevent double execution (React Strict Mode calls useEffect twice)
+  // Prevent double execution (React 18 Strict Mode calls useEffect twice in development)
   const hasProcessed = useRef(false);
 
-  useEffect(() => {
-    // Guard against multiple executions
-    if (hasProcessed.current) {
-      console.log("[Google Callback] Already processed, skipping...");
-      return;
-    }
-    hasProcessed.current = true;
-    
-    handleCallback();
-  }, []);
-
-  const handleCallback = async () => {
+  const handleCallback = useCallback(async () => {
     console.log("[Google Callback] Starting callback processing...");
     
     try {
@@ -38,61 +34,95 @@ export default function GoogleCallback() {
       const error = searchParams.get("error");
       if (error) {
         const message = searchParams.get("message") || "Erro na autenticação com Google";
-        throw new Error(message);
+        throw new Error(decodeURIComponent(message));
       }
 
       // Get tokens from URL
       const token = searchParams.get("token");
-      const refreshToken = searchParams.get("refreshToken");
+      const refreshTokenValue = searchParams.get("refreshToken");
       const isNewUser = searchParams.get("isNewUser") === "true";
+      
+      // Get user data from URL (sent by backend to avoid extra API call)
+      const userId = searchParams.get("userId");
+      const userEmail = searchParams.get("userEmail");
+      const userName = searchParams.get("userName");
+      const userAvatar = searchParams.get("userAvatar");
 
-      console.log("[Google Callback] Tokens received:", { hasToken: !!token, hasRefreshToken: !!refreshToken, isNewUser });
+      console.log("[Google Callback] Data received:", { 
+        hasToken: !!token, 
+        hasRefreshToken: !!refreshTokenValue, 
+        hasUserData: !!(userId && userEmail),
+        isNewUser 
+      });
 
-      if (!token || !refreshToken) {
+      if (!token || !refreshTokenValue) {
         throw new Error("Tokens não encontrados na resposta");
       }
 
-      // Store tokens
+      // Store tokens in localStorage
       setToken(token);
-      setRefreshToken(refreshToken);
+      setRefreshToken(refreshTokenValue);
 
-      // Refresh user data
-      console.log("[Google Callback] Refreshing user data...");
-      await refreshUser();
-
-      setStatus("success");
-      console.log("[Google Callback] Success! Showing toast notification...");
-      
-      // Show success message (only once) - toast.success has internal deduplication
-      if (isNewUser) {
-        toast.success("Conta criada com sucesso! Bem-vindo à MAY!", {
-          id: "google-login-success", // Prevent duplicates
-          duration: 3000
+      // Set user data directly if available (avoids extra API call)
+      if (userId && userEmail && setUserDirectly) {
+        console.log("[Google Callback] Setting user directly from URL params...");
+        setUserDirectly({
+          id: userId,
+          email: userEmail,
+          name: userName || userEmail.split('@')[0],
+          avatar: userAvatar || null,
         });
       } else {
-        toast.success("Login com Google realizado com sucesso!", {
-          id: "google-login-success", // Prevent duplicates
-          duration: 3000
-        });
+        // Fallback: refresh user data via API if not provided in URL
+        console.log("[Google Callback] Falling back to refreshUser API call...");
+        await refreshUser();
       }
 
-      // Redirect after a short delay
-      console.log("[Google Callback] Redirecting to dashboard in 1.5s...");
+      setStatus("success");
+      console.log("[Google Callback] Success!");
+      
+      // Show success message with toast ID to prevent duplicates
+      const toastMessage = isNewUser 
+        ? "Conta criada com sucesso! Bem-vindo à MAY!"
+        : "Login com Google realizado com sucesso!";
+      
+      toast.success(toastMessage, {
+        id: "google-login-success",
+        duration: 3000
+      });
+
+      // Clear URL params for security (tokens shouldn't stay in URL)
+      window.history.replaceState({}, document.title, window.location.pathname);
+
+      // Redirect to dashboard
+      console.log("[Google Callback] Redirecting to dashboard...");
       setTimeout(() => {
         navigate("/", { replace: true });
-      }, 1500);
-    } catch (error) {
+      }, 1000);
+    } catch (err) {
+      console.error("[Google Callback] Error:", err);
       const { handleApiError } = await import('@/utils/errorHandler');
-      await handleApiError(error, { operation: 'google_callback' });
+      await handleApiError(err, { operation: 'google_callback' });
       setStatus("error");
-      setErrorMessage("Erro ao processar autenticação");
+      setErrorMessage(err.message || "Erro ao processar autenticação");
 
       // Redirect to login after a delay
       setTimeout(() => {
         navigate("/login", { replace: true });
       }, 3000);
     }
-  };
+  }, [searchParams, navigate, setUserDirectly, refreshUser]);
+
+  useEffect(() => {
+    // Guard against multiple executions (React 18 StrictMode protection)
+    if (hasProcessed.current) {
+      console.log("[Google Callback] Already processed, skipping duplicate execution...");
+      return;
+    }
+    hasProcessed.current = true;
+    
+    handleCallback();
+  }, [handleCallback]);
 
   return (
     <div className="min-h-screen bg-[#0a0a0f] flex items-center justify-center p-4">
