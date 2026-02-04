@@ -1,4 +1,5 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { invoicesService, notificationsService, companiesService } from "@/api/services";
 import { motion, AnimatePresence } from "framer-motion";
@@ -52,6 +53,7 @@ function normalizeStatus(status) {
 }
 
 export default function Documents() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [companyFilter, setCompanyFilter] = useState("all");
@@ -93,6 +95,21 @@ export default function Documents() {
     queryKey: ['invoices', filterParams],
     queryFn: () => invoicesService.list(filterParams),
   });
+
+  // When opening from Arquivos Recentes (e.g. ?invoiceId=xxx), expand that invoice
+  useEffect(() => {
+    const invoiceId = searchParams.get("invoiceId");
+    if (!invoiceId || !invoices.length) return;
+    const invoice = invoices.find((inv) => inv.id === invoiceId);
+    if (invoice) {
+      setSelectedInvoice(invoice);
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete("invoiceId");
+        return next;
+      }, { replace: true });
+    }
+  }, [invoices, searchParams, setSearchParams]);
 
   const handleRefreshStatus = async (invoice) => {
     if (!invoice.id) return;
@@ -218,23 +235,60 @@ export default function Documents() {
           </div>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline" className="bg-gradient-to-br from-white/5 via-white/3 to-white/5 border-white/10 text-white hover:bg-white/10 hover:border-orange-500/30 h-12 rounded-xl backdrop-blur-sm transition-all duration-200 shadow-lg shadow-black/20">
-                <Filter className="w-4 h-4 mr-2" />
-                {statusFilter === "all" ? "Todos os status" : statusConfig[statusFilter]?.label}
-                <ChevronDown className="w-4 h-4 ml-2" />
+              <Button
+                variant="outline"
+                className={cn(
+                  "group relative overflow-hidden min-w-[180px] h-12 rounded-xl",
+                  "bg-gradient-to-br from-slate-800/95 via-slate-700/80 to-slate-800/95",
+                  "border border-white/15",
+                  "text-gray-100 font-medium",
+                  "shadow-lg shadow-black/25",
+                  "hover:border-orange-500/40 hover:text-white",
+                  "hover:shadow-xl hover:shadow-orange-500/15",
+                  "hover:from-slate-800 hover:via-slate-700/90 hover:to-slate-800",
+                  "data-[state=open]:border-orange-500/50 data-[state=open]:shadow-xl data-[state=open]:shadow-orange-500/20",
+                  "data-[state=open]:ring-2 data-[state=open]:ring-orange-500/20",
+                  "active:scale-[0.98] transition-all duration-200 ease-out",
+                  "before:absolute before:inset-0 before:bg-gradient-to-r before:from-transparent before:via-white/5 before:to-transparent before:opacity-0 before:translate-x-[-100%] before:transition-all before:duration-500",
+                  "hover:before:opacity-100 hover:before:translate-x-[100%]"
+                )}
+              >
+                <Filter className="w-4 h-4 mr-2 text-orange-400/90 shrink-0" />
+                <span className="truncate">
+                  {statusFilter === "all" ? "Todos os status" : statusConfig[statusFilter]?.label}
+                </span>
+                <ChevronDown className="w-4 h-4 ml-2 shrink-0 opacity-80 group-data-[state=open]:rotate-180 transition-transform duration-200" />
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent className="bg-[#1a1a2e] border-white/10">
-              <DropdownMenuItem onClick={() => setStatusFilter("all")} className="text-white hover:bg-white/10">
+            <DropdownMenuContent
+              align="start"
+              className={cn(
+                "min-w-[220px] rounded-xl overflow-hidden",
+                "bg-gradient-to-b from-slate-900/98 to-slate-800/98",
+                "border border-white/15 shadow-2xl shadow-black/40",
+                "backdrop-blur-xl py-1.5"
+              )}
+            >
+              <DropdownMenuItem
+                onClick={() => setStatusFilter("all")}
+                className={cn(
+                  "text-gray-200 focus:bg-white/10 focus:text-white cursor-pointer",
+                  "py-2.5 px-3 mx-1 rounded-lg transition-colors duration-150"
+                )}
+              >
                 Todos os status
               </DropdownMenuItem>
               {Object.entries(statusConfig).map(([key, config]) => (
-                <DropdownMenuItem 
-                  key={key} 
+                <DropdownMenuItem
+                  key={key}
                   onClick={() => setStatusFilter(key)}
-                  className="text-white hover:bg-white/10"
+                  className={cn(
+                    "flex items-center py-2.5 px-3 mx-1 rounded-lg cursor-pointer",
+                    "text-gray-200 focus:bg-white/10 focus:text-white transition-colors duration-150",
+                    statusFilter === key && "bg-orange-500/15 text-orange-200"
+                  )}
                 >
-                  <config.icon className={`w-4 h-4 mr-2 ${config.color}`} />
+                  <config.icon className={cn("w-4 h-4 mr-2.5 shrink-0", config.color)} />
                   {config.label}
                 </DropdownMenuItem>
               ))}
@@ -243,9 +297,22 @@ export default function Documents() {
           <Button
             variant="outline"
             onClick={() => setShowAdvancedFilters(!showAdvancedFilters)}
-            className="bg-gradient-to-br from-white/5 via-white/3 to-white/5 border-white/10 text-white hover:bg-white/10 hover:border-orange-500/30 h-12 rounded-xl backdrop-blur-sm transition-all duration-200 shadow-lg shadow-black/20"
+            className={cn(
+              "group relative overflow-hidden h-12 rounded-xl min-w-[160px]",
+              "bg-gradient-to-br from-slate-800/95 via-slate-700/80 to-slate-800/95",
+              "border border-white/15",
+              "text-gray-100 font-medium",
+              "shadow-lg shadow-black/25",
+              "hover:border-orange-500/40 hover:text-white",
+              "hover:shadow-xl hover:shadow-orange-500/15",
+              "hover:from-slate-800 hover:via-slate-700/90 hover:to-slate-800",
+              showAdvancedFilters && "border-orange-500/50 shadow-xl shadow-orange-500/20 ring-2 ring-orange-500/20",
+              "active:scale-[0.98] transition-all duration-200 ease-out",
+              "before:absolute before:inset-0 before:bg-gradient-to-r before:from-transparent before:via-white/5 before:to-transparent before:opacity-0 before:transition-opacity",
+              "hover:before:opacity-100 before:translate-x-[-100%] hover:before:translate-x-[100%] before:duration-500"
+            )}
           >
-            <Filter className="w-4 h-4 mr-2" />
+            <Filter className="w-4 h-4 mr-2 text-orange-400/90 shrink-0" />
             Filtros Avançados
             {hasActiveFilters && (
               <span className="ml-2 px-2.5 py-1 bg-gradient-to-r from-orange-500/30 to-orange-600/20 text-orange-300 rounded-full text-xs font-semibold border border-orange-500/30 shadow-lg shadow-orange-500/20">
@@ -598,22 +665,22 @@ export default function Documents() {
                             e.stopPropagation();
                             setSelectedInvoice(invoice);
                           }}
+                          title="Ver detalhes"
                         >
                           <Eye className="w-4 h-4" />
                         </Button>
-                        {invoice.pdf_url && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="text-gray-400 hover:text-white hover:bg-white/10"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleDownloadPdf(invoice);
-                            }}
-                          >
-                            <Download className="w-4 h-4" />
-                          </Button>
-                        )}
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="text-gray-400 hover:text-white hover:bg-white/10"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDownloadPdf(invoice);
+                          }}
+                          title="Baixar PDF"
+                        >
+                          <Download className="w-4 h-4" />
+                        </Button>
                         {normalizeStatus(invoice.status) === 'autorizada' && (
                           <Button
                             variant="ghost"
@@ -655,15 +722,13 @@ export default function Documents() {
                             </div>
                           </div>
                           <div className="flex gap-3 mt-6">
-                            {invoice.pdf_url && (
-                              <Button 
-                                className="bg-orange-500/20 text-orange-400 hover:bg-orange-500/30 border-0"
-                                onClick={() => handleDownloadPdf(invoice)}
-                              >
-                                <Download className="w-4 h-4 mr-2" />
-                                Baixar PDF
-                              </Button>
-                            )}
+                            <Button 
+                              className="bg-orange-500/20 text-orange-400 hover:bg-orange-500/30 border-0"
+                              onClick={() => handleDownloadPdf(invoice)}
+                            >
+                              <Download className="w-4 h-4 mr-2" />
+                              Baixar PDF
+                            </Button>
                             {invoice.xml_url && (
                               <Button 
                                 variant="outline" 

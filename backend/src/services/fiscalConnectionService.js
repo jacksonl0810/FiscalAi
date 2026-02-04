@@ -18,6 +18,16 @@ import { AppError } from '../middleware/errorHandler.js';
 /**
  * Test and update fiscal connection status for a company
  * 
+ * IMPORTANT: For Nuvem Fiscal API, the following are REQUIRED to emit invoices:
+ * 1. Company registered in Nuvem Fiscal (has nuvemFiscalId)
+ * 2. Digital certificate configured AND uploaded to Nuvem Fiscal
+ * 
+ * Status meanings:
+ * - 'connected': Company + certificate configured on Nuvem Fiscal, ready to issue invoices
+ * - 'not_connected': Missing requirements (company not registered, or certificate not configured)
+ * - 'failed': Connection test failed
+ * - 'expired': Certificate expired
+ * 
  * @param {string} companyId - Company ID
  * @returns {Promise<object>} Connection status result
  */
@@ -44,28 +54,70 @@ export async function testFiscalConnection(companyId) {
   console.log('[testFiscalConnection] Company found:', { 
     id: company.id, 
     hasCredential: !!company.fiscalCredential,
-    nuvemFiscalId: company.nuvemFiscalId 
+    credentialType: company.fiscalCredential?.type,
+    nuvemFiscalId: company.nuvemFiscalId,
+    certificadoDigital: company.certificadoDigital
   });
 
-  if (!company.fiscalCredential) {
+  // Step 1: Check if company is registered in Nuvem Fiscal
+  if (!company.nuvemFiscalId) {
     await prisma.company.update({
       where: { id: companyId },
       data: {
         fiscalConnectionStatus: 'not_connected',
-        fiscalConnectionError: 'Credenciais fiscais não configuradas',
+        fiscalConnectionError: 'Empresa não registrada na Nuvem Fiscal',
         lastConnectionCheck: new Date()
       }
     });
 
     return {
       status: 'not_connected',
-      message: 'Credenciais fiscais não configuradas. Configure certificado digital ou credenciais municipais.',
-      error: 'Credenciais fiscais não configuradas'
+      message: 'Empresa não registrada na Nuvem Fiscal. Acesse "Minhas Empresas", clique na empresa e registre na Nuvem Fiscal para habilitar a emissão de notas fiscais.',
+      error: 'Empresa não registrada na Nuvem Fiscal',
+      step: 'register_company'
     };
   }
 
-  // Check if certificate is expired
-  if (company.fiscalCredential.type === 'certificate' && company.fiscalCredential.expiresAt) {
+  // Step 2: Check if digital certificate is configured
+  if (!company.fiscalCredential) {
+    await prisma.company.update({
+      where: { id: companyId },
+      data: {
+        fiscalConnectionStatus: 'not_connected',
+        fiscalConnectionError: 'Certificado digital não configurado',
+        lastConnectionCheck: new Date()
+      }
+    });
+
+    return {
+      status: 'not_connected',
+      message: 'Certificado digital não configurado. Para emitir notas fiscais via Nuvem Fiscal, você precisa fazer upload do certificado digital (arquivo .pfx ou .p12) na aba "Integração Fiscal" da configuração da empresa.',
+      error: 'Certificado digital não configurado',
+      step: 'upload_certificate'
+    };
+  }
+
+  // Step 3: Verify credential type is 'certificate' (required for Nuvem Fiscal)
+  if (company.fiscalCredential.type !== 'certificate') {
+    await prisma.company.update({
+      where: { id: companyId },
+      data: {
+        fiscalConnectionStatus: 'not_connected',
+        fiscalConnectionError: 'Certificado digital é obrigatório para Nuvem Fiscal',
+        lastConnectionCheck: new Date()
+      }
+    });
+
+    return {
+      status: 'not_connected',
+      message: 'Certificado digital é obrigatório para emitir notas fiscais via Nuvem Fiscal. Credenciais municipais (login/senha) não são suficientes. Faça upload do certificado digital (.pfx ou .p12) na aba "Integração Fiscal".',
+      error: 'Certificado digital é obrigatório para Nuvem Fiscal',
+      step: 'upload_certificate'
+    };
+  }
+
+  // Step 4: Check if certificate is expired
+  if (company.fiscalCredential.expiresAt) {
     if (new Date(company.fiscalCredential.expiresAt) < new Date()) {
       await prisma.company.update({
         where: { id: companyId },
@@ -78,78 +130,68 @@ export async function testFiscalConnection(companyId) {
 
       return {
         status: 'expired',
-        message: 'Certificado digital expirado. Renove o certificado para continuar emitindo notas fiscais.',
+        message: 'Certificado digital expirado. Renove o certificado e faça upload novamente para continuar emitindo notas fiscais.',
         error: 'Certificado digital expirado',
-        expiresAt: company.fiscalCredential.expiresAt
+        expiresAt: company.fiscalCredential.expiresAt,
+        step: 'renew_certificate'
       };
     }
   }
 
-  // If company is registered in Nuvem Fiscal, test connection
-  if (company.nuvemFiscalId) {
-    try {
-      const connectionResult = await checkConnection(company.nuvemFiscalId);
-
-      if (connectionResult.status === 'conectado') {
-        await prisma.company.update({
-          where: { id: companyId },
-          data: {
-            fiscalConnectionStatus: 'connected',
-            fiscalConnectionError: null,
-            lastConnectionCheck: new Date()
-          }
-        });
-
-        return {
-          status: 'connected',
-          message: connectionResult.message || 'Conexão fiscal estabelecida com sucesso',
-          data: connectionResult.data
-        };
-      } else {
-        await prisma.company.update({
-          where: { id: companyId },
-          data: {
-            fiscalConnectionStatus: 'failed',
-            fiscalConnectionError: connectionResult.message || 'Falha na conexão',
-            lastConnectionCheck: new Date()
-          }
-        });
-
-        // Create AI notification for credential issue (only if not already notified recently)
-        if (company.user?.id) {
-          const recentNotifications = await prisma.notification.findMany({
-            where: {
-              userId: company.user.id,
-              titulo: { contains: 'Credenciais Fiscais' },
-              createdAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) }
-            }
-          });
-
-          if (recentNotifications.length === 0) {
-            const { createAINotification } = await import('./aiNotificationService.js');
-            await createAINotification(
-              company.user.id,
-              'credential_issue',
-              {
-                error: connectionResult.message || 'Falha na conexão',
-                company: company.razaoSocial || company.nomeFantasia
-              }
-            );
-          }
-        }
-
-        return {
-          status: 'failed',
-          message: connectionResult.message || 'Falha ao conectar com a prefeitura',
-          error: connectionResult.details || connectionResult.message
-        };
+  // Step 5: Verify company has certificadoDigital flag (indicates certificate was properly configured)
+  if (!company.certificadoDigital) {
+    await prisma.company.update({
+      where: { id: companyId },
+      data: {
+        fiscalConnectionStatus: 'not_connected',
+        fiscalConnectionError: 'Certificado digital não foi configurado corretamente',
+        lastConnectionCheck: new Date()
       }
-    } catch (error) {
+    });
+
+    return {
+      status: 'not_connected',
+      message: 'Certificado digital não foi configurado corretamente. Faça upload do certificado digital novamente na aba "Integração Fiscal".',
+      error: 'Certificado digital não foi configurado corretamente',
+      step: 'upload_certificate'
+    };
+  }
+
+  // Step 6: Test connection to Nuvem Fiscal
+  // IMPORTANT: checkConnection() only verifies the company exists (GET /empresas/:id).
+  // It does NOT verify that the certificate is configured on Nuvem Fiscal.
+  // So we NEVER set status to 'connected' here - "connected" is set ONLY when our
+  // certificate upload endpoint successfully uploads the cert to Nuvem Fiscal.
+  try {
+    const connectionResult = await checkConnection(company.nuvemFiscalId);
+
+    if (connectionResult.status === 'conectado') {
+      // Company exists on Nuvem Fiscal, but we cannot know from this API call
+      // whether the certificate is actually configured there. So we set not_connected
+      // with a clear message: user must upload the certificate through our app.
       await prisma.company.update({
         where: { id: companyId },
         data: {
-          fiscalConnectionStatus: 'failed',
-          fiscalConnectionError: error.message,
+          fiscalConnectionStatus: 'not_connected',
+          fiscalConnectionError: 'Certificado digital não configurado na Nuvem Fiscal. Envie o certificado na aba Integração Fiscal.',
+          lastConnectionCheck: new Date()
+        }
+      });
+
+      return {
+        status: 'not_connected',
+        message: 'Empresa está registrada na Nuvem Fiscal, mas o certificado digital ainda não foi configurado lá. Para habilitar a emissão de notas fiscais, faça upload do certificado digital (.pfx ou .p12) nesta aplicação na aba "Integração Fiscal".',
+        error: 'Certificado não configurado na Nuvem Fiscal',
+        step: 'upload_certificate',
+        data: connectionResult.data
+      };
+    } else {
+      // Connection test failed
+      await prisma.company.update({
+        where: { id: companyId },
+        data: {
+          fiscalConnectionStatus: 'not_connected',
+          fiscalConnectionError: connectionResult.message || 'Certificado digital não está configurado na Nuvem Fiscal',
           lastConnectionCheck: new Date()
         }
       });
@@ -170,7 +212,7 @@ export async function testFiscalConnection(companyId) {
             company.user.id,
             'credential_issue',
             {
-              error: error.message,
+              error: connectionResult.message || 'Certificado não configurado na Nuvem Fiscal',
               company: company.razaoSocial || company.nomeFantasia
             }
           );
@@ -178,28 +220,52 @@ export async function testFiscalConnection(companyId) {
       }
 
       return {
-        status: 'failed',
-        message: `Erro ao testar conexão: ${error.message}`,
-        error: error.message
+        status: 'not_connected',
+        message: connectionResult.message || 'Certificado digital não está configurado na Nuvem Fiscal. O certificado foi salvo localmente, mas precisa ser enviado para a Nuvem Fiscal. Tente fazer upload do certificado novamente.',
+        error: connectionResult.details || connectionResult.message,
+        step: 'upload_certificate'
       };
     }
-  }
+  } catch (error) {
+    await prisma.company.update({
+      where: { id: companyId },
+      data: {
+        fiscalConnectionStatus: 'failed',
+        fiscalConnectionError: error.message,
+        lastConnectionCheck: new Date()
+      }
+    });
 
-  // Company has credentials but not registered in Nuvem Fiscal
-  await prisma.company.update({
-    where: { id: companyId },
-    data: {
-      fiscalConnectionStatus: 'not_connected',
-      fiscalConnectionError: 'Empresa não registrada na Nuvem Fiscal',
-      lastConnectionCheck: new Date()
+    // Create AI notification for credential issue (only if not already notified recently)
+    if (company.user?.id) {
+      const recentNotifications = await prisma.notification.findMany({
+        where: {
+          userId: company.user.id,
+          titulo: { contains: 'Credenciais Fiscais' },
+          createdAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) }
+        }
+      });
+
+      if (recentNotifications.length === 0) {
+        const { createAINotification } = await import('./aiNotificationService.js');
+        await createAINotification(
+          company.user.id,
+          'credential_issue',
+          {
+            error: error.message,
+            company: company.razaoSocial || company.nomeFantasia
+          }
+        );
+      }
     }
-  });
 
-  return {
-    status: 'not_connected',
-    message: 'Empresa não registrada na Nuvem Fiscal. Registre a empresa primeiro.',
-    error: 'Empresa não registrada na Nuvem Fiscal'
-  };
+    return {
+      status: 'failed',
+      message: `Erro ao testar conexão com Nuvem Fiscal: ${error.message}`,
+      error: error.message,
+      step: 'check_connection'
+    };
+  }
 }
 
 /**

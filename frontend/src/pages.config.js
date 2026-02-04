@@ -2,6 +2,7 @@ import Assistant from './pages/Assistant';
 import CompanySetup from './pages/CompanySetup';
 import Dashboard from './pages/Dashboard';
 import Documents from './pages/Documents';
+import Clients from './pages/Clients';
 import InvoiceConfirmation from './pages/InvoiceConfirmation';
 import Notifications from './pages/Notifications';
 import Settings from './pages/Settings';
@@ -16,6 +17,7 @@ export const PAGES = {
     "CompanySetup": CompanySetup,
     "Dashboard": Dashboard,
     "Documents": Documents,
+    "Clients": Clients,
     "InvoiceConfirmation": InvoiceConfirmation,
     "Notifications": Notifications,
     "Settings": Settings,

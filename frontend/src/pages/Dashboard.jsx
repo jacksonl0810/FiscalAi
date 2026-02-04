@@ -1,6 +1,6 @@
 import React from "react";
 import { useQuery } from "@tanstack/react-query";
-import { invoicesService, companiesService, settingsService } from "@/api/services";
+import { invoicesService, companiesService, settingsService, subscriptionsService } from "@/api/services";
 import { motion } from "framer-motion";
 import { Link } from "react-router-dom";
 import { createPageUrl } from "@/utils";
@@ -10,7 +10,10 @@ import {
   Receipt, 
   TrendingUp,
   ArrowRight,
-  Sparkles
+  Sparkles,
+  Crown,
+  Building2,
+  AlertTriangle
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -115,6 +118,19 @@ export default function Dashboard() {
     enabled: !!company?.id && company?.regime_tributario === 'MEI',
   });
 
+  // Get plan limits
+  const { data: planLimits } = useQuery({
+    queryKey: ['plan-limits'],
+    queryFn: () => subscriptionsService.getLimits(),
+    staleTime: 2 * 60 * 1000,
+  });
+
+  // Get all companies count
+  const { data: allCompanies = [] } = useQuery({
+    queryKey: ['companies'],
+    queryFn: () => companiesService.list(),
+  });
+
   const meiLimit = 81000;
   const yearlyRevenue = meiLimitStatus?.yearlyRevenue ?? invoices
     .filter(inv => {
@@ -213,6 +229,131 @@ export default function Dashboard() {
         <MEILimitBar yearlyRevenue={yearlyRevenue} limit={meiLimit} />
       )}
 
+      {/* Plan Limits Card */}
+      {planLimits && (
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.4 }}
+          className={cn(
+            "p-6 rounded-2xl",
+            "bg-gradient-to-br from-slate-900/90 via-slate-800/70 to-slate-900/90",
+            "border border-white/10",
+            "shadow-xl"
+          )}
+        >
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-3">
+              <div className={cn(
+                "w-10 h-10 rounded-xl flex items-center justify-center",
+                "bg-gradient-to-br from-purple-500/20 to-purple-600/20",
+                "border border-purple-500/30"
+              )}>
+                <Crown className="w-5 h-5 text-purple-400" />
+              </div>
+              <div>
+                <h3 className="text-lg font-semibold text-white">Plano {planLimits.planName}</h3>
+                <p className="text-sm text-gray-400">Uso do mês atual</p>
+              </div>
+            </div>
+            <Link to={createPageUrl("Pricing")}>
+              <Button
+                variant="outline"
+                size="sm"
+                className={cn(
+                  "group relative overflow-hidden rounded-xl",
+                  "bg-gradient-to-br from-slate-800/90 via-purple-900/20 to-slate-800/90",
+                  "border border-purple-500/40",
+                  "text-purple-200 font-medium",
+                  "shadow-lg shadow-purple-500/10",
+                  "hover:border-purple-400/60 hover:text-white",
+                  "hover:shadow-xl hover:shadow-purple-500/20",
+                  "hover:bg-gradient-to-br hover:from-purple-600/30 hover:via-purple-500/20 hover:to-slate-800/90",
+                  "active:scale-[0.98]",
+                  "transition-all duration-300 ease-out",
+                  "before:absolute before:inset-0 before:bg-gradient-to-r before:from-transparent before:via-white/10 before:to-transparent",
+                  "before:translate-x-[-100%] hover:before:translate-x-[100%] before:transition-transform before:duration-500",
+                  "h-9 px-4"
+                )}
+              >
+                <span className="relative z-10 flex items-center gap-2">
+                  Ver planos
+                  <ArrowRight className="w-3.5 h-3.5 relative z-10 opacity-80 transition-transform duration-300 group-hover:translate-x-0.5" />
+                </span>
+              </Button>
+            </Link>
+          </div>
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Invoice limit */}
+            <div className="p-4 rounded-xl bg-white/5 border border-white/5">
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <FileText className="w-4 h-4 text-blue-400" />
+                  <span className="text-sm text-gray-300">Notas Fiscais</span>
+                </div>
+                <span className="text-sm font-medium text-white">
+                  {planLimits.invoiceLimit?.used || 0} / {planLimits.invoiceLimit?.max === null ? '∞' : planLimits.invoiceLimit?.max}
+                </span>
+              </div>
+              <div className="w-full h-2 bg-white/10 rounded-full overflow-hidden">
+                <div 
+                  className={cn(
+                    "h-full transition-all rounded-full",
+                    (planLimits.invoiceLimit?.max && (planLimits.invoiceLimit?.used / planLimits.invoiceLimit?.max) > 0.8)
+                      ? "bg-gradient-to-r from-red-500 to-orange-500"
+                      : "bg-gradient-to-r from-blue-500 to-blue-600"
+                  )}
+                  style={{ 
+                    width: planLimits.invoiceLimit?.max === null 
+                      ? '10%' 
+                      : `${Math.min((planLimits.invoiceLimit?.used / planLimits.invoiceLimit?.max) * 100, 100)}%` 
+                  }}
+                />
+              </div>
+              {planLimits.invoiceLimit?.max && !planLimits.invoiceLimit?.allowed && (
+                <div className="mt-2 flex items-center gap-1.5 text-xs text-yellow-400">
+                  <AlertTriangle className="w-3 h-3" />
+                  Limite atingido
+                </div>
+              )}
+            </div>
+
+            {/* Company limit */}
+            <div className="p-4 rounded-xl bg-white/5 border border-white/5">
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <Building2 className="w-4 h-4 text-green-400" />
+                  <span className="text-sm text-gray-300">Empresas</span>
+                </div>
+                <span className="text-sm font-medium text-white">
+                  {allCompanies.length} / {planLimits.companyLimit?.max || 1}
+                </span>
+              </div>
+              <div className="w-full h-2 bg-white/10 rounded-full overflow-hidden">
+                <div 
+                  className={cn(
+                    "h-full transition-all rounded-full",
+                    (planLimits.companyLimit?.max && (allCompanies.length / planLimits.companyLimit?.max) >= 1)
+                      ? "bg-gradient-to-r from-red-500 to-orange-500"
+                      : "bg-gradient-to-r from-green-500 to-green-600"
+                  )}
+                  style={{ 
+                    width: `${Math.min((allCompanies.length / (planLimits.companyLimit?.max || 1)) * 100, 100)}%` 
+                  }}
+                />
+              </div>
+              {planLimits.companyLimit?.max && !planLimits.companyLimit?.allowed && (
+                <div className="mt-2 flex items-center gap-1.5 text-xs text-yellow-400">
+                  <AlertTriangle className="w-3 h-3" />
+                  Limite atingido
+                </div>
+              )}
+            </div>
+          </div>
+        </motion.div>
+      )}
+
       {/* Regime and Fiscal Status */}
       {company && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -290,16 +431,23 @@ export default function Dashboard() {
             <p className="text-sm text-gray-400">Histórico recente de emissões</p>
           </div>
           <Link to={createPageUrl("Documents")}>
-            <Button variant="ghost" className={cn(
-              "text-orange-400 hover:text-orange-300",
-              "hover:bg-gradient-to-r hover:from-orange-500/10 hover:to-orange-600/5",
-              "border border-transparent hover:border-orange-500/30",
-              "rounded-xl px-4 py-2",
-              "transition-all duration-200",
-              "shadow-md hover:shadow-lg hover:shadow-orange-500/20"
-            )}>
-              Ver todas
-              <ArrowRight className="w-4 h-4 ml-2" />
+            <Button
+              variant="outline"
+              className={cn(
+                "group relative rounded-xl px-4 py-2.5 font-semibold",
+                "bg-gradient-to-br from-slate-800/95 via-slate-700/90 to-slate-800/95",
+                "border border-orange-500/40 text-orange-200",
+                "shadow-lg shadow-orange-500/10",
+                "hover:border-orange-400 hover:text-white",
+                "hover:bg-gradient-to-br hover:from-orange-600/30 hover:via-orange-500/20 hover:to-slate-800/95",
+                "hover:shadow-xl hover:shadow-orange-500/25",
+                "active:scale-[0.98] transition-all duration-200 ease-out"
+              )}
+            >
+              <span className="flex items-center">
+                Ver todas
+                <ArrowRight className="w-4 h-4 ml-2 transition-transform duration-200 group-hover:translate-x-0.5" />
+              </span>
             </Button>
           </Link>
         </div>

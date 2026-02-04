@@ -21,6 +21,7 @@ import webhooksRoutes from './routes/webhooks.js';
 import monitoringRoutes from './routes/monitoring.js';
 import accountantReviewRoutes from './routes/accountantReview.js';
 import adminRoutes from './routes/admin.js';
+import clientsRoutes from './routes/clients.js';
 
 // Import middleware
 import { errorHandler } from './middleware/errorHandler.js';
@@ -121,6 +122,7 @@ app.use('/api/webhooks', webhooksRoutes);
 app.use('/api/monitoring', monitoringRoutes);
 app.use('/api/accountant-review', accountantReviewRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/clients', clientsRoutes);
 
 // Content-Security-Policy for SPA (Stripe, hCaptcha, Vite/React)
 // Must allow inline scripts for Stripe.js and payment iframes
