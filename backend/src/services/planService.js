@@ -131,12 +131,14 @@ export async function checkInvoiceLimit(userId) {
   }
 
   if (planConfig.maxInvoicesPerMonth === null) {
-    return { 
-      allowed: true, 
+    return {
+      allowed: true,
       unlimited: true,
       current: 0,
+      used: 0,
       max: null,
-      remaining: null
+      remaining: null,
+      upgradeOptions: getUpgradeOptions(planId)
     };
   }
 
@@ -145,20 +147,30 @@ export async function checkInvoiceLimit(userId) {
   const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
 
   // Count ALL invoices emitted this month (not just authorized ones)
-  // This includes: autorizada, enviada, processando, pendente, rejeitada, cancelada
-  // We exclude only 'rascunho' (draft) as those are not actual emission attempts
+  // Include invoices with dataEmissao in range, OR (no dataEmissao but createdAt this month) so we don't miss any
   const invoiceCount = await prisma.invoice.count({
     where: {
       company: {
         userId: userId
       },
-      status: { 
+      status: {
         notIn: ['rascunho'] // Only exclude drafts - all other statuses count towards limit
       },
-      dataEmissao: {
-        gte: startOfMonth,
-        lte: endOfMonth
-      }
+      OR: [
+        {
+          dataEmissao: {
+            gte: startOfMonth,
+            lte: endOfMonth
+          }
+        },
+        {
+          dataEmissao: null,
+          createdAt: {
+            gte: startOfMonth,
+            lte: endOfMonth
+          }
+        }
+      ]
     }
   });
 
@@ -166,6 +178,7 @@ export async function checkInvoiceLimit(userId) {
     allowed: invoiceCount < planConfig.maxInvoicesPerMonth,
     unlimited: false,
     current: invoiceCount,
+    used: invoiceCount, // alias for frontend Dashboard "Notas Fiscais" usage display
     max: planConfig.maxInvoicesPerMonth,
     remaining: Math.max(0, planConfig.maxInvoicesPerMonth - invoiceCount),
     upgradeOptions: getUpgradeOptions(planId)

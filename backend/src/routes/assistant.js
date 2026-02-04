@@ -243,10 +243,18 @@ router.post('/process', assistantLimiter, [
  */
 function messageMatchesPriorityIntent(message) {
   const lower = message.toLowerCase();
-  // Emitir nota / nova nota
-  if (/emitir\s+nota|nova\s+nota/i.test(message)) return true;
+  const trimmedMessage = message.trim();
+  
+  // Emitir nota / emitir uma nota / nova nota
+  if (/emitir\s+(?:uma\s+)?nota|nova\s+nota/i.test(message)) return true;
   // Criar cliente
   if (/criar\s+cliente\s+.+\s+(?:cpf|cnpj)/i.test(message)) return true;
+  
+  // Standalone CPF/CNPJ input (e.g., "Erina Silva CPF 123.234.789-00")
+  // This handles responses to client creation requests without "criar cliente" prefix
+  const standaloneClientPattern = /^(.+?)\s+(?:cpf|cnpj)\s*:?\s*(\d{3}\.?\d{3}\.?\d{3}-?\d{2}|\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2}|\d{11}|\d{14})$/i;
+  if (standaloneClientPattern.test(trimmedMessage)) return true;
+  
   // Listar clientes
   if (/listar\s+cliente|meus\s+clientes|ver\s+clientes|clientes\s+cadastrados/i.test(lower)) return true;
   // Nota(s) de/para [cliente] (client search), not emitir
@@ -265,8 +273,22 @@ function messageMatchesPriorityIntent(message) {
   if (lower.includes('faturamento') || lower.includes('quanto faturei')) return true;
   // Listar notas
   if (lower.includes('listar') && (lower.includes('nota') || lower.includes('notas'))) return true;
-  // Impostos / DAS / Ver impostos
-  if (lower.includes('imposto') || lower.includes('das') || lower.includes('tributo')) return true;
+  
+  // Impostos / DAS / Ver impostos (SPECIFIC patterns to avoid false positives)
+  // "das" is a common word in Portuguese, so we need careful matching
+  const containsDocumentPattern = /\d{3}\.?\d{3}\.?\d{3}[-.]?\d{2}|\d{2}\.?\d{3}\.?\d{3}[\/\-]?\d{4}[-.]?\d{2}/.test(message);
+  if (!containsDocumentPattern) {
+    // Specific tax keywords
+    if (lower.includes('imposto') || lower.includes('tributo')) return true;
+    // DAS with specific context
+    if (/(?:ver|consultar|quais?|meus?|minhas?|mostrar?|listar?)\s+(?:os?\s+)?(?:das|guias?)/i.test(message)) return true;
+    if (/(?:das|guias?)\s+(?:pendentes?|pagos?|vencidos?|atrasados?|do\s+m[eê]s)/i.test(lower)) return true;
+    if (/guias?\s+(?:das|de\s+pagamento)/i.test(lower)) return true;
+    if (/(?:pagar|pagamento)\s+(?:do?\s+)?(?:das|imposto)/i.test(lower)) return true;
+    if (/das\s+(?:mei|simples|mensal)/i.test(lower)) return true;
+    if (/^(?:das|impostos?|tributos?)$/i.test(trimmedMessage)) return true; // Exact match
+  }
+  
   // Cancelar nota
   if (lower.includes('cancelar') && lower.includes('nota')) return true;
   // Ajuda / oi / olá
@@ -657,6 +679,83 @@ async function processWithPatternMatching(message, userId, companyId, res) {
   }
 
   // ========================================
+  // PATTERN: Standalone CPF/CNPJ input (response to client creation request)
+  // Handles: "Nome CPF XXX" or "Nome CNPJ XXX" without "criar cliente" prefix
+  // This pattern catches user responses like "Erina Silva CPF 123.234.789-00"
+  // ========================================
+  const standaloneClientPattern = /^(.+?)\s+(?:cpf|cnpj)\s*:?\s*(\d{3}\.?\d{3}\.?\d{3}-?\d{2}|\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2}|\d{11}|\d{14})$/i;
+  const standaloneClientMatch = message.trim().match(standaloneClientPattern);
+  
+  // Only process if it looks like a client registration (not "criar cliente" which is handled above)
+  if (standaloneClientMatch && !lowerMessage.includes('criar cliente')) {
+    const clienteNome = standaloneClientMatch[1].trim();
+    const documento = standaloneClientMatch[2].replace(/\D/g, '');
+    
+    // Validate document length
+    if (documento.length !== 11 && documento.length !== 14) {
+      const responseData = {
+        success: false,
+        action: null,
+        explanation: `O documento informado é inválido. CPF deve ter 11 dígitos e CNPJ deve ter 14 dígitos.\n\nPor favor, tente novamente com o formato correto:\n• CPF: 123.456.789-00\n• CNPJ: 12.345.678/0001-00`,
+        requiresConfirmation: false
+      };
+      res.json(responseData);
+      return responseData;
+    }
+    
+    const tipoPessoa = documento.length === 11 ? 'pf' : 'pj';
+    
+    // Check if client already exists
+    const existingClient = await prisma.client.findFirst({
+      where: {
+        userId,
+        documento
+      }
+    });
+    
+    if (existingClient) {
+      const responseData = {
+        success: true,
+        action: { type: 'cliente_existente', data: { id: existingClient.id, nome: existingClient.nome, documento: existingClient.documento } },
+        explanation: `Já existe um cliente cadastrado com este ${tipoPessoa === 'pf' ? 'CPF' : 'CNPJ'}: **${existingClient.nome}**.\n\nVocê pode usá-lo para emitir notas. Diga "Emitir nota de R$ [valor] para ${existingClient.nome}".`,
+        requiresConfirmation: false
+      };
+      res.json(responseData);
+      return responseData;
+    }
+    
+    // Create the client
+    try {
+      const newClient = await prisma.client.create({
+        data: {
+          userId,
+          nome: clienteNome,
+          documento,
+          tipoPessoa
+        }
+      });
+      
+      const responseData = {
+        success: true,
+        action: { type: 'cliente_criado', data: { id: newClient.id, nome: newClient.nome, documento: newClient.documento } },
+        explanation: `✅ Cliente **${newClient.nome}** cadastrado com sucesso!\n\n${tipoPessoa === 'pf' ? 'CPF' : 'CNPJ'}: ${formatDocumentForDisplay(documento, tipoPessoa)}\n\nAgora você pode emitir notas para este cliente. Diga "Emitir nota de R$ [valor] para ${newClient.nome}".`,
+        requiresConfirmation: false
+      };
+      res.json(responseData);
+      return responseData;
+    } catch (error) {
+      const responseData = {
+        success: false,
+        action: null,
+        explanation: `Erro ao cadastrar cliente: ${error.message}`,
+        requiresConfirmation: false
+      };
+      res.json(responseData);
+      return responseData;
+    }
+  }
+
+  // ========================================
   // PATTERN: List clients
   // ========================================
   if (lowerMessage.includes('listar cliente') || lowerMessage.includes('meus clientes') || 
@@ -696,15 +795,103 @@ async function processWithPatternMatching(message, userId, companyId, res) {
   // ========================================
   // PATTERN: Issue invoice (existing) - Now with client lookup
   // ========================================
-  const invoicePattern = /emitir\s+nota\s+(?:de\s+)?r?\$?\s*(\d+(?:[.,]\d+)?)\s+(?:para|para\s+o?\s*)?(.+)/i;
-  const invoiceMatch = message.match(invoicePattern);
+  // Match "emitir nota" or "emitir uma nota" + value + "para" + client (optional extra text after client)
+  const invoicePattern = /emitir\s+(?:uma\s+)?nota\s+(?:de\s+)?r?\$?\s*(\d+(?:[.,]\d+)?)\s+(?:para|para\s+o?\s*)(.+?)(?:,|$)/i;
+  const invoicePatternAlt = /emitir\s+(?:uma\s+)?nota\s+(?:de\s+)?r?\$?\s*(\d+(?:[.,]\d+)?)\s+(?:para|para\s+o?\s*)(.+)/i;
+  const invoiceMatch = message.match(invoicePattern) || message.match(invoicePatternAlt);
 
-  if (invoiceMatch || lowerMessage.includes('emitir nota') || lowerMessage.includes('nova nota')) {
+  if (invoiceMatch || lowerMessage.includes('emitir nota') || lowerMessage.includes('emitir uma nota') || lowerMessage.includes('nova nota')) {
     let valor = invoiceMatch ? parseFloat(invoiceMatch[1].replace(',', '.')) : null;
-    let clienteNome = invoiceMatch ? invoiceMatch[2].trim() : null;
+    // Client name may be followed by ", referente a X, pela empresa Y" - take only the name part
+    let clienteNome = invoiceMatch ? invoiceMatch[2].trim().split(/\s*,\s*/)[0].trim() : null;
 
     if (valor && clienteNome) {
-      // Search for existing clients matching the name
+      // Extract CNPJ/CPF from the full message if mentioned
+      // Patterns: "pela empresa 34.172.396/0001-76", "CNPJ 34.172.396/0001-76", "CPF 123.456.789-00"
+      // CNPJ format: XX.XXX.XXX/XXXX-XX (14 digits)
+      // CPF format: XXX.XXX.XXX-XX (11 digits)
+      const cnpjPattern = /(?:pela\s+empresa|cnpj|empresa)\s*:?\s*(\d{2}\.?\d{3}\.?\d{3}[\/\-]?\d{4}-?\d{2})/i;
+      const cpfPattern = /(?:cpf)\s*:?\s*(\d{3}\.?\d{3}\.?\d{3}-?\d{2})/i;
+      const cnpjMatch = message.match(cnpjPattern);
+      const cpfMatch = message.match(cpfPattern);
+      
+      const mentionedCnpj = cnpjMatch ? cnpjMatch[1].replace(/\D/g, '') : null;
+      const mentionedCpf = cpfMatch ? cpfMatch[1].replace(/\D/g, '') : null;
+      
+      // Validate extracted documents have correct length
+      const validCnpj = mentionedCnpj && mentionedCnpj.length === 14 ? mentionedCnpj : null;
+      const validCpf = mentionedCpf && mentionedCpf.length === 11 ? mentionedCpf : null;
+      const mentionedDocument = validCnpj || validCpf;
+      const mentionedDocumentType = validCnpj ? 'pj' : (validCpf ? 'pf' : null);
+
+      // If a document (CNPJ/CPF) is explicitly mentioned, prioritize searching by that document
+      if (mentionedDocument) {
+        const clientByDocument = await prisma.client.findFirst({
+          where: {
+            userId,
+            ativo: true,
+            documento: mentionedDocument,
+            tipoPessoa: mentionedDocumentType
+          }
+        });
+
+        if (clientByDocument) {
+          // Found client with the mentioned document - use it
+          const valorFormatado = valor.toLocaleString('pt-BR', { minimumFractionDigits: 2 });
+          const docLabel = clientByDocument.tipoPessoa === 'pf' ? 'CPF' : 'CNPJ';
+          const docFormatado = formatDocumentForDisplay(clientByDocument.documento, clientByDocument.tipoPessoa);
+          const responseData = {
+            success: true,
+            action: {
+              type: 'emitir_nfse',
+              data: {
+                cliente_nome: clientByDocument.nome,
+                cliente_documento: clientByDocument.documento,
+                descricao_servico: 'Serviço prestado',
+                valor: valor,
+                aliquota_iss: 5,
+                client_id: clientByDocument.id
+              }
+            },
+            explanation: `📝 **Nota fiscal preparada:**\n\n` +
+              `• **Valor:** R$ ${valorFormatado}\n` +
+              `• **Cliente:** ${clientByDocument.nome}\n` +
+              `• **${docLabel}:** ${docFormatado}\n` +
+              `• **Serviço:** Serviço prestado\n` +
+              `• **ISS:** 5%\n\n` +
+              `✅ Deseja confirmar a emissão desta nota?`,
+            requiresConfirmation: true
+          };
+          res.json(responseData);
+          return responseData;
+        } else {
+          // Document mentioned but not found - ask user to create client with that document
+          const docLabel = mentionedDocumentType === 'pf' ? 'CPF' : 'CNPJ';
+          const docFormatado = formatDocumentForDisplay(mentionedDocument, mentionedDocumentType);
+          const responseData = {
+            success: true,
+            action: {
+              type: 'criar_cliente_e_emitir',
+              data: {
+                cliente_nome: clienteNome,
+                cliente_documento: mentionedDocument,
+                descricao_servico: 'Serviço prestado',
+                valor: valor,
+                aliquota_iss: 5,
+                tipo_pessoa: mentionedDocumentType
+              }
+            },
+            explanation: `Você mencionou o ${docLabel} ${docFormatado}, mas não encontrei um cliente cadastrado com esse documento.\n\n` +
+              `Para emitir a nota de R$ ${valor.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} para "${clienteNome}" com ${docLabel} ${docFormatado}, preciso cadastrar este cliente primeiro.\n\n` +
+              `Deseja criar o cliente "${clienteNome}" com ${docLabel} ${docFormatado}? Ou diga "criar cliente ${clienteNome} ${docLabel} ${docFormatado}" para cadastrá-lo.`,
+            requiresConfirmation: false
+          };
+          res.json(responseData);
+          return responseData;
+        }
+      }
+
+      // No document mentioned - search by name only (original logic)
       const matchingClients = await prisma.client.findMany({
         where: {
           userId,
@@ -847,9 +1034,31 @@ async function processWithPatternMatching(message, userId, companyId, res) {
   }
 
   // ========================================
-  // PATTERN: Check taxes
+  // PATTERN: Check taxes (DAS / Impostos)
+  // IMPORTANT: This pattern must be SPECIFIC to avoid false positives
+  // "das" is a common word in Portuguese, so we need careful matching
   // ========================================
-  if (lowerMessage.includes('imposto') || lowerMessage.includes('das') || lowerMessage.includes('tributo')) {
+  
+  // Check if message contains CPF/CNPJ patterns (to avoid false positives)
+  const containsDocumentPattern = /\d{3}\.?\d{3}\.?\d{3}[-.]?\d{2}|\d{2}\.?\d{3}\.?\d{3}[\/\-]?\d{4}[-.]?\d{2}/.test(message);
+  
+  // Specific tax-related patterns (more restrictive)
+  const taxKeywordPatterns = [
+    /(?:ver|consultar|quais?|meus?|minhas?|mostrar?|listar?)\s+(?:os?\s+)?(?:impostos?|das|tributos?|guias?)/i,
+    /(?:impostos?|das|tributos?|guias?)\s+(?:pendentes?|pagos?|vencidos?|atrasados?|do\s+m[eê]s)/i,
+    /guias?\s+(?:das|de\s+pagamento)/i,
+    /(?:pagar|pagamento)\s+(?:do?\s+)?(?:das|imposto)/i,
+    /das\s+(?:mei|simples|mensal)/i,
+    /^(?:das|impostos?|tributos?)$/i  // Exact match for single word
+  ];
+  
+  const isTaxQuery = taxKeywordPatterns.some(pattern => pattern.test(lowerMessage));
+  
+  // Also match if "imposto" or "tributo" appears (these are more specific than "das")
+  // But NOT if the message contains a document pattern (CPF/CNPJ)
+  const hasSpecificTaxWord = (lowerMessage.includes('imposto') || lowerMessage.includes('tributo')) && !containsDocumentPattern;
+  
+  if ((isTaxQuery || hasSpecificTaxWord) && !containsDocumentPattern) {
     const responseData = {
       success: true,
       action: { type: 'consultar_impostos' },

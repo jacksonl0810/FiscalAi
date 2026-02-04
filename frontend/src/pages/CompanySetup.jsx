@@ -331,7 +331,7 @@ export default function CompanySetup() {
       queryClient.invalidateQueries({ queryKey: ['companies'] });
       
       if (isNewCompany) {
-        toast.success('✓ Empresa Criada!\n\nRedirecionando para o Dashboard...', {
+        toast.success('✓ Empresa Criada!\n\nRedirecionando para Minhas Empresas...', {
           duration: 2000,
           style: {
             background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)',
@@ -344,7 +344,7 @@ export default function CompanySetup() {
           },
         });
         setTimeout(() => {
-          navigate(createPageUrl('Dashboard'));
+          navigate(createPageUrl('CompanySetup'));
         }, 1500);
       }
     },
