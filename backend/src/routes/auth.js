@@ -651,11 +651,17 @@ router.get('/google/callback', asyncHandler(async (req, res) => {
       }
     });
 
-    // Redirect to frontend with tokens
+    // Redirect to frontend with tokens and user data
+    // Including user data avoids an extra API call on the frontend
     const params = new URLSearchParams({
       token,
       refreshToken,
       isNewUser: isNewUser.toString(),
+      // Include user data to avoid extra /api/auth/me call
+      userId: user.id,
+      userEmail: user.email,
+      userName: user.name || '',
+      userAvatar: user.avatar || '',
     });
 
     res.redirect(`${frontendUrl}/auth/google/callback?${params.toString()}`);

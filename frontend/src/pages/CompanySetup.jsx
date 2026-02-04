@@ -179,27 +179,48 @@ export default function CompanySetup() {
 
           // Handle different registration outcomes
           if (nuvemResult.status === 'success' || nuvemResult.nuvemFiscalId) {
-            const isExisting = nuvemResult.alreadyExists || nuvemResult.status === 'not_connected';
+            const isExisting = nuvemResult.alreadyExists === true;
+            const requiresCertVerification = nuvemResult.requiresCertificateVerification === true;
             
             if (isExisting) {
-              // Company already exists - this is NOT an error, just needs credentials
-              toast.success('✓ Empresa Encontrada na Nuvem Fiscal!\n\nA empresa já estava cadastrada. Configure certificado digital ou credenciais municipais para conectar.', {
-                duration: 6000,
-                style: {
-                  background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)',
-                  border: '1px solid rgba(251, 146, 60, 0.3)',
-                  borderRadius: '16px',
-                  padding: '16px',
-                  boxShadow: '0 10px 40px rgba(251, 146, 60, 0.2)',
-                  color: '#fff',
-                  whiteSpace: 'pre-line',
-                },
-              });
-              await notificationsService.create({
-                titulo: "Empresa vinculada",
-                mensagem: "Empresa encontrada na Nuvem Fiscal! Configure certificado digital ou credenciais municipais para conectar.",
-                tipo: "info"
-              });
+              // Company already exists - REQUIRES certificate verification for security
+              if (requiresCertVerification) {
+                toast.warning('⚠️ Verificação de Propriedade Necessária\n\nEsta empresa já está cadastrada na Nuvem Fiscal. Para vincular à sua conta, faça upload do certificado digital (e-CNPJ) para verificar que você é o proprietário.\n\nO CNPJ do certificado deve corresponder ao CNPJ da empresa.', {
+                  duration: 10000,
+                  style: {
+                    background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)',
+                    border: '1px solid rgba(251, 146, 60, 0.5)',
+                    borderRadius: '16px',
+                    padding: '16px',
+                    boxShadow: '0 10px 40px rgba(251, 146, 60, 0.3)',
+                    color: '#fff',
+                    whiteSpace: 'pre-line',
+                  },
+                });
+                await notificationsService.create({
+                  titulo: "Verificação de propriedade necessária",
+                  mensagem: "Esta empresa já existe na Nuvem Fiscal. Faça upload do certificado digital (e-CNPJ) para verificar a propriedade e vincular à sua conta.",
+                  tipo: "alerta"
+                });
+              } else {
+                toast.success('✓ Empresa Encontrada na Nuvem Fiscal!\n\nA empresa já estava cadastrada. Configure certificado digital para conectar.', {
+                  duration: 6000,
+                  style: {
+                    background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)',
+                    border: '1px solid rgba(251, 146, 60, 0.3)',
+                    borderRadius: '16px',
+                    padding: '16px',
+                    boxShadow: '0 10px 40px rgba(251, 146, 60, 0.2)',
+                    color: '#fff',
+                    whiteSpace: 'pre-line',
+                  },
+                });
+                await notificationsService.create({
+                  titulo: "Empresa vinculada",
+                  mensagem: "Empresa encontrada na Nuvem Fiscal! Configure certificado digital para conectar.",
+                  tipo: "info"
+                });
+              }
             } else {
               // New company registered successfully
             toast.success('✓ Integração Fiscal Ativada!\n\nEmpresa registrada com sucesso na Nuvem Fiscal', {
