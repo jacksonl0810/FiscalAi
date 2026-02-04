@@ -96,7 +96,7 @@ const validateRequest = (req, res, next) => {
 router.post('/stripe-webhook', 
   express.raw({ type: 'application/json' }),
   asyncHandler(async (req, res) => {
-    const startTime = Date.now();
+  const startTime = Date.now();
     const sig = req.headers['stripe-signature'];
     
     if (!sig) {
@@ -104,8 +104,8 @@ router.post('/stripe-webhook',
       return res.status(400).json({ error: 'Missing signature' });
     }
 
-    let event;
-    try {
+  let event;
+  try {
       event = stripeSDK.constructWebhookEvent(
         req.body,
         sig,
@@ -118,8 +118,8 @@ router.post('/stripe-webhook',
 
     console.log('[Stripe Webhook] Received event:', event.type, 'ID:', event.id);
 
-    try {
-      let result = null;
+  try {
+    let result = null;
 
       console.log('[Stripe Webhook] Switching on event type:', event.type);
 
@@ -130,53 +130,53 @@ router.post('/stripe-webhook',
         
         case 'invoice.paid':
           result = await onInvoicePaid(event.data.object);
-          break;
-        
+        break;
+
         case 'invoice.payment_failed':
           result = await onInvoicePaymentFailed(event.data.object);
-          break;
-        
+        break;
+
         // ═══════════════════════════════════════════════════════════════════════
         // ✅ SUBSCRIPTION LIFECYCLE EVENTS
         // ═══════════════════════════════════════════════════════════════════════
         
         case 'customer.subscription.updated':
           result = await onSubscriptionUpdated(event.data.object);
-          break;
+        break;
 
         case 'customer.subscription.deleted':
           result = await onSubscriptionDeleted(event.data.object);
-          break;
+        break;
 
         case 'customer.subscription.trial_will_end':
           result = await onSubscriptionTrialWillEnd(event.data.object);
-          break;
+        break;
 
         case 'customer.subscription.created':
           // Acknowledge only - wait for invoice.paid for activation
           console.log('[Stripe Webhook] Subscription created:', event.data.object.id);
           result = { status: 'acknowledged', message: 'Subscription created, waiting for invoice.paid' };
-          break;
+        break;
 
-        default:
+      default:
           // Ignore all other events
           result = { status: 'ignored', message: `Event type ${event.type} not handled` };
-      }
+    }
 
-      const processingTime = Date.now() - startTime;
+    const processingTime = Date.now() - startTime;
       console.log('[Stripe Webhook] Processed in', processingTime, 'ms');
 
-      // Always return 200 to acknowledge receipt
-      res.status(200).json({
+    // Always return 200 to acknowledge receipt
+    res.status(200).json({
         received: true,
         eventType: event.type,
-        processingTime: `${processingTime}ms`
-      });
-    } catch (error) {
+      processingTime: `${processingTime}ms`
+    });
+  } catch (error) {
       console.error('[Stripe Webhook] Processing error:', error);
-      
-      // Return 200 to acknowledge receipt and prevent infinite retries
-      res.status(200).json({
+
+    // Return 200 to acknowledge receipt and prevent infinite retries
+    res.status(200).json({
         received: true,
         error: error.message
       });
@@ -293,28 +293,28 @@ router.post('/process-payment',
   validateRequest, 
   asyncHandler(async (req, res) => {
     const { plan_id, billing_cycle = 'monthly', payment_method_id, cpf_cnpj, phone, billing_address } = req.body;
-    const userId = req.user.id;
+  const userId = req.user.id;
 
     console.log('[Stripe] Processing payment for user:', userId, 'plan:', plan_id, 'cycle:', billing_cycle);
 
-    // Get user data
-    const user = await prisma.user.findUnique({
-      where: { id: userId }
-    });
+  // Get user data
+  const user = await prisma.user.findUnique({
+    where: { id: userId }
+  });
 
-    if (!user) {
+  if (!user) {
       throw new AppError('User not found', 404, 'USER_NOT_FOUND');
-    }
+  }
 
-    // Import plan configuration
+  // Import plan configuration
     const { getPlanConfig, getPlanPrice, getStripePriceId, normalizePlanId } = await import('../config/plans.js');
-    
+  
     // Normalize plan ID
-    const normalizedPlanId = normalizePlanId(plan_id);
-    
-    // Get plan configuration
-    const planConfig = getPlanConfig(normalizedPlanId);
-    if (!planConfig) {
+  const normalizedPlanId = normalizePlanId(plan_id);
+  
+  // Get plan configuration
+  const planConfig = getPlanConfig(normalizedPlanId);
+  if (!planConfig) {
       throw new AppError('Invalid plan', 400, 'INVALID_PLAN');
     }
 
@@ -400,10 +400,10 @@ router.post('/process-payment',
       const dbStatus = statusMap[subscriptionResult.status] || 'PENDING';
 
       let subscription;
-      if (existingSubscription) {
-        subscription = await prisma.subscription.update({
-          where: { id: existingSubscription.id },
-          data: {
+    if (existingSubscription) {
+      subscription = await prisma.subscription.update({
+        where: { id: existingSubscription.id },
+        data: {
             status: dbStatus,
             stripeSubscriptionId: subscriptionResult.subscriptionId,
             stripePriceId: stripePriceId,
@@ -415,12 +415,12 @@ router.post('/process-payment',
             nextBillingAt: subscriptionResult.currentPeriodEnd,
             canceledAt: null,
             trialEndsAt: subscriptionResult.trialEnd
-          }
-        });
-      } else {
-        subscription = await prisma.subscription.create({
-          data: {
-            userId,
+        }
+      });
+    } else {
+      subscription = await prisma.subscription.create({
+        data: {
+          userId,
             status: dbStatus,
             stripeSubscriptionId: subscriptionResult.subscriptionId,
             stripePriceId: stripePriceId,
@@ -431,16 +431,16 @@ router.post('/process-payment',
             currentPeriodEnd: subscriptionResult.currentPeriodEnd,
             nextBillingAt: subscriptionResult.currentPeriodEnd,
             trialEndsAt: subscriptionResult.trialEnd
-          }
-        });
-      }
+        }
+      });
+    }
 
       // Step 5: Return response with client secret if payment confirmation needed
       const isPaid = subscriptionResult.status === 'active';
       
       if (isPaid) {
         await createNotificationWithIdempotency({
-          userId,
+        userId,
           titulo: 'Assinatura Ativada!',
           mensagem: `Seu plano ${planConfig.name} foi ativado com sucesso. Aproveite todos os recursos!`,
           tipo: 'sucesso',
@@ -496,28 +496,28 @@ router.post('/start',
   validateRequest, 
   asyncHandler(async (req, res) => {
     const { plan_id, billing_cycle = 'monthly' } = req.body;
-    const userId = req.user.id;
+  const userId = req.user.id;
 
-    const user = await prisma.user.findUnique({
+  const user = await prisma.user.findUnique({
       where: { id: userId }
-    });
+  });
 
-    if (!user) {
+  if (!user) {
       throw new AppError('Usuário não encontrado', 404, 'NOT_FOUND');
-    }
+  }
 
     const { getPlanConfig, normalizePlanId } = await import('../config/plans.js');
-    const normalizedPlanId = normalizePlanId(plan_id);
-    const planConfig = getPlanConfig(normalizedPlanId);
+  const normalizedPlanId = normalizePlanId(plan_id);
+  const planConfig = getPlanConfig(normalizedPlanId);
     
-    if (!planConfig) {
+  if (!planConfig) {
       throw new AppError('Plano não encontrado', 400, 'INVALID_PLAN');
     }
 
     // Handle trial differently - activate immediately (no payment needed)
     if (normalizedPlanId === 'trial') {
       if (user.hasUsedTrial) {
-        throw new AppError(
+    throw new AppError(
           'Você já utilizou seu período de teste gratuito. Por favor, escolha um plano pago para continuar.',
           403,
           'TRIAL_ALREADY_USED'
@@ -529,35 +529,35 @@ router.post('/start',
       periodEnd.setDate(periodEnd.getDate() + 7);
 
       const existingSubscription = await prisma.subscription.findUnique({
-        where: { userId }
-      });
+      where: { userId }
+    });
 
-      let subscription;
-      if (existingSubscription) {
-        subscription = await prisma.subscription.update({
-          where: { id: existingSubscription.id },
-          data: {
+    let subscription;
+    if (existingSubscription) {
+      subscription = await prisma.subscription.update({
+        where: { id: existingSubscription.id },
+        data: {
             status: 'TRIAL',
             planId: 'trial',
             currentPeriodStart: now,
             currentPeriodEnd: periodEnd,
             trialEndsAt: periodEnd,
-            canceledAt: null
-          }
-        });
-      } else {
-        subscription = await prisma.subscription.create({
-          data: {
-            userId,
+          canceledAt: null
+        }
+      });
+    } else {
+      subscription = await prisma.subscription.create({
+        data: {
+          userId,
             status: 'TRIAL',
             planId: 'trial',
             stripeSubscriptionId: `trial_${Date.now()}_${userId.slice(0, 8)}`,
             currentPeriodStart: now,
             currentPeriodEnd: periodEnd,
             trialEndsAt: periodEnd
-          }
-        });
-      }
+        }
+      });
+    }
 
       await prisma.user.update({
         where: { id: userId },
@@ -567,8 +567,8 @@ router.post('/start',
         }
       });
 
-      await createNotificationWithIdempotency({
-        userId,
+    await createNotificationWithIdempotency({
+      userId,
         titulo: 'Bem-vindo à MAY!',
         mensagem: 'Seu trial de 7 dias começou. Aproveite todas as funcionalidades!',
         tipo: 'sucesso',
@@ -579,7 +579,7 @@ router.post('/start',
 
       sendSuccess(res, 'Trial started', {
         checkout_url: checkoutUrl,
-        subscription_id: subscription.id,
+      subscription_id: subscription.id,
         plan_id: 'trial',
         status: 'TRIAL'
       });
@@ -653,15 +653,15 @@ router.get('/status', asyncHandler(async (req, res) => {
   const accountAgeDays = Math.floor((Date.now() - new Date(user.createdAt)) / (1000 * 60 * 60 * 24));
   const isInTrialPeriod = accountAgeDays <= trialDays;
 
-  if (subscription) {
-    status = subscription.status;
+    if (subscription) {
+      status = subscription.status;
     planId = subscription.planId;
-    currentPeriodEnd = subscription.currentPeriodEnd;
-  
-    if (currentPeriodEnd) {
-      const now = new Date();
-      daysRemaining = Math.max(0, Math.ceil((new Date(currentPeriodEnd) - now) / (1000 * 60 * 60 * 24)));
-    }
+      currentPeriodEnd = subscription.currentPeriodEnd;
+    
+      if (currentPeriodEnd) {
+        const now = new Date();
+        daysRemaining = Math.max(0, Math.ceil((new Date(currentPeriodEnd) - now) / (1000 * 60 * 60 * 24)));
+      }
   } else if (user) {
     if (isInTrialPeriod) {
       status = 'trial';
@@ -790,19 +790,19 @@ router.get('/current', asyncHandler(async (req, res) => {
 router.post('/cancel', 
   subscriptionLimiter,
   asyncHandler(async (req, res) => {
-    const subscription = await prisma.subscription.findUnique({
-      where: { userId: req.user.id }
-    });
+  const subscription = await prisma.subscription.findUnique({
+    where: { userId: req.user.id }
+  });
 
-    if (!subscription) {
-      throw new AppError('Assinatura não encontrada', 404, 'NOT_FOUND');
-    }
+  if (!subscription) {
+    throw new AppError('Assinatura não encontrada', 404, 'NOT_FOUND');
+  }
 
     if (subscription.status === 'CANCELED') {
-      throw new AppError('Assinatura já está cancelada', 400, 'ALREADY_CANCELED');
-    }
+    throw new AppError('Assinatura já está cancelada', 400, 'ALREADY_CANCELED');
+  }
 
-    try {
+  try {
       // Cancel in Stripe if subscription ID exists
       if (subscription.stripeSubscriptionId && !subscription.stripeSubscriptionId.startsWith('trial_')) {
         await stripeSDK.cancelSubscription(subscription.stripeSubscriptionId, false); // Cancel at period end
@@ -810,31 +810,31 @@ router.post('/cancel',
       }
 
       // Update in database
-      await prisma.subscription.update({
-        where: { id: subscription.id },
-        data: {
+    await prisma.subscription.update({
+      where: { id: subscription.id },
+      data: {
           status: 'CANCELED',
-          canceledAt: new Date()
-        }
-      });
+        canceledAt: new Date()
+      }
+    });
 
-      await prisma.notification.create({
-        data: {
-          userId: req.user.id,
-          titulo: 'Assinatura Cancelada',
-          mensagem: 'Sua assinatura foi cancelada. Você ainda terá acesso até o final do período pago.',
-          tipo: 'info'
-        }
-      });
+    await prisma.notification.create({
+      data: {
+        userId: req.user.id,
+        titulo: 'Assinatura Cancelada',
+        mensagem: 'Sua assinatura foi cancelada. Você ainda terá acesso até o final do período pago.',
+        tipo: 'info'
+      }
+    });
 
       sendSuccess(res, 'Assinatura cancelada com sucesso', {
         canceledAt: new Date(),
         accessUntil: subscription.currentPeriodEnd
       });
-    } catch (error) {
+  } catch (error) {
       console.error('[Subscription] Cancel error:', error);
-      throw new AppError(error.message || 'Falha ao cancelar assinatura', 500, 'SUBSCRIPTION_CANCEL_ERROR');
-    }
+    throw new AppError(error.message || 'Falha ao cancelar assinatura', 500, 'SUBSCRIPTION_CANCEL_ERROR');
+  }
   })
 );
 
@@ -848,7 +848,7 @@ router.post('/reactivate',
     const subscription = await prisma.subscription.findUnique({
       where: { userId: req.user.id }
     });
-
+    
     if (!subscription) {
       throw new AppError('Assinatura não encontrada', 404, 'NOT_FOUND');
     }
@@ -862,22 +862,22 @@ router.post('/reactivate',
         await stripeSDK.reactivateSubscription(subscription.stripeSubscriptionId);
       }
 
-      await prisma.subscription.update({
-        where: { id: subscription.id },
-        data: {
+  await prisma.subscription.update({
+    where: { id: subscription.id },
+    data: {
           status: 'ACTIVE',
           canceledAt: null
-        }
-      });
+    }
+  });
 
-      await prisma.notification.create({
-        data: {
+  await prisma.notification.create({
+    data: {
           userId: req.user.id,
           titulo: 'Assinatura Reativada!',
           mensagem: 'Sua assinatura foi reativada com sucesso.',
-          tipo: 'sucesso'
-        }
-      });
+      tipo: 'sucesso'
+    }
+  });
 
       sendSuccess(res, 'Assinatura reativada com sucesso');
     } catch (error) {

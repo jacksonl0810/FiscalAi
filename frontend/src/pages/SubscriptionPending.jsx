@@ -38,105 +38,98 @@ export default function SubscriptionPending() {
 
   const hasActiveTrial = user?.is_in_trial && user?.trial_days_remaining > 0;
 
-  // Single effect to handle polling - only runs once on mount
+  // Refs for navigate/refresh so polling effect doesn't depend on them (avoids effect re-run killing the interval)
+  const navigateRef = useRef(navigate);
+  const refreshUserRef = useRef(refreshUser);
+  const planIdRef = useRef(planId);
+  const queryClientRef = useRef(queryClient);
+  useEffect(() => {
+    navigateRef.current = navigate;
+    refreshUserRef.current = refreshUser;
+    planIdRef.current = planId;
+    queryClientRef.current = queryClient;
+  }, [navigate, refreshUser, planId, queryClient]);
+
+  // Single effect to handle polling - runs once on mount so the interval is never cleared by effect re-runs
   useEffect(() => {
     // Prevent multiple initializations
-    if (hasStartedRef.current) {
-        return;
-      }
+    if (hasStartedRef.current) return;
     hasStartedRef.current = true;
 
-    // Don't rely on cached user data - always poll API for real-time status
-    // The webhook will update the backend, and polling will detect the change
-        
     const stopPolling = () => {
-            if (intervalRef.current) {
-              clearInterval(intervalRef.current);
-              intervalRef.current = null;
-            }
-            if (timeoutRef.current) {
-              clearTimeout(timeoutRef.current);
-              timeoutRef.current = null;
-            }
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+        timeoutRef.current = null;
+      }
     };
 
     const checkStatus = async () => {
-      // Double-check if polling should continue
       if (!isPollingRef.current || paymentConfirmedRef.current) {
         stopPolling();
-            return;
-          }
-          
+        return;
+      }
+
       try {
         const status = await subscriptionsService.getStatus();
-        setCurrentStatus(status.status);
+        const statusValue = status?.status;
+        setCurrentStatus(statusValue);
 
-        // Backend returns 'ACTIVE' (English); support 'ativo' for backward compatibility
-        const isActive = status.status === 'ACTIVE' || status.status === 'ativo';
+        const isActive = statusValue === 'ACTIVE' || statusValue === 'ativo';
         if (isActive) {
-          // ✅ Immediately stop polling and mark as confirmed
           stopPolling();
           paymentConfirmedRef.current = true;
-          
           setPaymentConfirmed(true);
           setIsPolling(false);
-          
-          toast.success('🎉 Pagamento aprovado! Sua assinatura está ativa.', { 
+
+          toast.success('🎉 Pagamento aprovado! Sua assinatura está ativa.', {
             id: 'payment-success',
-            duration: 5000 
+            duration: 5000
           });
-          
-          const plan = planId || status.plan_id || 'pro';
+
+          const plan = planIdRef.current || status?.plan_id || 'pro';
           const successUrl = `/payment-success?plan=${encodeURIComponent(plan)}&status=paid`;
-          queryClient.invalidateQueries({ queryKey: ['subscription-status'] });
-          // Redirect soon; don't block on refreshUser so Stripe/network errors can't block redirect
+          queryClientRef.current.invalidateQueries({ queryKey: ['subscription-status'] });
           setTimeout(() => {
             try {
-              navigate(successUrl, { replace: true });
+              navigateRef.current(successUrl, { replace: true });
             } finally {
-              refreshUser?.().catch(() => {});
+              refreshUserRef.current?.().catch(() => {});
             }
           }, 600);
           return;
-        } else if (status.status === 'PAST_DUE' || status.status === 'inadimplente') {
-          // ✅ Immediately stop polling
+        }
+        if (statusValue === 'PAST_DUE' || statusValue === 'inadimplente') {
           stopPolling();
           setIsPolling(false);
-          
-          toast.error('Pagamento recusado. Por favor, tente novamente.', { 
-            id: 'payment-failed',
-            duration: 5000 
-          });
-          navigate('/payment-failed');
+          toast.error('Pagamento recusado. Por favor, tente novamente.', { id: 'payment-failed', duration: 5000 });
+          navigateRef.current('/payment-failed');
           return;
-        } else if (status.status === 'trial') {
-          setCurrentStatus('trial');
         }
-        
-          setPollCount(prev => prev + 1);
-      } catch (error) {
-        // Silently ignore errors during polling
+        if (statusValue === 'trial') setCurrentStatus('trial');
+
+        setPollCount(prev => prev + 1);
+      } catch (err) {
+        setPollCount(prev => prev + 1);
       }
     };
 
-    // First check soon so we redirect quickly when already ACTIVE
     const initialDelay = setTimeout(checkStatus, 200);
-    // Poll every 3s so we catch ACTIVE soon after webhook updates (was 10s)
     intervalRef.current = setInterval(checkStatus, 3000);
-
-    // Set up timeout to stop polling after 2 minutes
     timeoutRef.current = setTimeout(() => {
       stopPolling();
-        setIsPolling(false);
+      setIsPolling(false);
     }, 120000);
 
-    // Cleanup function
     return () => {
       clearTimeout(initialDelay);
       stopPolling();
     };
-  }, [user?.subscription_status, navigate, refreshUser]); // Include user status to redirect if already active
-  
+  }, []); // Intentionally empty: run once on mount so polling is never killed by dependency changes
+
   // Separate effect to handle isPolling becoming false
   useEffect(() => {
     if (!isPolling) {
@@ -457,28 +450,36 @@ export default function SubscriptionPending() {
                     setIsPolling(true);
                     setPollCount(0);
                   
-                  // Manual check
+                  // Manual check - same logic as polling (support ACTIVE and ativo)
                   try {
                     const status = await subscriptionsService.getStatus();
-                    setCurrentStatus(status.status);
-                    
-                    if (status.status === 'ativo') {
+                    const statusValue = status?.status;
+                    setCurrentStatus(statusValue);
+
+                    const isActive = statusValue === 'ACTIVE' || statusValue === 'ativo';
+                    if (isActive) {
                       paymentConfirmedRef.current = true;
                       setPaymentConfirmed(true);
                       setIsPolling(false);
-                      toast.success('🎉 Pagamento aprovado! Sua assinatura está ativa.', { 
+                      toast.success('🎉 Pagamento aprovado! Sua assinatura está ativa.', {
                         id: 'payment-success',
-                        duration: 5000 
+                        duration: 5000
                       });
-                      setTimeout(async () => {
-                      if (refreshUser) await refreshUser();
-                        navigate('/dashboard');
-                      }, 2500);
-                    } else if (status.status === 'inadimplente') {
+                      queryClient.invalidateQueries({ queryKey: ['subscription-status'] });
+                      const plan = planId || status?.plan_id || 'pro';
+                      const successUrl = `/payment-success?plan=${encodeURIComponent(plan)}&status=paid`;
+                      setTimeout(() => {
+                        try {
+                          navigate(successUrl, { replace: true });
+                        } finally {
+                          refreshUser?.().catch(() => {});
+                        }
+                      }, 600);
+                    } else if (statusValue === 'PAST_DUE' || statusValue === 'inadimplente') {
                       setIsPolling(false);
-                      toast.error('Pagamento recusado. Por favor, tente novamente.', { 
+                      toast.error('Pagamento recusado. Por favor, tente novamente.', {
                         id: 'payment-failed',
-                        duration: 5000 
+                        duration: 5000
                       });
                       navigate('/payment-failed');
                     }

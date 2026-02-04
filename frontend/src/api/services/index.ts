@@ -1,6 +1,7 @@
 // Export all services
 export { authService } from './auth';
 export { companiesService } from './companies';
+export { clientsService } from './clients';
 export { invoicesService } from './invoices';
 export { notificationsService } from './notifications';
 export { settingsService } from './settings';

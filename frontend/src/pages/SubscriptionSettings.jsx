@@ -96,7 +96,12 @@ export default function SubscriptionSettings() {
     );
   }
 
-  const status = subscriptionStatus?.status || 'trial';
+  // Normalize: API returns ACTIVE/CANCELED (English); UI uses ativo/cancelado
+  let status = subscriptionStatus?.status || 'trial';
+  if (status === 'ACTIVE') status = 'ativo';
+  if (status === 'CANCELED') status = 'cancelado';
+  if (status === 'PAST_DUE') status = 'inadimplente';
+
   const planId = subscriptionStatus?.plan_id || 'trial';
   const plan = planDetails[planId] || planDetails.trial;
   const periodEnd = subscriptionStatus?.current_period_end;
@@ -110,6 +115,7 @@ export default function SubscriptionSettings() {
   };
 
   const currentStatus = statusLabels[status] || statusLabels.trial;
+  const isPaidActive = status === 'ativo';
 
   return (
     <div className="max-w-4xl mx-auto">

@@ -177,6 +177,9 @@ export default function Assistant() {
         setMessages(prev => [...prev, aiResponse]);
       }
 
+      // Keep conversation-history query in sync so refresh shows saved messages
+      queryClient.invalidateQueries({ queryKey: ['conversation-history'] });
+
       // Handle invoice emission action - extract from action or parsed JSON
       if (action?.type === 'emitir_nfse' && action?.data) {
         const invoiceData = action.data;

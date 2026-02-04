@@ -1,8 +1,8 @@
 /**
  * Subscription Access Control Middleware
  * 
- * Restricts access based on user subscription status
- * Only allows access for users with 'ativo' or 'trial' status
+ * Restricts access based on user subscription status.
+ * Accepts both Prisma enum values (ACTIVE, TRIAL, etc.) and legacy Portuguese (ativo, trial).
  * 
  * IMPORTANT: Trial users can access even if they have a pending payment
  * 
@@ -14,18 +14,32 @@
 import { prisma } from '../index.js';
 import { AppError } from './errorHandler.js';
 
+/** Statuses that grant access (DB enum + legacy) */
+const ACTIVE_STATUSES = ['ACTIVE', 'ativo'];
+const TRIAL_STATUSES = ['TRIAL', 'trial'];
+const PENDING_STATUSES = ['PENDING', 'pending'];
+const DELINQUENT_STATUSES = ['PAST_DUE', 'inadimplente'];
+const CANCELED_STATUSES = ['CANCELED', 'cancelado'];
+const EXPIRED_STATUSES = ['EXPIRED', 'expired'];
+
+function isActive(s) { return s && ACTIVE_STATUSES.includes(s); }
+function isTrial(s) { return s && TRIAL_STATUSES.includes(s); }
+function isPending(s) { return s && PENDING_STATUSES.includes(s); }
+function isDelinquent(s) { return s && DELINQUENT_STATUSES.includes(s); }
+function isCanceled(s) { return s && CANCELED_STATUSES.includes(s); }
+
 /**
  * Helper: Check if user is in active trial period
  */
 async function isUserInTrialPeriod(userId) {
   const now = new Date();
   
-  // Check subscription trial
+  // Check subscription trial (enum TRIAL or legacy 'trial')
   const subscription = await prisma.subscription.findUnique({
     where: { userId }
   });
   
-  if (subscription?.status === 'trial' && subscription?.trialEndsAt) {
+  if (subscription && isTrial(subscription.status) && subscription?.trialEndsAt) {
     if (now <= new Date(subscription.trialEndsAt)) {
       return { valid: true, daysRemaining: Math.ceil((new Date(subscription.trialEndsAt) - now) / (1000 * 60 * 60 * 24)) };
     }
@@ -94,13 +108,13 @@ export async function requireActiveSubscription(req, res, next) {
       );
     }
 
-    // ✅ PRIORITY 2: Active subscription
-    if (subscription.status === 'ativo') {
+    // ✅ PRIORITY 2: Active subscription (DB: ACTIVE or legacy: ativo)
+    if (isActive(subscription.status)) {
       return next();
     }
 
-    // ✅ PRIORITY 3: Active trial subscription
-    if (subscription.status === 'trial') {
+    // ✅ PRIORITY 3: Active trial subscription (DB: TRIAL or legacy: trial)
+    if (isTrial(subscription.status)) {
       if (subscription.trialEndsAt && now > new Date(subscription.trialEndsAt)) {
         throw new AppError(
           'Período de teste expirado. Por favor, assine um plano.',
@@ -112,7 +126,7 @@ export async function requireActiveSubscription(req, res, next) {
     }
 
     // ✅ PRIORITY 4: Pending payment - already checked trial above, so block
-    if (subscription.status === 'pending') {
+    if (isPending(subscription.status)) {
       throw new AppError(
         'Pagamento pendente. Aguarde a confirmação ou tente novamente.',
         403,
@@ -120,8 +134,8 @@ export async function requireActiveSubscription(req, res, next) {
       );
     }
 
-    // Handle inadimplente
-    if (subscription.status === 'inadimplente') {
+    // Handle past_due / inadimplente
+    if (isDelinquent(subscription.status)) {
       throw new AppError(
         'Sua assinatura está inadimplente. Por favor, atualize seu método de pagamento.',
         403,
@@ -129,8 +143,8 @@ export async function requireActiveSubscription(req, res, next) {
       );
     }
 
-    // Handle canceled
-    if (subscription.status === 'cancelado') {
+    // Handle canceled (DB: CANCELED or legacy: cancelado)
+    if (isCanceled(subscription.status)) {
       if (subscription.currentPeriodEnd) {
         const periodEnd = new Date(subscription.currentPeriodEnd);
         if (now <= periodEnd) {
@@ -142,6 +156,15 @@ export async function requireActiveSubscription(req, res, next) {
         'Sua assinatura foi cancelada. Por favor, reative sua assinatura.',
         403,
         'SUBSCRIPTION_CANCELED'
+      );
+    }
+
+    // EXPIRED: treat like canceled (no access after period end)
+    if (subscription.status && EXPIRED_STATUSES.includes(subscription.status)) {
+      throw new AppError(
+        'Sua assinatura expirou. Por favor, assine novamente.',
+        403,
+        'SUBSCRIPTION_EXPIRED'
       );
     }
 
@@ -165,7 +188,7 @@ export async function requireActiveSubscription(req, res, next) {
 
 /**
  * Middleware to check if user has paid subscription (not trial)
- * Only allows: 'ativo'
+ * Only allows: ACTIVE or legacy 'ativo'
  */
 export async function requirePaidSubscription(req, res, next) {
   try {
@@ -173,7 +196,7 @@ export async function requirePaidSubscription(req, res, next) {
       where: { userId: req.user.id }
     });
 
-    if (!subscription || subscription.status !== 'ativo') {
+    if (!subscription || !isActive(subscription.status)) {
       throw new AppError(
         'Assinatura ativa necessária para acessar este recurso.',
         403,

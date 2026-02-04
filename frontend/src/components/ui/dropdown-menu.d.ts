@@ -4,6 +4,7 @@ import * as DropdownMenuPrimitive from "@radix-ui/react-dropdown-menu"
 export interface DropdownMenuContentProps extends React.ComponentPropsWithoutRef<'div'> {
   sideOffset?: number
   children?: React.ReactNode
+  align?: 'start' | 'center' | 'end'
 }
 
 export interface DropdownMenuItemProps extends React.ComponentPropsWithoutRef<'div'> {

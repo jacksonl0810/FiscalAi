@@ -42,8 +42,15 @@ const validateRequest = (req, res, next) => {
 };
 
 // Transform Prisma company data from camelCase to snake_case
+// When status is 'connected' but certificate was never uploaded to Nuvem Fiscal, show not_connected
 const transformCompany = (company) => {
   if (!company) return company;
+  let fiscalConnectionStatus = company.fiscalConnectionStatus;
+  let fiscalConnectionError = company.fiscalConnectionError ?? null;
+  if (fiscalConnectionStatus === 'connected' && company.certificateUploadedToNuvemFiscal === false) {
+    fiscalConnectionStatus = 'not_connected';
+    fiscalConnectionError = 'Certificado digital não configurado na Nuvem Fiscal. Envie o certificado na aba Integração Fiscal.';
+  }
   return {
     id: company.id,
     user_id: company.userId,
@@ -65,6 +72,8 @@ const transformCompany = (company) => {
     numero: company.numero,
     bairro: company.bairro,
     codigo_municipio: company.codigoMunicipio,
+    fiscal_connection_status: fiscalConnectionStatus,
+    fiscal_connection_error: fiscalConnectionError,
     created_at: company.createdAt,
     updated_at: company.updatedAt,
   };
@@ -401,18 +410,23 @@ router.post('/:id/register-fiscal', asyncHandler(async (req, res) => {
       }
     });
 
-    // Also update company's fiscal connection status
+    // Update company's fiscal connection status
+    // IMPORTANT: Company registration alone is NOT enough to be "connected"
+    // According to Nuvem Fiscal docs: company + certificate + settings are required
+    // So we set 'not_connected' with a message indicating certificate is needed next
     await prisma.company.update({
       where: { id: req.params.id },
       data: {
-        fiscalConnectionStatus: dbStatus === 'conectado' ? 'connected' : 'not_connected',
-        fiscalConnectionError: null // Clear any previous errors
+        fiscalConnectionStatus: 'not_connected',
+        fiscalConnectionError: 'Empresa registrada. Configure o certificado digital para completar a integração.'
       }
     });
 
     sendSuccess(res, registrationResult.message, {
       nuvemFiscalId: registrationResult.nuvemFiscalId,
-      status: registrationResult.status,
+      status: 'not_connected', // Company registered but certificate still needed
+      message: 'Empresa registrada na Nuvem Fiscal com sucesso. Agora configure o certificado digital para habilitar a emissão de notas fiscais.',
+      nextStep: 'upload_certificate',
       alreadyExists: registrationResult.alreadyExists || false
     });
   } catch (error) {
@@ -499,43 +513,48 @@ router.get('/:id/fiscal-status', asyncHandler(async (req, res) => {
     throw new AppError('Company not found', 404, 'NOT_FOUND');
   }
 
-  const status = await prisma.fiscalIntegrationStatus.findUnique({
-    where: { companyId: req.params.id }
-  });
+  // Use Company as source of truth for connection status (not FiscalIntegrationStatus)
+  let statusValue = company.fiscalConnectionStatus || 'not_connected';
+  let mensagem = company.fiscalConnectionError || null;
 
-  if (!status) {
-    let initialStatus = 'not_connected';
-    let mensagem = 'Clique em "Verificar conexão" para testar a conexão';
-    
-    if (!isNuvemFiscalConfigured()) {
-      initialStatus = 'not_configured';
-      mensagem = 'Nuvem Fiscal não configurado no servidor';
-    } else if (!company.nuvemFiscalId) {
-      initialStatus = 'not_connected';
-      mensagem = 'Empresa não registrada na Nuvem Fiscal';
-    } else if (!company.fiscalCredential) {
-      initialStatus = 'not_connected';
-      mensagem = 'Certificado digital não configurado';
-    } else if (company.fiscalConnectionStatus) {
-      const statusMap = {
-        'connected': 'conectado',
-        'not_connected': 'falha',
-        'failed': 'falha',
-        'expired': 'falha'
-      };
-      initialStatus = statusMap[company.fiscalConnectionStatus] || company.fiscalConnectionStatus;
-      mensagem = company.fiscalConnectionError || 'Status recuperado do registro da empresa';
-    }
-
-    return sendSuccess(res, mensagem, {
-      companyId: req.params.id,
-      status: initialStatus,
-      mensagem: mensagem,
-      ultima_verificacao: company.lastConnectionCheck || null
-    });
+  if (statusValue === 'connected' && company.certificateUploadedToNuvemFiscal === false) {
+    statusValue = 'not_connected';
+    mensagem = 'Certificado digital não configurado na Nuvem Fiscal. Envie o certificado na aba Integração Fiscal.';
   }
 
-  sendSuccess(res, 'Status fiscal consultado com sucesso', status);
+  if (!mensagem) {
+    if (!isNuvemFiscalConfigured()) {
+      statusValue = 'not_configured';
+      mensagem = 'Nuvem Fiscal não configurado no servidor';
+    } else if (!company.nuvemFiscalId) {
+      statusValue = 'not_connected';
+      mensagem = 'Empresa não registrada na Nuvem Fiscal. Registre a empresa para habilitar a emissão.';
+    } else if (!company.fiscalCredential) {
+      statusValue = 'not_connected';
+      mensagem = 'Certificado digital não configurado. Faça upload do certificado (.pfx ou .p12) para conectar.';
+    } else if (company.fiscalCredential.type !== 'certificate') {
+      statusValue = 'not_connected';
+      mensagem = 'Certificado digital é obrigatório. Faça upload do certificado na aba Integração Fiscal.';
+    } else if (statusValue === 'connected') {
+      mensagem = 'Conexão fiscal ativa. Pronto para emitir notas fiscais.';
+    } else if (statusValue === 'not_connected') {
+      mensagem = mensagem || 'Configure o certificado digital e clique em Salvar para enviar à Nuvem Fiscal.';
+    } else if (statusValue === 'expired') {
+      mensagem = mensagem || 'Certificado digital expirado. Renove e faça upload novamente.';
+    } else {
+      mensagem = mensagem || 'Verificando status da conexão com a prefeitura.';
+    }
+  }
+
+  // Frontend expects status: 'conectado' | 'connected' for green, 'not_connected' for orange, 'falha'|'failed' for red
+  const responseStatus = statusValue === 'connected' ? 'conectado' : statusValue;
+
+  return sendSuccess(res, 'Status fiscal consultado', {
+    companyId: req.params.id,
+    status: responseStatus,
+    mensagem,
+    ultima_verificacao: company.lastConnectionCheck || null
+  });
 }));
 
 /**
@@ -736,6 +755,18 @@ router.post('/:id/certificate', (req, res, next) => {
         message: nuvemResult.message
       };
       console.log('[Companies] Certificate uploaded to Nuvem Fiscal successfully');
+      
+      // Certificate uploaded successfully = company is now connected and ready to issue invoices
+      await prisma.company.update({
+        where: { id },
+        data: {
+          fiscalConnectionStatus: 'connected',
+          fiscalConnectionError: null,
+          lastConnectionCheck: new Date(),
+          certificateUploadedToNuvemFiscal: true
+        }
+      });
+      console.log('[Companies] Fiscal connection status set to connected');
     } catch (nuvemError) {
       console.error('[Companies] Error uploading certificate to Nuvem Fiscal:', nuvemError.message);
       
@@ -751,12 +782,34 @@ router.post('/:id/certificate', (req, res, next) => {
         status: errorStatus,
         message: `Certificado salvo localmente, mas erro ao enviar para Nuvem Fiscal: ${errorMessage}`
       };
+      
+      // Certificate not uploaded to Nuvem Fiscal = not connected
+      await prisma.company.update({
+        where: { id },
+        data: {
+          fiscalConnectionStatus: 'not_connected',
+          fiscalConnectionError: `Certificado não enviado para Nuvem Fiscal: ${errorMessage}`,
+          lastConnectionCheck: new Date(),
+          certificateUploadedToNuvemFiscal: false
+        }
+      });
     }
   } else {
     nuvemFiscalStatus = {
       status: 'info',
-      message: 'Certificado salvo localmente. Empresa não registrada na Nuvem Fiscal ainda.'
+      message: 'Certificado salvo localmente. Empresa não registrada na Nuvem Fiscal ainda - registre a empresa para habilitar a emissão de notas fiscais.'
     };
+    
+    // Certificate saved locally but company not registered = not connected
+    await prisma.company.update({
+      where: { id },
+      data: {
+        fiscalConnectionStatus: 'not_connected',
+        fiscalConnectionError: 'Empresa não registrada na Nuvem Fiscal. Registre a empresa para completar a configuração.',
+        lastConnectionCheck: new Date(),
+        certificateUploadedToNuvemFiscal: false
+      }
+    });
   }
 
   sendSuccess(res, 'Certificado digital armazenado com sucesso', {
@@ -813,10 +866,15 @@ router.delete('/:id/certificate', asyncHandler(async (req, res) => {
   const { revokeFiscalCredential } = await import('../services/fiscalCredentialService.js');
   await revokeFiscalCredential(id);
 
-  // Update company flag
+  // Update company flags
   await prisma.company.update({
     where: { id },
-    data: { certificadoDigital: false }
+    data: { 
+      certificadoDigital: false,
+      certificateUploadedToNuvemFiscal: false,
+      fiscalConnectionStatus: 'not_connected',
+      fiscalConnectionError: 'Certificado digital revogado'
+    }
   });
 
   sendSuccess(res, 'Certificado digital revogado com sucesso');

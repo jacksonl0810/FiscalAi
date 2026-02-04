@@ -14,7 +14,16 @@ import {
   ChevronRight,
   Check,
   Loader2,
-  AlertCircle
+  AlertCircle,
+  Plus,
+  Edit2,
+  Trash2,
+  CheckCircle,
+  XCircle,
+  Clock,
+  AlertTriangle,
+  ExternalLink,
+  Crown
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -79,6 +88,15 @@ export default function CompanySetup() {
     queryFn: () => subscriptionsService.getLimits(),
     staleTime: 2 * 60 * 1000, // Cache for 2 minutes
   });
+
+  // Get all companies for the list view
+  const { data: allCompanies = [] } = useQuery({
+    queryKey: ['companies'],
+    queryFn: () => companiesService.list(),
+  });
+
+  // State to toggle between list view and edit form
+  const [showListView, setShowListView] = useState(!isNewCompany && !urlParams.get('edit'));
 
   const { data: company, isLoading } = useQuery({
     queryKey: ['company', isNewCompany, settings?.active_company_id || 'default'],
@@ -270,7 +288,7 @@ export default function CompanySetup() {
               },
             });
           } else {
-            toast.success('✓ Certificado Digital Enviado!\n\nCertificado configurado com sucesso.', {
+            toast.success('✓ Certificado Digital Enviado!\n\nCertificado configurado com sucesso. Não é necessário enviar novamente.', {
               duration: 4000,
               style: {
                 background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)',
@@ -309,6 +327,8 @@ export default function CompanySetup() {
     },
     onSuccess: ({ isNewCompany }) => {
       queryClient.invalidateQueries({ queryKey: ['company'] });
+      queryClient.invalidateQueries({ queryKey: ['fiscalStatus'] });
+      queryClient.invalidateQueries({ queryKey: ['companies'] });
       
       if (isNewCompany) {
         toast.success('✓ Empresa Criada!\n\nRedirecionando para o Dashboard...', {
@@ -631,8 +651,323 @@ export default function CompanySetup() {
     );
   }
 
+  // Function to get fiscal connection status info
+  // Connected = company registered + certificate configured on Nuvem Fiscal (ready to issue invoices)
+  const getFiscalStatusInfo = (fiscalConnectionStatus, fiscalConnectionError) => {
+    switch (fiscalConnectionStatus) {
+      case 'connected':
+        return { 
+          icon: CheckCircle, 
+          color: 'text-green-400', 
+          bg: 'bg-green-500/20', 
+          label: 'Conectado',
+          tooltip: 'Pronto para emitir notas fiscais'
+        };
+      case 'expired':
+        return { 
+          icon: AlertTriangle, 
+          color: 'text-red-400', 
+          bg: 'bg-red-500/20', 
+          label: 'Certificado Expirado',
+          tooltip: fiscalConnectionError || 'Certificado digital expirado. Renove para continuar emitindo.'
+        };
+      case 'failed':
+        return { 
+          icon: XCircle, 
+          color: 'text-red-400', 
+          bg: 'bg-red-500/20', 
+          label: 'Falha',
+          tooltip: fiscalConnectionError || 'Falha na conexão fiscal'
+        };
+      case 'not_connected':
+        return { 
+          icon: Clock, 
+          color: 'text-yellow-400', 
+          bg: 'bg-yellow-500/20', 
+          label: 'Pendente',
+          tooltip: fiscalConnectionError || 'Configure empresa e certificado digital para emitir notas fiscais'
+        };
+      default:
+        return { 
+          icon: AlertTriangle, 
+          color: 'text-gray-400', 
+          bg: 'bg-gray-500/20', 
+          label: 'Não configurado',
+          tooltip: 'Configure a integração fiscal para emitir notas fiscais'
+        };
+    }
+  };
+
+  // Check if can add more companies
+  const canAddCompany = planLimits?.companyLimit?.allowed !== false;
+  const companyLimitUsed = allCompanies.length;
+  const companyLimitMax = planLimits?.companyLimit?.max || 1;
+  const planName = planLimits?.planName || 'Trial';
+
+  // List view first (like Clients page): show whenever we're not in "new company" flow
+  if (showListView && !isNewCompany) {
+    return (
+      <div className="max-w-4xl mx-auto space-y-6">
+        {/* Header with plan info */}
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div>
+            <h1 className={cn(
+              "text-3xl font-bold mb-2",
+              "bg-gradient-to-r from-white via-white to-gray-300 bg-clip-text text-transparent"
+            )}>
+              Minhas Empresas
+            </h1>
+            <p className="text-gray-400">
+              Gerencie suas empresas emissoras de notas fiscais
+            </p>
+          </div>
+          <Button
+            onClick={() => {
+              if (canAddCompany) {
+                navigate(createPageUrl("CompanySetup") + "?new=true");
+              } else {
+                toast.error("Limite de empresas atingido", {
+                  description: `Seu plano ${planName} permite ${companyLimitMax} ${companyLimitMax === 1 ? 'empresa' : 'empresas'}. Faça upgrade para adicionar mais.`,
+                  action: {
+                    label: "Ver Planos",
+                    onClick: () => navigate(createPageUrl("Pricing"))
+                  }
+                });
+              }
+            }}
+            className={cn(
+              "rounded-xl font-semibold transition-all duration-300",
+              "border backdrop-blur-sm",
+              canAddCompany
+                ? [
+                    "bg-gradient-to-br from-orange-500/95 via-orange-600 to-orange-700/95",
+                    "text-white border-orange-400/30",
+                    "shadow-lg shadow-orange-500/25",
+                    "hover:from-orange-500 hover:via-orange-500 hover:to-orange-600",
+                    "hover:border-orange-300/50 hover:shadow-xl hover:shadow-orange-500/35",
+                    "hover:brightness-110 active:scale-[0.98] active:brightness-100"
+                  ].join(" ")
+                : [
+                    "bg-white/5 text-gray-400 border-white/10",
+                    "hover:bg-white/10 hover:text-gray-300 hover:border-white/15",
+                    "cursor-pointer"
+                  ].join(" ")
+            )}
+          >
+            <Plus className="w-4 h-4 mr-2" />
+            Nova Empresa
+          </Button>
+        </div>
+
+        {/* Plan limits card */}
+        <div className={cn(
+          "p-4 rounded-2xl",
+          "bg-gradient-to-br from-slate-900/90 via-slate-800/70 to-slate-900/90",
+          "border border-white/10"
+        )}>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className={cn(
+                "w-10 h-10 rounded-xl flex items-center justify-center",
+                "bg-gradient-to-br from-purple-500/20 to-purple-600/20",
+                "border border-purple-500/30"
+              )}>
+                <Crown className="w-5 h-5 text-purple-400" />
+              </div>
+              <div>
+                <p className="text-white font-semibold">Plano {planName}</p>
+                <p className="text-gray-400 text-sm">
+                  {companyLimitUsed} de {companyLimitMax} {companyLimitMax === 1 ? 'empresa' : 'empresas'}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-32 h-2 bg-white/10 rounded-full overflow-hidden">
+                <div 
+                  className="h-full bg-gradient-to-r from-orange-500 to-orange-600 transition-all"
+                  style={{ width: `${Math.min((companyLimitUsed / companyLimitMax) * 100, 100)}%` }}
+                />
+              </div>
+              {!canAddCompany && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => navigate(createPageUrl("Pricing"))}
+                  className={cn(
+                    "rounded-xl font-medium transition-all duration-200",
+                    "bg-gradient-to-br from-purple-600/25 via-purple-500/20 to-slate-800/90",
+                    "border border-purple-500/40 text-purple-200",
+                    "shadow-md shadow-purple-500/15",
+                    "hover:border-purple-400/50 hover:text-white hover:from-purple-600/35 hover:via-purple-500/25 hover:to-slate-800",
+                    "hover:shadow-lg hover:shadow-purple-500/25 active:scale-[0.98]"
+                  )}
+                >
+                  Upgrade
+                </Button>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Companies list or empty state */}
+        <div className={cn(
+          "rounded-2xl overflow-hidden",
+          "bg-gradient-to-br from-slate-900/90 via-slate-800/70 to-slate-900/90",
+          "border border-white/10"
+        )}>
+          {allCompanies.length === 0 ? (
+            /* Empty state - like Clients page */
+            <div className="p-12 text-center">
+              <Building2 className="w-12 h-12 text-gray-500 mx-auto mb-4 opacity-80" />
+              <p className="text-gray-400 mb-2">Nenhuma empresa cadastrada</p>
+              <p className="text-gray-500 text-sm mb-6">Cadastre sua primeira empresa para começar a emitir notas fiscais.</p>
+              <Button
+                onClick={() => canAddCompany ? navigate(createPageUrl("CompanySetup") + "?new=true") : toast.error("Limite de empresas atingido", {
+                  description: `Seu plano ${planName} permite ${companyLimitMax} ${companyLimitMax === 1 ? 'empresa' : 'empresas'}.`,
+                  action: { label: "Ver Planos", onClick: () => navigate(createPageUrl("Pricing")) }
+                })}
+                className={cn(
+                  "rounded-xl font-semibold",
+                  "bg-gradient-to-br from-slate-800/95 via-orange-950/30 to-slate-800/95",
+                  "border border-orange-500/40 text-orange-200",
+                  "hover:border-orange-400 hover:text-white",
+                  "hover:bg-gradient-to-br hover:from-orange-600/30 hover:via-orange-500/20 hover:to-slate-800/95",
+                  "shadow-lg shadow-orange-500/15"
+                )}
+              >
+                <Plus className="w-4 h-4 mr-2" />
+                Cadastrar primeira empresa
+              </Button>
+            </div>
+          ) : (
+          <div className="divide-y divide-white/10">
+            {allCompanies.map((comp) => {
+              const statusInfo = getFiscalStatusInfo(comp.fiscal_connection_status, comp.fiscal_connection_error);
+              const StatusIcon = statusInfo.icon;
+              const isActive = comp.id === settings?.active_company_id || (allCompanies.length === 1);
+              
+              return (
+                <div 
+                  key={comp.id}
+                  className={cn(
+                    "group p-4 flex items-center gap-4 hover:bg-white/5 transition-colors duration-200 cursor-pointer",
+                    isActive && "bg-orange-500/5"
+                  )}
+                  onClick={() => {
+                    // Set as active and go to edit
+                    setShowListView(false);
+                    queryClient.setQueryData(['company', false, comp.id], comp);
+                    setFormData({
+                      cnpj: comp.cnpj || "",
+                      razao_social: comp.razao_social || "",
+                      nome_fantasia: comp.nome_fantasia || "",
+                      cidade: comp.cidade || "",
+                      uf: comp.uf || "",
+                      cnae_principal: comp.cnae_principal || "",
+                      regime_tributario: comp.regime_tributario || "",
+                      certificado_digital: comp.certificado_digital || false,
+                      email: comp.email || "",
+                      telefone: comp.telefone || "",
+                      inscricao_municipal: comp.inscricao_municipal || "",
+                      cep: comp.cep || "",
+                      logradouro: comp.logradouro || "",
+                      numero: comp.numero || "",
+                      bairro: comp.bairro || "",
+                      codigo_municipio: comp.codigo_municipio || ""
+                    });
+                  }}
+                >
+                  {/* Icon */}
+                  <div className={cn(
+                    "w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0",
+                    isActive 
+                      ? "bg-gradient-to-br from-orange-500/20 to-orange-600/20 border border-orange-500/30"
+                      : "bg-white/5 border border-white/10"
+                  )}>
+                    <Building2 className={cn("w-6 h-6", isActive ? "text-orange-400" : "text-gray-400")} />
+                  </div>
+
+                  {/* Info */}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="font-semibold text-white truncate">
+                        {comp.nome_fantasia || comp.razao_social}
+                      </span>
+                      {isActive && (
+                        <span className="px-2 py-0.5 text-xs bg-orange-500/20 text-orange-400 rounded-full border border-orange-500/30">
+                          Ativa
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-3 mt-1 text-sm text-gray-400">
+                      <span>{comp.cnpj?.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, '$1.$2.$3/$4-$5')}</span>
+                      <span>•</span>
+                      <span>{comp.cidade}/{comp.uf}</span>
+                      {comp.regime_tributario && (
+                        <>
+                          <span>•</span>
+                          <span>{comp.regime_tributario}</span>
+                        </>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Fiscal status with tooltip showing error details */}
+                  <div className="flex items-center gap-2">
+                    <div 
+                      className={cn(
+                        "flex items-center gap-1.5 px-3 py-1.5 rounded-xl border transition-all duration-200 cursor-help",
+                        statusInfo.bg,
+                        comp.fiscal_connection_status === 'connected'
+                          ? "border-green-500/30 bg-gradient-to-r from-green-500/15 to-slate-800/50"
+                          : comp.fiscal_connection_status === 'not_connected' || !comp.fiscal_connection_status
+                            ? "border-amber-500/30 bg-gradient-to-r from-amber-500/15 to-slate-800/50 hover:from-amber-500/20 hover:to-slate-800/60 hover:border-amber-500/40"
+                            : "border-white/10 hover:border-white/20"
+                      )}
+                      title={statusInfo.tooltip}
+                    >
+                      <StatusIcon className={cn("w-4 h-4 shrink-0", statusInfo.color)} />
+                      <span className={cn("text-sm font-medium", statusInfo.color)}>
+                        {statusInfo.label}
+                      </span>
+                    </div>
+                    <ChevronRight className="w-5 h-5 text-gray-500 group-hover:translate-x-0.5 transition-transform duration-200" />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="max-w-4xl mx-auto">
+      {/* Back button when in edit mode */}
+      {((!isNewCompany && allCompanies.length > 0) || isNewCompany) && (
+        <Button
+          variant="outline"
+          onClick={() => {
+            setShowListView(true);
+            if (isNewCompany) {
+              navigate(createPageUrl("CompanySetup"), { replace: true });
+            }
+          }}
+          className={cn(
+            "mb-4 rounded-xl font-medium transition-all duration-200",
+            "bg-transparent border border-white/10 text-gray-300",
+            "hover:bg-white/5 hover:border-orange-500/40 hover:text-orange-200",
+            "hover:shadow-md hover:shadow-orange-500/10",
+            "active:scale-[0.98]"
+          )}
+        >
+          <ChevronRight className="w-4 h-4 mr-1 rotate-180" />
+          Voltar para lista
+        </Button>
+      )}
+
       {/* Header */}
       <div className="mb-8 animate-fade-in">
         <h1 className={cn(
@@ -640,9 +975,14 @@ export default function CompanySetup() {
           "bg-gradient-to-r from-white via-white to-gray-300 bg-clip-text text-transparent",
           "drop-shadow-lg"
         )}>
-          Configurar Empresa
+          {isNewCompany ? 'Nova Empresa' : 'Configurar Empresa'}
         </h1>
-        <p className="text-gray-400 mt-1 font-medium">Cadastre os dados da sua empresa para emissão de notas fiscais</p>
+        <p className="text-gray-400 mt-1 font-medium">
+          {isNewCompany 
+            ? 'Cadastre uma nova empresa para emissão de notas fiscais'
+            : 'Edite os dados da sua empresa'
+          }
+        </p>
       </div>
 
       {/* Progress Steps */}

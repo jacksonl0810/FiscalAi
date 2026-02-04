@@ -98,7 +98,28 @@ router.post('/process', assistantLimiter, [
 
   // Check if OpenAI API key is configured
   const openaiApiKey = process.env.OPENAI_API_KEY;
-  
+
+  // Run pattern matching first for high-value intents (emitir nota, clientes) so client lookup
+  // and confirmation flow are deterministic; only use LLM for other messages.
+  if (openaiApiKey && messageMatchesPriorityIntent(message)) {
+    const patternResult = await processWithPatternMatching(message, req.user.id, companyId, res);
+    if (patternResult && patternResult.explanation) {
+      try {
+        await prisma.conversationMessage.create({
+          data: {
+            userId: req.user.id,
+            role: 'assistant',
+            content: patternResult.explanation,
+            metadata: patternResult.action ? JSON.parse(JSON.stringify({ action: patternResult.action })) : null
+          }
+        });
+      } catch (dbError) {
+        console.error('Failed to save conversation history:', dbError.message);
+      }
+    }
+    return patternResult;
+  }
+
   if (!openaiApiKey) {
     // Fallback to pattern matching if no API key
     return processWithPatternMatching(message, req.user.id, companyId, res);
@@ -214,6 +235,44 @@ router.post('/process', assistantLimiter, [
     }
   }
 }));
+
+/**
+ * Returns true if the message matches intents that must be handled by pattern matching first
+ * so the assistant returns real data (faturamento, últimas notas, etc.) instead of generic
+ * LLM replies. Includes emitir nota, clientes, faturamento, consultas de notas e impostos.
+ */
+function messageMatchesPriorityIntent(message) {
+  const lower = message.toLowerCase();
+  // Emitir nota / nova nota
+  if (/emitir\s+nota|nova\s+nota/i.test(message)) return true;
+  // Criar cliente
+  if (/criar\s+cliente\s+.+\s+(?:cpf|cnpj)/i.test(message)) return true;
+  // Listar clientes
+  if (/listar\s+cliente|meus\s+clientes|ver\s+clientes|clientes\s+cadastrados/i.test(lower)) return true;
+  // Nota(s) de/para [cliente] (client search), not emitir
+  if (/nota(?:s)?\s+(?:de|do|da|para)\s+.+/i.test(message) && !lower.includes('emitir')) return true;
+  // Última nota / últimas notas
+  if (/última\s+nota|ultima\s+nota|last\s+invoice|minha\s+última|nota\s+mais\s+recente|últimas\s+notas|ultimas\s+notas/i.test(lower)) return true;
+  // Notas rejeitadas
+  if ((lower.includes('rejeitada') || lower.includes('rejeitadas')) && (lower.includes('nota') || lower.includes('invoice') || lower.includes('mês') || lower.includes('mes'))) return true;
+  // Notas pendentes / processando
+  if ((lower.includes('pendente') || lower.includes('pendentes') || lower.includes('processando')) && (lower.includes('nota') || lower.includes('notas'))) return true;
+  // Quantas / total notas
+  if ((lower.includes('quantas') || lower.includes('total')) && (lower.includes('nota') || lower.includes('notas'))) return true;
+  // Status da nota
+  if (/status\s+(?:da\s+)?nota/i.test(message) || (lower.includes('status') && lower.includes('nota'))) return true;
+  // Faturamento (Consultar faturamento)
+  if (lower.includes('faturamento') || lower.includes('quanto faturei')) return true;
+  // Listar notas
+  if (lower.includes('listar') && (lower.includes('nota') || lower.includes('notas'))) return true;
+  // Impostos / DAS / Ver impostos
+  if (lower.includes('imposto') || lower.includes('das') || lower.includes('tributo')) return true;
+  // Cancelar nota
+  if (lower.includes('cancelar') && lower.includes('nota')) return true;
+  // Ajuda / oi / olá
+  if (lower.includes('ajuda') || lower.includes('help') || lower === 'oi' || lower === 'olá') return true;
+  return false;
+}
 
 /**
  * Pattern matching fallback when OpenAI is not available
@@ -537,7 +596,105 @@ async function processWithPatternMatching(message, userId, companyId, res) {
   }
 
   // ========================================
-  // PATTERN: Issue invoice (existing)
+  // PATTERN: Create client inline
+  // ========================================
+  const createClientPattern = /criar\s+cliente\s+(.+?)\s+(?:cpf|cnpj)\s*:?\s*(\d{3}\.?\d{3}\.?\d{3}-?\d{2}|\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2}|\d{11}|\d{14})/i;
+  const createClientMatch = message.match(createClientPattern);
+  
+  if (createClientMatch) {
+    const clienteNome = createClientMatch[1].trim();
+    const documento = createClientMatch[2].replace(/\D/g, '');
+    const tipoPessoa = documento.length === 11 ? 'pf' : 'pj';
+    
+    // Check if client already exists
+    const existingClient = await prisma.client.findFirst({
+      where: {
+        userId,
+        documento
+      }
+    });
+    
+    if (existingClient) {
+      const responseData = {
+        success: true,
+        action: { type: 'cliente_existente', data: { id: existingClient.id, nome: existingClient.nome } },
+        explanation: `Já existe um cliente cadastrado com este ${tipoPessoa === 'pf' ? 'CPF' : 'CNPJ'}: **${existingClient.nome}**. Você pode usá-lo para emitir notas.`,
+        requiresConfirmation: false
+      };
+      res.json(responseData);
+      return responseData;
+    }
+    
+    // Create the client
+    try {
+      const newClient = await prisma.client.create({
+        data: {
+          userId,
+          nome: clienteNome,
+          documento,
+          tipoPessoa
+        }
+      });
+      
+      const responseData = {
+        success: true,
+        action: { type: 'cliente_criado', data: { id: newClient.id, nome: newClient.nome, documento: newClient.documento } },
+        explanation: `✅ Cliente **${newClient.nome}** cadastrado com sucesso!\n\n${tipoPessoa === 'pf' ? 'CPF' : 'CNPJ'}: ${formatDocumentForDisplay(documento, tipoPessoa)}\n\nAgora você pode emitir notas para este cliente. Diga "Emitir nota de R$ [valor] para ${newClient.nome}".`,
+        requiresConfirmation: false
+      };
+      res.json(responseData);
+      return responseData;
+    } catch (error) {
+      const responseData = {
+        success: false,
+        action: null,
+        explanation: `Erro ao cadastrar cliente: ${error.message}`,
+        requiresConfirmation: false
+      };
+      res.json(responseData);
+      return responseData;
+    }
+  }
+
+  // ========================================
+  // PATTERN: List clients
+  // ========================================
+  if (lowerMessage.includes('listar cliente') || lowerMessage.includes('meus clientes') || 
+      lowerMessage.includes('ver clientes') || lowerMessage.includes('clientes cadastrados')) {
+    
+    const clients = await prisma.client.findMany({
+      where: { userId, ativo: true },
+      orderBy: { nome: 'asc' },
+      take: 10
+    });
+    
+    if (clients.length === 0) {
+      const responseData = {
+        success: true,
+        action: { type: 'listar_clientes', data: { count: 0 } },
+        explanation: 'Você ainda não tem clientes cadastrados. Diga "criar cliente [nome] CPF [número]" ou acesse a seção "Clientes" no menu para cadastrar.',
+        requiresConfirmation: false
+      };
+      res.json(responseData);
+      return responseData;
+    }
+    
+    let clientList = clients.map((c, i) => 
+      `${i + 1}. **${c.nome}**${c.apelido ? ` (${c.apelido})` : ''} - ${c.tipoPessoa === 'pf' ? 'CPF' : 'CNPJ'}: ${formatDocumentForDisplay(c.documento, c.tipoPessoa)}`
+    ).join('\n');
+    
+    const responseData = {
+      success: true,
+      action: { type: 'listar_clientes', data: { count: clients.length } },
+      explanation: `📋 **Seus clientes cadastrados** (${clients.length}):\n\n${clientList}\n\nDiga "Emitir nota de R$ [valor] para [nome]" para emitir.`,
+      requiresConfirmation: false
+    };
+    res.json(responseData);
+    return responseData;
+  }
+
+  // ========================================
+  // PATTERN: Issue invoice (existing) - Now with client lookup
   // ========================================
   const invoicePattern = /emitir\s+nota\s+(?:de\s+)?r?\$?\s*(\d+(?:[.,]\d+)?)\s+(?:para|para\s+o?\s*)?(.+)/i;
   const invoiceMatch = message.match(invoicePattern);
@@ -547,10 +704,78 @@ async function processWithPatternMatching(message, userId, companyId, res) {
     let clienteNome = invoiceMatch ? invoiceMatch[2].trim() : null;
 
     if (valor && clienteNome) {
-      return res.json({
+      // Search for existing clients matching the name
+      const matchingClients = await prisma.client.findMany({
+        where: {
+          userId,
+          ativo: true,
+          OR: [
+            { nome: { contains: clienteNome, mode: 'insensitive' } },
+            { apelido: { contains: clienteNome, mode: 'insensitive' } }
+          ]
+        },
+        orderBy: { nome: 'asc' },
+        take: 5
+      });
+
+      // If exactly one match found, use it
+      if (matchingClients.length === 1) {
+        const client = matchingClients[0];
+        const valorFormatado = valor.toLocaleString('pt-BR', { minimumFractionDigits: 2 });
+        const docLabel = client.tipoPessoa === 'pf' ? 'CPF' : 'CNPJ';
+        const docFormatado = formatDocumentForDisplay(client.documento, client.tipoPessoa);
+        const responseData = {
+          success: true,
+          action: {
+            type: 'emitir_nfse',
+            data: {
+              cliente_nome: client.nome,
+              cliente_documento: client.documento,
+              descricao_servico: 'Serviço prestado',
+              valor: valor,
+              aliquota_iss: 5,
+              client_id: client.id
+            }
+          },
+          explanation: `📝 **Nota fiscal preparada:**\n\n` +
+            `• **Valor:** R$ ${valorFormatado}\n` +
+            `• **Cliente:** ${client.nome}\n` +
+            `• **${docLabel}:** ${docFormatado}\n` +
+            `• **Serviço:** Serviço prestado\n` +
+            `• **ISS:** 5%\n\n` +
+            `✅ Deseja confirmar a emissão desta nota?`,
+          requiresConfirmation: true
+        };
+        res.json(responseData);
+        return responseData;
+      }
+      
+      // If multiple matches, ask user to choose
+      if (matchingClients.length > 1) {
+        let clientList = matchingClients.map((c, i) => 
+          `${i + 1}. **${c.nome}**${c.apelido ? ` (${c.apelido})` : ''} - ${c.tipoPessoa === 'pf' ? 'CPF' : 'CNPJ'}: ${formatDocumentForDisplay(c.documento, c.tipoPessoa)}`
+        ).join('\n');
+        const responseData = {
+          success: true,
+          action: {
+            type: 'escolher_cliente',
+            data: {
+              valor: valor,
+              clientes: matchingClients.map(c => ({ id: c.id, nome: c.nome, documento: c.documento, tipo: c.tipoPessoa }))
+            }
+          },
+          explanation: `Encontrei ${matchingClients.length} clientes com nome similar a "${clienteNome}":\n\n${clientList}\n\nPor favor, especifique qual cliente você deseja ou diga "criar novo cliente ${clienteNome}".`,
+          requiresConfirmation: false
+        };
+        res.json(responseData);
+        return responseData;
+      }
+      
+      // No match found - offer to create new client
+      const responseDataNoMatch = {
         success: true,
         action: {
-          type: 'emitir_nfse',
+          type: 'criar_cliente_e_emitir',
           data: {
             cliente_nome: clienteNome,
             cliente_documento: '',
@@ -559,16 +784,20 @@ async function processWithPatternMatching(message, userId, companyId, res) {
             aliquota_iss: 5
           }
         },
-        explanation: `Entendi! Vou preparar uma nota fiscal de R$ ${valor.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} para ${clienteNome}. Por favor, confirme os dados.`,
-        requiresConfirmation: true
-      });
+        explanation: `Não encontrei "${clienteNome}" cadastrado. Para emitir a nota de R$ ${valor.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}, preciso do CPF ou CNPJ do cliente.\n\nDigite o documento ou diga "criar cliente ${clienteNome} CPF 123.456.789-00" para cadastrá-lo primeiro.`,
+        requiresConfirmation: false
+      };
+      res.json(responseDataNoMatch);
+      return responseDataNoMatch;
     } else {
-      return res.json({
+      const responseDataEmitirHint = {
         success: true,
         action: null,
         explanation: 'Para emitir uma nota fiscal, me diga o valor e o nome do cliente. Por exemplo: "Emitir nota de R$ 1.500 para João Silva"',
         requiresConfirmation: false
-      });
+      };
+      res.json(responseDataEmitirHint);
+      return responseDataEmitirHint;
     }
   }
 
@@ -678,6 +907,7 @@ async function processWithPatternMatching(message, userId, companyId, res) {
       action: null,
       explanation: `Olá! Sou sua assistente fiscal MAY. Posso ajudá-lo com:\n\n` +
         `📄 **Emitir notas:**\n• "Emitir nota de R$ 1.500 para João Silva"\n\n` +
+        `👥 **Clientes:**\n• "Listar meus clientes"\n• "Criar cliente Gabriel CPF 123.456.789-00"\n\n` +
         `🔍 **Consultar notas:**\n• "Mostre minha última nota"\n• "Notas rejeitadas este mês"\n• "Notas de [nome do cliente]"\n• "Status da nota 12345"\n\n` +
         `📊 **Faturamento:**\n• "Qual meu faturamento este mês?"\n• "Quantas notas emiti?"\n\n` +
         `💰 **Impostos:**\n• "Quais meus impostos pendentes?"\n\n` +
@@ -720,6 +950,19 @@ function formatStatus(status) {
     'pendente': '⏳ Pendente'
   };
   return statusMap[status] || status;
+}
+
+/**
+ * Format document (CPF/CNPJ) for display
+ */
+function formatDocumentForDisplay(doc, tipo) {
+  if (!doc) return '';
+  const cleaned = doc.replace(/\D/g, '');
+  if (tipo === 'pf' || cleaned.length === 11) {
+    return cleaned.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4');
+  } else {
+    return cleaned.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, '$1.$2.$3/$4-$5');
+  }
 }
 
 /**
@@ -2114,6 +2357,31 @@ CAPACIDADES:
 5. Explicar questões fiscais em linguagem simples
 6. Traduzir erros técnicos para o usuário
 7. Responder perguntas sobre histórico de notas fiscais
+8. Gerenciar clientes (cadastrar, listar, buscar)
+
+GESTÃO DE CLIENTES:
+Os clientes são os destinatários (tomadores) das notas fiscais. Cada cliente tem:
+- Nome / Razão Social
+- CPF ou CNPJ
+- Apelido (opcional, para busca rápida)
+- Email, telefone, endereço (opcionais)
+
+FLUXO DE EMISSÃO COM CLIENTES:
+1. Usuário pede para emitir nota: "Emitir nota de R$ 1.500 para Gabriel"
+2. Sistema busca cliente pelo nome/apelido:
+   - SE encontrar 1 cliente: usa automaticamente
+   - SE encontrar múltiplos: pergunta qual
+   - SE não encontrar: pede o CPF/CNPJ para cadastrar
+
+3. Para cadastrar cliente inline:
+   - Usuário diz: "Criar cliente Gabriel Silva CPF 123.456.789-00"
+   - Sistema cria o cliente e confirma
+   - Depois pode emitir: "Emitir nota de R$ 1.500 para Gabriel Silva"
+
+AÇÕES DE CLIENTES:
+- criar_cliente: Criar novo cliente
+- listar_clientes: Listar clientes cadastrados
+- buscar_cliente: Buscar cliente por nome/documento
 
 AÇÕES DISPONÍVEIS:
 - emitir_nfse: Emitir nota fiscal (SEMPRE requer confirmação)
@@ -2222,6 +2490,29 @@ REGRAS:
 - Use português brasileiro
 - Seja conciso mas completo nas explicações
 - Se faltarem dados essenciais (valor ou cliente), pergunte
+- SEMPRE confirme valores, cliente e descrição do serviço antes de emitir
+
+CONFIRMAÇÕES CLARAS (IMPORTANTE):
+Ao preparar uma nota fiscal, SEMPRE inclua na explicação:
+1. Valor em formato brasileiro (R$ X.XXX,XX)
+2. Nome do cliente (e documento se disponível)
+3. Descrição do serviço
+4. Uma pergunta de confirmação explícita
+
+Formato de confirmação recomendado:
+"📝 **Nota fiscal preparada:**
+
+• **Valor:** R$ 1.500,00
+• **Cliente:** João Silva
+• **Serviço:** Consultoria de TI
+
+✅ Deseja confirmar a emissão?"
+
+SE O CLIENTE NÃO ESTIVER CADASTRADO:
+1. Informe que o cliente não foi encontrado
+2. Peça o CPF/CNPJ para cadastrar
+3. Sugira usar a seção "Clientes" do menu
+4. Exemplo: "Não encontrei 'Gabriel' cadastrado. Para emitir a nota, preciso do CPF ou CNPJ. Diga 'criar cliente Gabriel CPF 123.456.789-00' ou acesse a seção Clientes no menu."
 
 EXEMPLOS:
 
@@ -2238,7 +2529,7 @@ Entrada: "Emitir nota de 2 mil para Empresa ABC por consultoria de TI"
       "codigo_servico": "0106"
     }
   },
-  "explanation": "Vou preparar uma nota de R$ 2.000,00 para Empresa ABC referente a Consultoria de TI. Confirme os dados.",
+  "explanation": "📝 **Nota fiscal preparada:**\n\n• **Valor:** R$ 2.000,00\n• **Cliente:** Empresa ABC\n• **Serviço:** Consultoria de TI\n• **ISS:** 5%\n\n✅ Deseja confirmar a emissão desta nota?",
   "requiresConfirmation": true
 }
 

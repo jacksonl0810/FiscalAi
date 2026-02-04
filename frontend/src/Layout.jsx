@@ -11,6 +11,7 @@ import {
   LayoutDashboard,
   FileText,
   Building2,
+  Users,
   Bell,
   LogOut,
   Menu,
@@ -115,8 +116,9 @@ export default function Layout({ children, currentPageName }) {
     { name: "Assistente IA", page: "Assistant", icon: MessageSquare },
     { name: "Dashboard", page: "Dashboard", icon: LayoutDashboard },
     { name: "Notas Fiscais", page: "Documents", icon: FileText },
+    { name: "Clientes", page: "Clients", icon: Users },
     { name: "Impostos (DAS)", page: "Taxes", icon: Receipt },
-    { name: "Minha Empresa", page: "CompanySetup", icon: Building2 },
+    { name: "Minhas Empresas", page: "CompanySetup", icon: Building2 },
     { name: "Notificações", page: "Notifications", icon: Bell, badge: unreadCount },
     ...(user?.isAdmin ? [{ name: "Admin", page: "Admin", icon: Shield }] : []),
   ];
@@ -272,29 +274,31 @@ export default function Layout({ children, currentPageName }) {
                   key={item.page}
                   to={createPageUrl(item.page)}
                   className={cn(
-                    "flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 group relative",
+                    "flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-300 ease-out group relative overflow-hidden",
                     "backdrop-blur-sm",
                     isActive 
                       ? cn(
-                          "bg-gradient-to-r from-orange-500/20 via-orange-600/15 to-orange-500/20",
-                          "border-l-2 border-orange-500",
-                          "text-white shadow-lg shadow-orange-500/10",
-                          "before:absolute before:inset-0 before:bg-gradient-to-r before:from-orange-500/5 before:via-transparent before:to-transparent before:pointer-events-none before:rounded-xl"
+                          "bg-gradient-to-r from-orange-500/15 via-orange-600/10 to-transparent",
+                          "border border-orange-500/25 border-l-[3px] border-l-orange-500",
+                          "text-white",
+                          "shadow-[inset_0_1px_0_0_rgba(255,255,255,0.06)]",
+                          "shadow-lg shadow-orange-500/15",
+                          "before:absolute before:inset-0 before:bg-gradient-to-r before:from-orange-500/8 before:via-transparent before:to-transparent before:pointer-events-none before:rounded-xl"
                         )
                       : cn(
-                          "text-gray-300",
+                          "text-gray-300 border border-transparent border-l-[3px]",
                           "hover:text-white",
-                          "hover:bg-gradient-to-r hover:from-white/10 hover:via-white/5 hover:to-white/10",
-                          "hover:border-l-2 hover:border-orange-500/50",
+                          "hover:bg-gradient-to-r hover:from-white/8 hover:via-white/4 hover:to-transparent",
+                          "hover:border-white/10 hover:border-l-orange-500/40",
                           "hover:shadow-md hover:shadow-orange-500/5",
-                          "border-l-2 border-transparent"
+                          "active:scale-[0.99]"
                         )
                   )}
                 >
                   <item.icon className={cn(
                     "w-5 h-5 flex-shrink-0 transition-colors duration-200",
                     isActive 
-                      ? "text-orange-400" 
+                      ? "text-orange-400 drop-shadow-sm" 
                       : "text-gray-400 group-hover:text-orange-400"
                   )} />
                   {!sidebarCollapsed && (

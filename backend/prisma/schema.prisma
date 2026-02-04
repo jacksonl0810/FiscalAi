@@ -53,6 +53,7 @@ model User {
   conversationMessages ConversationMessage[]
   invoiceUsages        InvoiceUsage[]
   accountantReviews    AccountantReview[]
+  clients              Client[]
 
   @@map("users")
 }
@@ -80,6 +81,7 @@ model Company {
   cnaePrincipal                String?   @map("cnae_principal")
   regimeTributario             String    @map("regime_tributario")
   certificadoDigital           Boolean   @default(false) @map("certificado_digital")
+  certificateUploadedToNuvemFiscal Boolean @default(false) @map("certificate_uploaded_to_nuvem_fiscal") // true only when upload to Nuvem Fiscal succeeded
   email                        String
   telefone                     String
   inscricaoMunicipal           String    @map("inscricao_municipal")
@@ -418,4 +420,46 @@ model MunicipalityCache {
   @@index([key])
   @@index([expiresAt])
   @@map("municipality_cache")
+}
+
+// Client/Customer model - invoice recipients (tomador)
+// Belongs to the user account, can be used across all user's companies
+model Client {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  
+  // Identification
+  nome      String   // Full name (PF) or business name (PJ)
+  documento String   // CPF (PF) or CNPJ (PJ)
+  tipoPessoa String  @default("pf") @map("tipo_pessoa") // 'pf' (pessoa física) or 'pj' (pessoa jurídica)
+  
+  // Contact info
+  email     String?
+  telefone  String?
+  
+  // Address (optional but useful for some municipalities)
+  cep           String?
+  logradouro    String?
+  numero        String?
+  complemento   String?
+  bairro        String?
+  cidade        String?
+  uf            String? @db.Char(2)
+  codigoMunicipio String? @map("codigo_municipio") // IBGE code
+  
+  // Metadata
+  apelido   String?  // User-friendly nickname for quick reference (e.g., "Gabriel", "Dr. Silva")
+  notas     String?  @db.Text // Internal notes about the client
+  ativo     Boolean  @default(true) // Soft delete / archive
+  
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@index([userId, ativo])
+  @@index([userId, documento])
+  @@index([userId, nome])
+  @@map("clients")
 }

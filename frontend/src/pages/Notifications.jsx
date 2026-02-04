@@ -14,9 +14,7 @@ import {
   XCircle,
   Info,
   CheckCheck,
-  Trash2,
-  FileText,
-  Download
+  Trash2
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -338,40 +336,6 @@ export default function Notifications() {
 
                       {/* Actions */}
                       <div className="flex items-center gap-3 mt-4">
-                        {notification.invoice_id && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className={cn(
-                              "text-orange-400 hover:text-orange-300",
-                              "hover:bg-gradient-to-br hover:from-orange-500/20 hover:via-orange-600/10 hover:to-orange-500/20",
-                              "border border-transparent hover:border-orange-500/30",
-                              "transition-all duration-200",
-                              "shadow-sm hover:shadow-md",
-                              "font-semibold"
-                            )}
-                          >
-                            <FileText className="w-4 h-4 mr-2" />
-                            Ver nota fiscal
-                          </Button>
-                        )}
-                        {notification.tipo === 'sucesso' && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className={cn(
-                              "text-gray-300 hover:text-white",
-                              "hover:bg-gradient-to-br hover:from-white/10 hover:via-white/5 hover:to-white/10",
-                              "border border-transparent hover:border-white/10",
-                              "transition-all duration-200",
-                              "shadow-sm hover:shadow-md",
-                              "font-semibold"
-                            )}
-                          >
-                            <Download className="w-4 h-4 mr-2" />
-                            Baixar PDF
-                          </Button>
-                        )}
                         {!notification.lida && (
                           <Button
                             variant="ghost"
