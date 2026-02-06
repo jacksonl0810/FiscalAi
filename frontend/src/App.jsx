@@ -57,39 +57,60 @@ const ProtectedRoute = ({ children }) => {
   // 🚨 SUBSCRIPTION STATUS GUARDS
   // Frontend checks user.subscription_status from backend
   const status = user?.subscription_status;
+  const plan = user?.plan;
 
-  // ✅ ALLOW ACCESS: Active trial or active subscription
-  if (status === 'trial' || status === 'ativo') {
+  // ✅ PRIORITY 1: User has a plan (pro/business/trial) → allow access
+  // This ensures users with subscriptions can access dashboard even if status is weird
+  // If user has ANY plan value, they have a subscription and should have access
+  if (plan) {
+    const planLower = String(plan).toLowerCase();
+    if (planLower === 'pro' || planLower === 'business' || planLower === 'trial' || planLower === 'essential') {
+      return children;
+    }
+    // Even if plan value is unexpected, if it exists, allow access
     return children;
   }
 
-  // ✅ ALLOW ACCESS: User has trial days remaining (even with pending payment)
+  // ✅ PRIORITY 2: Active trial or active subscription → allow access
+  // Normalize status to lowercase for comparison (consistent with Login.jsx and GoogleCallback.jsx)
+  const statusLower = status ? String(status).toLowerCase() : null;
+  if (statusLower === 'trial' || statusLower === 'ativo' || statusLower === 'active' || statusLower === 'trialing') {
+    return children;
+  }
+
+  // ✅ PRIORITY 3: User has trial days remaining → allow access
   if (user?.is_in_trial && user?.trial_days_remaining > 0) {
     return children;
   }
 
+  // ✅ PRIORITY 4: User has days remaining in subscription period → allow access
+  if (user?.days_remaining > 0) {
+    return children;
+  }
+
   // 🚫 REDIRECT: New users without subscription must select a plan first
-  if (status === null || status === undefined) {
+  // Only redirect to pricing if user truly has NO subscription
+  if ((statusLower === null || statusLower === undefined) && !plan) {
     return <Navigate to="/pricing" replace />;
   }
 
   // 🚫 REDIRECT: Trial expired - must subscribe
-  if (status === 'trial_expired') {
+  if (statusLower === 'trial_expired') {
     return <Navigate to="/pricing" replace />;
   }
 
   // 🚫 REDIRECT: Payment is being processed (and no active trial)
-  if (status === 'pending') {
+  if (statusLower === 'pending') {
     return <Navigate to="/subscription-pending" replace />;
   }
 
-  // 🚫 REDIRECT: Payment failed or overdue
-  if (status === 'inadimplente') {
+  // 🚫 REDIRECT: Payment failed or overdue (handles both Portuguese and English)
+  if (statusLower === 'inadimplente' || statusLower === 'past_due') {
     return <Navigate to="/payment-delinquent" replace />;
   }
 
-  // 🚫 REDIRECT: Subscription canceled and expired
-  if (status === 'cancelado') {
+  // 🚫 REDIRECT: Subscription canceled and expired (handles both Portuguese and English)
+  if (statusLower === 'cancelado' || statusLower === 'canceled') {
     return <Navigate to="/subscription-blocked" replace />;
   }
 

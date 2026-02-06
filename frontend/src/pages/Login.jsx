@@ -48,7 +48,8 @@ export default function Login() {
 
   const handleGoogleLogin = () => {
     setGoogleLoading(true);
-    const apiBaseUrl = import.meta.env.VITE_API_URL;
+    // Type-safe access to Vite environment variables
+    const apiBaseUrl = import.meta.env?.VITE_API_URL;
     let backendUrl;
     
     if (apiBaseUrl && !apiBaseUrl.startsWith('/')) {
@@ -56,7 +57,7 @@ export default function Login() {
     } else {
       const host = window.location.hostname;
       const isLocalhost = host === 'localhost' || host === '127.0.0.1';
-      const backendPort = import.meta.env.VITE_BACKEND_PORT || '3001';
+      const backendPort = import.meta.env?.VITE_BACKEND_PORT || '3001';
       backendUrl = isLocalhost 
         ? `http://localhost:${backendPort}`
         : `http://${host}:${backendPort}`;
@@ -69,6 +70,72 @@ export default function Login() {
   const handleInputChange = (field, value) => {
     setFormData(prev => ({ ...prev, [field]: value }));
     if (authError) clearError();
+  };
+
+  /**
+   * Determine the correct redirect path based on user subscription status.
+   * 
+   * Logic:
+   * - Users with ANY subscription (trial, pro, business) → Dashboard (/)
+   * - Only first-time users with NO subscription → Pricing (/pricing)
+   * 
+   * Users can upgrade plans anytime from settings, but should NOT be
+   * forced to see pricing page on every login if they have a subscription.
+   */
+  const getRedirectPath = (userData) => {
+    if (!userData) {
+      console.warn('[Login] No user data, redirecting to pricing');
+      return '/pricing';
+    }
+    
+    const status = userData?.subscription_status;
+    const plan = userData?.plan;
+    const isInTrial = userData?.is_in_trial;
+    const trialDaysRemaining = userData?.trial_days_remaining;
+    const daysRemaining = userData?.days_remaining;
+    
+    // ✅ PRIORITY 1: User has a plan → dashboard
+    if (plan) {
+      const planLower = String(plan).toLowerCase();
+      if (planLower === 'pro' || planLower === 'business' || planLower === 'trial' || planLower === 'essential') {
+        return '/';
+      }
+      return '/';
+    }
+    
+    // ✅ PRIORITY 2: Active subscription status → dashboard
+    const statusLower = status?.toLowerCase();
+    if (statusLower === 'trial' || statusLower === 'ativo' || statusLower === 'active' || statusLower === 'trialing') {
+      return '/';
+    }
+    
+    // ✅ PRIORITY 3: Trial days remaining → dashboard
+    if (isInTrial && trialDaysRemaining > 0) {
+      return '/';
+    }
+    
+    // ✅ PRIORITY 4: Subscription days remaining → dashboard
+    if (daysRemaining > 0) {
+      return '/';
+    }
+    
+    // 🚫 REDIRECT: Pending payment
+    if (statusLower === 'pending') {
+      return '/subscription-pending';
+    }
+    
+    // 🚫 REDIRECT: Payment failed or overdue
+    if (statusLower === 'inadimplente' || statusLower === 'past_due') {
+      return '/payment-delinquent';
+    }
+    
+    // 🚫 REDIRECT: Canceled subscription
+    if (statusLower === 'cancelado' || statusLower === 'canceled') {
+      return '/subscription-blocked';
+    }
+    
+    // 🚫 REDIRECT: No subscription → pricing page
+    return '/pricing';
   };
 
   const handleSubmit = async (e) => {
@@ -87,6 +154,7 @@ export default function Login() {
       try {
         await register(formData.name, formData.email, formData.password);
         toast.success("Conta criada com sucesso!");
+        // New users always go to pricing to select a plan
         navigate("/pricing");
       } catch (error) {
         const { handleApiError } = await import('@/utils/errorHandler');
@@ -94,9 +162,20 @@ export default function Login() {
       }
     } else {
       try {
-        await login(formData.email, formData.password);
+        const response = await login(formData.email, formData.password);
         toast.success("Login realizado com sucesso!");
-        navigate("/");
+        
+        // Get user data from response (contains full data from /auth/me)
+        const userData = response.user;
+        
+        // Redirect based on user's subscription status
+        const redirectPath = getRedirectPath(userData);
+        
+        // Use requestAnimationFrame to ensure state updates have flushed before navigation
+        // This prevents race condition where navigation happens before auth context updates
+        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        
+        navigate(redirectPath);
       } catch (error) {
         const { handleApiError } = await import('@/utils/errorHandler');
         await handleApiError(error, { operation: 'login' });

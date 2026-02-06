@@ -204,22 +204,22 @@ export default function CompanySetup() {
                 });
               } else {
                 toast.success('✓ Empresa Encontrada na Nuvem Fiscal!\n\nA empresa já estava cadastrada. Configure certificado digital para conectar.', {
-                  duration: 6000,
-                  style: {
-                    background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)',
-                    border: '1px solid rgba(251, 146, 60, 0.3)',
-                    borderRadius: '16px',
-                    padding: '16px',
-                    boxShadow: '0 10px 40px rgba(251, 146, 60, 0.2)',
-                    color: '#fff',
-                    whiteSpace: 'pre-line',
-                  },
-                });
-                await notificationsService.create({
-                  titulo: "Empresa vinculada",
+                duration: 6000,
+                style: {
+                  background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)',
+                  border: '1px solid rgba(251, 146, 60, 0.3)',
+                  borderRadius: '16px',
+                  padding: '16px',
+                  boxShadow: '0 10px 40px rgba(251, 146, 60, 0.2)',
+                  color: '#fff',
+                  whiteSpace: 'pre-line',
+                },
+              });
+              await notificationsService.create({
+                titulo: "Empresa vinculada",
                   mensagem: "Empresa encontrada na Nuvem Fiscal! Configure certificado digital para conectar.",
-                  tipo: "info"
-                });
+                tipo: "info"
+              });
               }
             } else {
               // New company registered successfully

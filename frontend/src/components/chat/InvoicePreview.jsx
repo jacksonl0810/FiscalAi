@@ -177,16 +177,16 @@ export default function InvoicePreview({ invoice, onConfirm, onEdit, onUpdate, o
                 <div className="relative group">
                   <div className="absolute inset-0 bg-gradient-to-r from-blue-500/20 via-indigo-500/20 to-purple-500/20 rounded-2xl blur-xl opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
                   <div className="absolute inset-0 bg-gradient-to-br from-blue-500/5 via-indigo-500/5 to-purple-500/5 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
-                  <input
-                    type="text"
-                    value={editedInvoice.cliente_nome}
-                    onChange={(e) => handleFieldChange('cliente_nome', e.target.value)}
+                <input
+                  type="text"
+                  value={editedInvoice.cliente_nome}
+                  onChange={(e) => handleFieldChange('cliente_nome', e.target.value)}
                     className="relative w-full px-6 py-5 rounded-2xl text-white text-base font-semibold bg-gradient-to-br from-slate-800/90 via-slate-800/95 to-slate-900/90 border-2 border-slate-700/50 focus:border-blue-400/80 focus:ring-4 focus:ring-blue-500/30 transition-all duration-300 outline-none placeholder:text-gray-400/70 shadow-xl shadow-black/40 hover:shadow-2xl hover:shadow-blue-500/20 hover:border-blue-500/40 backdrop-blur-sm"
                     placeholder="Digite o nome completo do cliente"
-                    autoComplete="off"
+                  autoComplete="off"
                     style={{ textShadow: '0 1px 2px rgba(0,0,0,0.3)' }}
-                  />
-                </div>
+                />
+              </div>
               </motion.div>
 
               {/* Client Document Field */}
@@ -203,16 +203,16 @@ export default function InvoicePreview({ invoice, onConfirm, onEdit, onUpdate, o
                 <div className="relative group">
                   <div className="absolute inset-0 bg-gradient-to-r from-indigo-500/20 via-purple-500/20 to-blue-500/20 rounded-2xl blur-xl opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
                   <div className="absolute inset-0 bg-gradient-to-br from-indigo-500/5 via-purple-500/5 to-blue-500/5 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
-                  <input
-                    type="text"
-                    value={editedInvoice.cliente_documento}
-                    onChange={(e) => handleFieldChange('cliente_documento', e.target.value)}
+                <input
+                  type="text"
+                  value={editedInvoice.cliente_documento}
+                  onChange={(e) => handleFieldChange('cliente_documento', e.target.value)}
                     className="relative w-full px-6 py-5 rounded-2xl text-white text-base font-semibold bg-gradient-to-br from-slate-800/90 via-slate-800/95 to-slate-900/90 border-2 border-slate-700/50 focus:border-indigo-400/80 focus:ring-4 focus:ring-indigo-500/30 transition-all duration-300 outline-none placeholder:text-gray-400/70 shadow-xl shadow-black/40 hover:shadow-2xl hover:shadow-indigo-500/20 hover:border-indigo-500/40 backdrop-blur-sm font-mono tracking-wider"
                     placeholder="000.000.000-00 ou 00.000.000/0000-00"
-                    autoComplete="off"
+                  autoComplete="off"
                     style={{ textShadow: '0 1px 2px rgba(0,0,0,0.3)' }}
-                  />
-                </div>
+                />
+              </div>
               </motion.div>
 
               {/* Service Description Field */}
@@ -229,15 +229,15 @@ export default function InvoicePreview({ invoice, onConfirm, onEdit, onUpdate, o
                 <div className="relative group">
                   <div className="absolute inset-0 bg-gradient-to-r from-purple-500/20 via-blue-500/20 to-indigo-500/20 rounded-2xl blur-xl opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
                   <div className="absolute inset-0 bg-gradient-to-br from-purple-500/5 via-blue-500/5 to-indigo-500/5 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
-                  <textarea
-                    value={editedInvoice.descricao_servico}
-                    onChange={(e) => handleFieldChange('descricao_servico', e.target.value)}
+                <textarea
+                  value={editedInvoice.descricao_servico}
+                  onChange={(e) => handleFieldChange('descricao_servico', e.target.value)}
                     rows={4}
                     className="relative w-full px-6 py-5 rounded-2xl text-white text-base font-semibold resize-none bg-gradient-to-br from-slate-800/90 via-slate-800/95 to-slate-900/90 border-2 border-slate-700/50 focus:border-purple-400/80 focus:ring-4 focus:ring-purple-500/30 transition-all duration-300 outline-none placeholder:text-gray-400/70 shadow-xl shadow-black/40 hover:shadow-2xl hover:shadow-purple-500/20 hover:border-purple-500/40 backdrop-blur-sm leading-relaxed"
                     placeholder="Descreva detalhadamente o serviço prestado"
                     style={{ textShadow: '0 1px 2px rgba(0,0,0,0.3)' }}
-                  />
-                </div>
+                />
+              </div>
               </motion.div>
 
               {/* Value and ISS Rate - Premium Grid */}
@@ -255,17 +255,17 @@ export default function InvoicePreview({ invoice, onConfirm, onEdit, onUpdate, o
                   <div className="relative group">
                     <div className="absolute inset-0 bg-gradient-to-r from-emerald-500/20 via-teal-500/20 to-emerald-500/20 rounded-2xl blur-xl opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
                     <div className="absolute inset-0 bg-gradient-to-br from-emerald-500/5 via-teal-500/5 to-emerald-500/5 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
-                    <input
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      value={editedInvoice.valor}
-                      onChange={(e) => handleFieldChange('valor', e.target.value)}
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={editedInvoice.valor}
+                    onChange={(e) => handleFieldChange('valor', e.target.value)}
                       className="relative w-full px-6 py-5 rounded-2xl text-white text-lg font-bold bg-gradient-to-br from-slate-800/90 via-slate-800/95 to-slate-900/90 border-2 border-slate-700/50 focus:border-emerald-400/80 focus:ring-4 focus:ring-emerald-500/30 transition-all duration-300 outline-none placeholder:text-gray-400/70 shadow-xl shadow-black/40 hover:shadow-2xl hover:shadow-emerald-500/20 hover:border-emerald-500/40 backdrop-blur-sm"
-                      placeholder="0,00"
-                      autoComplete="off"
+                    placeholder="0,00"
+                    autoComplete="off"
                       style={{ textShadow: '0 1px 2px rgba(0,0,0,0.3)' }}
-                    />
+                  />
                   </div>
                 </div>
                 <div className="space-y-3">
@@ -276,20 +276,20 @@ export default function InvoicePreview({ invoice, onConfirm, onEdit, onUpdate, o
                   <div className="relative group">
                     <div className="absolute inset-0 bg-gradient-to-r from-amber-500/20 via-orange-500/20 to-amber-500/20 rounded-2xl blur-xl opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
                     <div className="absolute inset-0 bg-gradient-to-br from-amber-500/5 via-orange-500/5 to-amber-500/5 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
-                    <input
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      max="100"
-                      value={editedInvoice.aliquota_iss}
-                      onChange={(e) => handleFieldChange('aliquota_iss', e.target.value)}
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    max="100"
+                    value={editedInvoice.aliquota_iss}
+                    onChange={(e) => handleFieldChange('aliquota_iss', e.target.value)}
                       className="relative w-full px-6 py-5 rounded-2xl text-white text-lg font-bold bg-gradient-to-br from-slate-800/90 via-slate-800/95 to-slate-900/90 border-2 border-slate-700/50 focus:border-amber-400/80 focus:ring-4 focus:ring-amber-500/30 transition-all duration-300 outline-none placeholder:text-gray-400/70 shadow-xl shadow-black/40 hover:shadow-2xl hover:shadow-amber-500/20 hover:border-amber-500/40 backdrop-blur-sm"
                       placeholder="5,00"
-                      autoComplete="off"
+                    autoComplete="off"
                       style={{ textShadow: '0 1px 2px rgba(0,0,0,0.3)' }}
-                    />
-                  </div>
+                  />
                 </div>
+              </div>
               </motion.div>
 
               {/* Municipality Field */}
@@ -306,16 +306,16 @@ export default function InvoicePreview({ invoice, onConfirm, onEdit, onUpdate, o
                 <div className="relative group">
                   <div className="absolute inset-0 bg-gradient-to-r from-rose-500/20 via-pink-500/20 to-rose-500/20 rounded-2xl blur-xl opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
                   <div className="absolute inset-0 bg-gradient-to-br from-rose-500/5 via-pink-500/5 to-rose-500/5 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
-                  <input
-                    type="text"
-                    value={editedInvoice.municipio}
-                    onChange={(e) => handleFieldChange('municipio', e.target.value)}
+                <input
+                  type="text"
+                  value={editedInvoice.municipio}
+                  onChange={(e) => handleFieldChange('municipio', e.target.value)}
                     className="relative w-full px-6 py-5 rounded-2xl text-white text-base font-semibold bg-gradient-to-br from-slate-800/90 via-slate-800/95 to-slate-900/90 border-2 border-slate-700/50 focus:border-rose-400/80 focus:ring-4 focus:ring-rose-500/30 transition-all duration-300 outline-none placeholder:text-gray-400/70 shadow-xl shadow-black/40 hover:shadow-2xl hover:shadow-rose-500/20 hover:border-rose-500/40 backdrop-blur-sm"
                     placeholder="Nome da cidade"
-                    autoComplete="off"
+                  autoComplete="off"
                     style={{ textShadow: '0 1px 2px rgba(0,0,0,0.3)' }}
-                  />
-                </div>
+                />
+              </div>
               </motion.div>
 
               {/* Premium Action Buttons */}
