@@ -174,7 +174,7 @@ router.get('/users', [
   query('page').optional().isInt({ min: 1 }),
   query('limit').optional().isInt({ min: 1, max: 100 }),
   query('search').optional().trim(),
-  query('status').optional().isIn(['all', 'active', 'trial', 'blocked'])
+  query('status').optional().isIn(['all', 'active', 'pending', 'blocked'])
 ], validateRequest, asyncHandler(async (req, res) => {
   const page = parseInt(req.query.page) || 1;
   const limit = parseInt(req.query.limit) || 20;
@@ -440,7 +440,7 @@ router.get('/subscriptions', [
  * Update subscription status
  */
 router.put('/subscriptions/:id', [
-  body('status').isIn(['trial', 'ativo', 'inadimplente', 'cancelado'])
+  body('status').isIn(['ativo', 'pending', 'inadimplente', 'cancelado'])
 ], validateRequest, asyncHandler(async (req, res) => {
   const subscription = await prisma.subscription.findUnique({
     where: { id: req.params.id }

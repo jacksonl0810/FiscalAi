@@ -1,10 +1,16 @@
 /**
  * Plan Service
  * Handles plan-related business logic, limit checking, and validations
+ * 
+ * FINAL PLAN STRUCTURE:
+ * - Pay per Use: R$9/invoice, 1 company, unlimited invoices (requires payment per invoice)
+ * - Essential: R$79/month, 2 companies, 30 invoices/month
+ * - Professional: R$149/month, 5 companies, 100 invoices/month
+ * - Accountant: Custom, unlimited companies, unlimited invoices
  */
 
 import { prisma } from '../lib/prisma.js';
-import { getPlanConfig, getUpgradeOptions } from '../config/plans.js';
+import { getPlanConfig, getUpgradeOptions, isPayPerUsePlan, getPayPerUseInvoicePrice } from '../config/plans.js';
 import { AppError } from '../middleware/errorHandler.js';
 
 /**
@@ -22,8 +28,8 @@ export async function getActiveSubscription(userId) {
     return null;
   }
 
-  // For subscription plans, must be active or trial
-  if (subscription.status !== 'ACTIVE' && subscription.status !== 'TRIAL') {
+  // For subscription plans, must be active
+  if (subscription.status !== 'ACTIVE') {
     throw new AppError('Subscription required', 403, 'SUBSCRIPTION_REQUIRED');
   }
 
@@ -40,42 +46,40 @@ export async function getUserPlanId(userId) {
     where: { userId },
     select: { 
       planId: true, 
-      status: true,
-      trialEndsAt: true
+      status: true
     }
   });
 
-  // If no subscription, default to trial (user needs to subscribe)
+  // If no subscription, default to pay_per_use (new default for no subscription)
   if (!subscription) {
-    return 'trial';
+    return 'pay_per_use';
   }
 
   // Handle status based on SubscriptionStatus enum
   switch (subscription.status) {
-    case 'TRIAL':
-      // Check if trial is still valid
-      if (subscription.trialEndsAt && new Date() > new Date(subscription.trialEndsAt)) {
-        return subscription.planId || 'trial';
-      }
-      return 'trial';
-
     case 'ACTIVE':
       return subscription.planId || 'essential';
 
     case 'PENDING':
-      // If there's a trial end date and it hasn't passed, user is still in trial
-      if (subscription.trialEndsAt && new Date() <= new Date(subscription.trialEndsAt)) {
-        return 'trial';
-      }
-      return subscription.planId || 'trial';
+      return subscription.planId || 'pay_per_use';
 
     case 'PAST_DUE':
     case 'CANCELED':
     case 'EXPIRED':
     default:
-      // For inactive statuses, return trial (limited access)
-      return 'trial';
+      // For inactive statuses, return pay_per_use (can still use with per-invoice payment)
+      return 'pay_per_use';
   }
+}
+
+/**
+ * Check if user has Pay per Use plan
+ * @param {string} userId - User ID
+ * @returns {Promise<boolean>} True if pay per use
+ */
+export async function isUserOnPayPerUse(userId) {
+  const planId = await getUserPlanId(userId);
+  return isPayPerUsePlan(planId);
 }
 
 /**
@@ -130,14 +134,33 @@ export async function checkInvoiceLimit(userId) {
     throw new AppError('Invalid plan configuration', 500, 'INVALID_PLAN_CONFIG');
   }
 
-  if (planConfig.maxInvoicesPerMonth === null) {
+  // Pay per Use plan - always "allowed" but requires payment per invoice
+  if (planConfig.isPayPerUse) {
     return {
       allowed: true,
       unlimited: true,
+      isPayPerUse: true,
+      perInvoicePrice: planConfig.perInvoicePrice,
+      perInvoicePriceFormatted: `R$ ${(planConfig.perInvoicePrice / 100).toFixed(2).replace('.', ',')}`,
       current: 0,
       used: 0,
       max: null,
       remaining: null,
+      requiresPayment: true,
+      upgradeOptions: getUpgradeOptions(planId)
+    };
+  }
+
+  if (planConfig.maxInvoicesPerMonth === null) {
+    return {
+      allowed: true,
+      unlimited: true,
+      isPayPerUse: false,
+      current: 0,
+      used: 0,
+      max: null,
+      remaining: null,
+      requiresPayment: false,
       upgradeOptions: getUpgradeOptions(planId)
     };
   }
@@ -147,14 +170,13 @@ export async function checkInvoiceLimit(userId) {
   const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
 
   // Count ALL invoices emitted this month (not just authorized ones)
-  // Include invoices with dataEmissao in range, OR (no dataEmissao but createdAt this month) so we don't miss any
   const invoiceCount = await prisma.invoice.count({
     where: {
       company: {
         userId: userId
       },
       status: {
-        notIn: ['rascunho'] // Only exclude drafts - all other statuses count towards limit
+        notIn: ['rascunho'] // Only exclude drafts
       },
       OR: [
         {
@@ -177,10 +199,12 @@ export async function checkInvoiceLimit(userId) {
   const result = {
     allowed: invoiceCount < planConfig.maxInvoicesPerMonth,
     unlimited: false,
+    isPayPerUse: false,
     current: invoiceCount,
-    used: invoiceCount, // alias for frontend Dashboard "Notas Fiscais" usage display
+    used: invoiceCount,
     max: planConfig.maxInvoicesPerMonth,
     remaining: Math.max(0, planConfig.maxInvoicesPerMonth - invoiceCount),
+    requiresPayment: false,
     upgradeOptions: getUpgradeOptions(planId)
   };
 
@@ -259,16 +283,110 @@ export async function getPlanLimitsSummary(userId) {
   return {
     planId,
     planName: planConfig.name,
+    isPayPerUse: planConfig.isPayPerUse || false,
     companyLimit,
     invoiceLimit,
     upgradeOptions: getUpgradeOptions(planId)
   };
 }
 
+/**
+ * Check if Pay per Use payment is required and pending
+ * @param {string} userId - User ID
+ * @param {string} companyId - Company ID
+ * @returns {Promise<object>} Payment requirement status
+ */
+export async function checkPayPerUsePaymentStatus(userId, companyId) {
+  const planId = await getUserPlanId(userId);
+  const planConfig = getPlanConfig(planId);
+
+  if (!planConfig.isPayPerUse) {
+    return {
+      required: false,
+      planId,
+      message: 'Plano atual não requer pagamento por nota'
+    };
+  }
+
+  // Check for pending invoice usage payments
+  const pendingPayments = await prisma.invoiceUsage.count({
+    where: {
+      userId,
+      companyId,
+      status: 'pending_payment'
+    }
+  });
+
+  if (pendingPayments > 0) {
+    return {
+      required: true,
+      blocked: true,
+      pendingPayments,
+      planId,
+      perInvoicePrice: planConfig.perInvoicePrice,
+      message: `Você tem ${pendingPayments} pagamento(s) pendente(s). Regularize para continuar emitindo.`
+    };
+  }
+
+  return {
+    required: true,
+    blocked: false,
+    pendingPayments: 0,
+    planId,
+    perInvoicePrice: planConfig.perInvoicePrice,
+    perInvoicePriceFormatted: `R$ ${(planConfig.perInvoicePrice / 100).toFixed(2).replace('.', ',')}`,
+    message: 'Pagamento de R$9,00 será cobrado por esta nota fiscal.'
+  };
+}
+
+/**
+ * Create invoice usage record for Pay per Use
+ * @param {string} userId - User ID
+ * @param {string} companyId - Company ID
+ * @param {string} invoiceId - Invoice ID (optional, set after invoice is issued)
+ * @returns {Promise<object>} Invoice usage record
+ */
+export async function createPayPerUseUsage(userId, companyId, invoiceId = null) {
+  const planConfig = getPlanConfig('pay_per_use');
+  const now = new Date();
+
+  const usage = await prisma.invoiceUsage.create({
+    data: {
+      userId,
+      companyId,
+      invoiceId,
+      planId: 'pay_per_use',
+      periodYear: now.getFullYear(),
+      periodMonth: now.getMonth() + 1,
+      amount: planConfig.perInvoicePrice,
+      status: 'pending_payment'
+    }
+  });
+
+  return usage;
+}
+
+/**
+ * Mark Pay per Use payment as completed
+ * @param {string} usageId - Invoice usage ID
+ * @param {string} paymentOrderId - Payment order ID from payment provider
+ * @returns {Promise<object>} Updated usage record
+ */
+export async function completePayPerUsePayment(usageId, paymentOrderId) {
+  const usage = await prisma.invoiceUsage.update({
+    where: { id: usageId },
+    data: {
+      status: 'paid',
+      paymentOrderId
+    }
+  });
+
+  return usage;
+}
 
 /**
  * Comprehensive plan limits validation before invoice issuance
- * Checks all limits: invoice limit
+ * Checks all limits: invoice limit, pay-per-use status
  * NOTE: Company limit is NOT checked here - it only applies when CREATING new companies
  * @param {string} userId - User ID
  * @param {string} companyId - Company ID (optional, for verification that company exists and belongs to user)
@@ -280,7 +398,56 @@ export async function validatePlanLimitsForIssuance(userId, companyId = null) {
   const errors = [];
   const warnings = [];
 
-  // 1. Check invoice limit
+  // 1. Check if Pay per Use plan
+  if (planConfig?.isPayPerUse) {
+    // For Pay per Use, check for pending payments that would block issuance
+    if (companyId) {
+      const paymentStatus = await checkPayPerUsePaymentStatus(userId, companyId);
+      if (paymentStatus.blocked) {
+        errors.push({
+          code: 'PAY_PER_USE_PENDING_PAYMENTS',
+          message: paymentStatus.message,
+          details: {
+            pendingPayments: paymentStatus.pendingPayments,
+            perInvoicePrice: paymentStatus.perInvoicePrice
+          },
+          suggestions: [{
+            type: 'payment',
+            message: 'Regularize os pagamentos pendentes para continuar emitindo notas.'
+          }]
+        });
+      } else {
+        // Add warning about per-invoice charge
+        warnings.push({
+          code: 'PAY_PER_USE_CHARGE',
+          message: paymentStatus.message,
+          perInvoicePrice: paymentStatus.perInvoicePrice,
+          perInvoicePriceFormatted: paymentStatus.perInvoicePriceFormatted
+        });
+      }
+    }
+
+    return {
+      valid: errors.length === 0,
+      planId,
+      planName: planConfig?.name || 'Pay per Use',
+      isPayPerUse: true,
+      perInvoicePrice: planConfig.perInvoicePrice,
+      perInvoicePriceFormatted: `R$ ${(planConfig.perInvoicePrice / 100).toFixed(2).replace('.', ',')}`,
+      errors,
+      warnings,
+      invoiceLimit: {
+        allowed: true,
+        unlimited: true,
+        isPayPerUse: true,
+        requiresPayment: true
+      },
+      companyLimit: companyId ? await checkCompanyLimit(userId) : null,
+      upgradeOptions: getUpgradeOptions(planId)
+    };
+  }
+
+  // 2. Check invoice limit for subscription plans
   const invoiceLimit = await checkInvoiceLimit(userId);
   if (!invoiceLimit.allowed) {
     const error = {
@@ -306,6 +473,14 @@ export async function validatePlanLimitsForIssuance(userId, companyId = null) {
       });
     }
 
+    // Add Pay per Use as alternative
+    error.suggestions.push({
+      type: 'pay_per_use',
+      planId: 'pay_per_use',
+      planName: 'Pay per Use',
+      message: 'Ou use o Pay per Use (R$9 por nota) para emitir notas adicionais.'
+    });
+
     errors.push(error);
   } else if (!invoiceLimit.unlimited && invoiceLimit.remaining <= 5) {
     // Warning when close to limit
@@ -318,7 +493,7 @@ export async function validatePlanLimitsForIssuance(userId, companyId = null) {
     });
   }
 
-  // 2. Verify company exists and belongs to user (if companyId provided)
+  // 3. Verify company exists and belongs to user (if companyId provided)
   if (companyId) {
     const company = await prisma.company.findFirst({
       where: {
@@ -340,11 +515,64 @@ export async function validatePlanLimitsForIssuance(userId, companyId = null) {
   return {
     valid: errors.length === 0,
     planId,
-    planName: planConfig?.name || 'Trial',
+    planName: planConfig?.name || 'Pay per Use',
+    isPayPerUse: false,
     errors,
     warnings,
     invoiceLimit,
     companyLimit: companyId ? await checkCompanyLimit(userId) : null,
     upgradeOptions: getUpgradeOptions(planId)
   };
+}
+
+/**
+ * Get recommended plan based on usage
+ * @param {string} userId - User ID
+ * @returns {Promise<object>} Recommended plan
+ */
+export async function getRecommendedPlan(userId) {
+  const now = new Date();
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
+
+  // Get current month invoice count
+  const invoiceCount = await prisma.invoice.count({
+    where: {
+      company: {
+        userId: userId
+      },
+      createdAt: {
+        gte: startOfMonth,
+        lte: endOfMonth
+      }
+    }
+  });
+
+  // Get company count
+  const companyCount = await prisma.company.count({
+    where: { userId }
+  });
+
+  // Recommendation logic
+  if (invoiceCount <= 5) {
+    return {
+      planId: 'pay_per_use',
+      reason: 'Com poucos invoices por mês, Pay per Use é mais econômico.'
+    };
+  } else if (invoiceCount <= 30 && companyCount <= 2) {
+    return {
+      planId: 'essential',
+      reason: 'Essential oferece até 30 notas/mês e 2 empresas por R$79/mês.'
+    };
+  } else if (invoiceCount <= 100 && companyCount <= 5) {
+    return {
+      planId: 'professional',
+      reason: 'Professional oferece até 100 notas/mês e 5 empresas por R$149/mês.'
+    };
+  } else {
+    return {
+      planId: 'accountant',
+      reason: 'Com alto volume, o plano Contador oferece uso ilimitado.'
+    };
+  }
 }

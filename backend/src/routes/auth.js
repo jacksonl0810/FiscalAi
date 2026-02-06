@@ -272,78 +272,16 @@ router.get('/me', authenticate, asyncHandler(async (req, res) => {
     where: { userId: req.user.id }
   });
 
-  // Get full user with trial info
-  const fullUser = await prisma.user.findUnique({
-    where: { id: req.user.id },
-    select: { 
-      hasUsedTrial: true, 
-      trialStartedAt: true,
-      createdAt: true 
-    }
-  });
-
   let subscriptionStatus = null;
   let plan = null;
   let daysRemaining = 0;
   let currentPeriodEnd = null;
-  let trialDaysRemaining = 0;
-  let isInTrialPeriod = false;
 
   const now = new Date();
 
-  // Helper: Check if user is in active trial period
-  const checkTrialPeriod = () => {
-    if (subscription && subscription.status === 'trial' && subscription.trialEndsAt) {
-      const trialEnd = new Date(subscription.trialEndsAt);
-      if (now <= trialEnd) {
-        trialDaysRemaining = Math.max(0, Math.ceil((trialEnd - now) / (1000 * 60 * 60 * 24)));
-        isInTrialPeriod = true;
-        return { valid: true, daysRemaining: trialDaysRemaining, endDate: trialEnd };
-      }
-    }
-    // Also check user's trialStartedAt for implicit trial
-    if (fullUser?.trialStartedAt) {
-      const trialStart = new Date(fullUser.trialStartedAt);
-      const trialEnd = new Date(trialStart);
-      trialEnd.setDate(trialEnd.getDate() + 7); // 7-day trial
-      if (now <= trialEnd) {
-        trialDaysRemaining = Math.max(0, Math.ceil((trialEnd - now) / (1000 * 60 * 60 * 24)));
-        isInTrialPeriod = true;
-        return { valid: true, daysRemaining: trialDaysRemaining, endDate: trialEnd };
-      }
-    }
-    return { valid: false, daysRemaining: 0, endDate: null };
-  };
-
   if (subscription) {
-    const trialCheck = checkTrialPeriod();
-
-    // ✅ PRIORITY 1: If user has active trial, allow access regardless of pending payment
-    if (subscription.status === 'pending' && trialCheck.valid) {
-      // User tried to upgrade but payment is pending - still allow trial access
-      subscriptionStatus = 'trial';
-      plan = 'trial';
-      daysRemaining = trialCheck.daysRemaining;
-      currentPeriodEnd = trialCheck.endDate;
-      console.log('[Auth] User has pending payment but still in trial period. Allowing access.');
-    }
-    // ✅ PRIORITY 2: Active trial subscription
-    else if (subscription.status === 'trial') {
-      if (trialCheck.valid) {
-        subscriptionStatus = 'trial';
-        plan = 'trial';
-        daysRemaining = trialCheck.daysRemaining;
-        currentPeriodEnd = subscription.trialEndsAt || trialCheck.endDate;
-      } else {
-        // Trial expired
-        subscriptionStatus = 'trial_expired';
-        plan = null;
-        daysRemaining = 0;
-        currentPeriodEnd = subscription.trialEndsAt;
-      }
-    }
-    // ✅ PRIORITY 3: Canceled but still in paid period (DB enum is 'CANCELED')
-    else if ((subscription.status === 'CANCELED' || subscription.status === 'cancelado') && subscription.currentPeriodEnd) {
+    // ✅ PRIORITY 1: Canceled but still in paid period (DB enum is 'CANCELED')
+    if ((subscription.status === 'CANCELED' || subscription.status === 'cancelado') && subscription.currentPeriodEnd) {
       const periodEnd = new Date(subscription.currentPeriodEnd);
       
       if (now <= periodEnd) {
@@ -358,7 +296,7 @@ router.get('/me', authenticate, asyncHandler(async (req, res) => {
         daysRemaining = 0;
       }
     }
-    // ✅ PRIORITY 4: Active subscription (DB enum is 'ACTIVE'; support legacy 'ativo')
+    // ✅ PRIORITY 2: Active subscription (DB enum is 'ACTIVE'; support legacy 'ativo')
     else if (subscription.status === 'ACTIVE' || subscription.status === 'ativo') {
       subscriptionStatus = 'ativo';
       plan = subscription.planId;
@@ -368,8 +306,8 @@ router.get('/me', authenticate, asyncHandler(async (req, res) => {
         daysRemaining = Math.max(0, Math.ceil((new Date(currentPeriodEnd) - now) / (1000 * 60 * 60 * 24)));
       }
     }
-    // ✅ PRIORITY 5: Pending payment (no active trial)
-    else if (subscription.status === 'pending') {
+    // ✅ PRIORITY 3: Pending payment
+    else if (subscription.status === 'pending' || subscription.status === 'PENDING') {
       subscriptionStatus = 'pending';
       plan = subscription.planId;
       daysRemaining = 0;
@@ -386,26 +324,11 @@ router.get('/me', authenticate, asyncHandler(async (req, res) => {
       }
     }
   } else {
-    // No subscription record
-    // Check if user is in implicit trial period (first 7 days after registration)
-    const userCreatedAt = new Date(fullUser?.createdAt || user.createdAt);
-    const implicitTrialEnd = new Date(userCreatedAt);
-    implicitTrialEnd.setDate(implicitTrialEnd.getDate() + 7);
-
-    if (now <= implicitTrialEnd && !fullUser?.hasUsedTrial) {
-      // New user in implicit trial period - they need to select a plan
-      // But we'll still allow limited access
-      subscriptionStatus = null; // Redirect to pricing
-      plan = null;
-      daysRemaining = Math.max(0, Math.ceil((implicitTrialEnd - now) / (1000 * 60 * 60 * 24)));
-      currentPeriodEnd = implicitTrialEnd;
-    } else {
-      // No trial, no subscription
+    // No subscription record - user needs to select a plan
     subscriptionStatus = null;
     plan = null;
     daysRemaining = 0;
     currentPeriodEnd = null;
-    }
   }
 
   // Return user with subscription info
@@ -414,9 +337,7 @@ router.get('/me', authenticate, asyncHandler(async (req, res) => {
     subscription_status: subscriptionStatus,
     plan: plan,
     days_remaining: daysRemaining,
-    current_period_end: currentPeriodEnd,
-    is_in_trial: isInTrialPeriod,
-    trial_days_remaining: trialDaysRemaining
+    current_period_end: currentPeriodEnd
   });
 }));
 

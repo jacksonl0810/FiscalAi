@@ -103,7 +103,6 @@ export const SUBSCRIPTION_STATUS = {
   INACTIVE: 'inativo',
   CANCELED: 'cancelado',
   PENDING: 'pending',
-  TRIAL: 'trial',
 } as const;
 
 // Tax Regimes

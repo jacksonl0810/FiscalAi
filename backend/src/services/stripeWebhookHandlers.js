@@ -243,7 +243,6 @@ export async function onSubscriptionUpdated(stripeSubscription) {
     const statusMap = {
       'incomplete': 'PENDING',
       'incomplete_expired': 'EXPIRED',
-      'trialing': 'TRIAL',
       'active': 'ACTIVE',
       'past_due': 'PAST_DUE',
       'canceled': 'CANCELED',
@@ -346,38 +345,13 @@ export async function onSubscriptionDeleted(stripeSubscription) {
 
 /**
  * Handle customer.subscription.trial_will_end event
- * Trial period ending soon (3 days before)
+ * @deprecated Trial plan has been removed. This handler is kept for backwards compatibility.
  */
 export async function onSubscriptionTrialWillEnd(stripeSubscription) {
-  console.log('[Stripe Webhook] Processing customer.subscription.trial_will_end:', {
-    subscriptionId: stripeSubscription.id,
-    trialEnd: new Date(stripeSubscription.trial_end * 1000)
+  console.log('[Stripe Webhook] Ignoring trial_will_end event (trial plan removed):', {
+    subscriptionId: stripeSubscription.id
   });
-  
-  const subscription = await prisma.subscription.findFirst({
-    where: { stripeSubscriptionId: stripeSubscription.id },
-    include: { user: true }
-  });
-  
-  if (!subscription || !subscription.user.email) return;
-  
-  try {
-    const trialEndDate = new Date(stripeSubscription.trial_end * 1000).toLocaleDateString();
-    
-    await sendEmail({
-      to: subscription.user.email,
-      subject: 'Your Trial Ends Soon - MAY',
-      html: `
-        <h2>Trial Ending Soon</h2>
-        <p>Your trial period will end on ${trialEndDate}.</p>
-        <p>Your subscription will automatically continue with your saved payment method.</p>
-        <p><a href="${process.env.FRONTEND_URL}/settings/billing">Manage Subscription</a></p>
-      `
-    }).catch(err => console.error('[Email] Failed to send trial reminder:', err));
-    
-  } catch (error) {
-    console.error('[Stripe Webhook] ❌ Error processing trial_will_end:', error);
-  }
+  // No-op - trial plan has been removed
 }
 
 // Export all handlers

@@ -8,20 +8,10 @@ export interface CreateCheckoutParams {
 }
 
 export interface SubscriptionStatus {
-  status: 'trial' | 'ACTIVE' | 'PENDING' | 'PAST_DUE' | 'CANCELED' | 'TRIAL' | string;
+  status: 'ACTIVE' | 'PENDING' | 'PAST_DUE' | 'CANCELED' | 'no_subscription' | string;
   plan_id?: string;
   current_period_end?: string;
   days_remaining?: number;
-  has_used_trial?: boolean;
-  trial_eligible?: boolean;
-}
-
-export interface TrialEligibility {
-  eligible: boolean;
-  hasUsedTrial: boolean;
-  trialStartedAt?: string;
-  trialEndedAt?: string;
-  message: string;
 }
 
 export interface ProcessPaymentParams {
@@ -53,7 +43,7 @@ export interface ProcessPaymentResponse {
 export const subscriptionsService = {
   /**
    * Start subscription flow
-   * For trial: activates immediately
+   * For pay_per_use: activates immediately
    * For paid plans: redirects to checkout page
    */
   createCheckout: async (params: CreateCheckoutParams) => {
@@ -70,12 +60,14 @@ export const subscriptionsService = {
   },
 
   /**
-   * Check if user is eligible for free trial
-   * Users can only use trial ONCE
+   * @deprecated Trial plan has been removed
    */
-  checkTrialEligibility: async (): Promise<TrialEligibility> => {
-    const response = await apiClient.get('/subscriptions/trial-eligibility');
-    return response.data.data || response.data;
+  checkTrialEligibility: async () => {
+    return {
+      eligible: false,
+      hasUsedTrial: true,
+      message: 'O período de teste não está mais disponível.'
+    };
   },
 
   /**

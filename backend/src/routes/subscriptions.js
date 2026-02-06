@@ -391,7 +391,6 @@ router.post('/process-payment',
       const statusMap = {
         'incomplete': 'PENDING',
         'incomplete_expired': 'EXPIRED',
-        'trialing': 'TRIAL',
         'active': 'ACTIVE',
         'past_due': 'PAST_DUE',
         'canceled': 'CANCELED',
@@ -485,146 +484,133 @@ router.post('/process-payment',
 
 /**
  * POST /api/subscriptions/start
- * Start subscription process - for trial plans or redirect to checkout
+ * Start subscription process - handles pay_per_use and paid plans
+ * 
+ * PLAN TYPES:
+ * - pay_per_use: No subscription needed, activates immediately (R$9/invoice)
+ * - essential/professional: Monthly subscription plans
+ * - accountant: Custom pricing (contact sales)
  */
 router.post('/start', 
   subscriptionLimiter,
   [
     body('plan_id').notEmpty().withMessage('Plan ID is required'),
-    body('billing_cycle').optional().isIn(['monthly', 'semiannual', 'annual'])
+    body('billing_cycle').optional().isIn(['monthly', 'annual'])
   ], 
   validateRequest, 
   asyncHandler(async (req, res) => {
     const { plan_id, billing_cycle = 'monthly' } = req.body;
-  const userId = req.user.id;
+    const userId = req.user.id;
 
-  const user = await prisma.user.findUnique({
+    const user = await prisma.user.findUnique({
       where: { id: userId }
-  });
+    });
 
-  if (!user) {
+    if (!user) {
       throw new AppError('Usuário não encontrado', 404, 'NOT_FOUND');
-  }
+    }
 
-    const { getPlanConfig, normalizePlanId } = await import('../config/plans.js');
-  const normalizedPlanId = normalizePlanId(plan_id);
-  const planConfig = getPlanConfig(normalizedPlanId);
+    const { getPlanConfig, normalizePlanId, isPayPerUsePlan } = await import('../config/plans.js');
+    const normalizedPlanId = normalizePlanId(plan_id);
+    const planConfig = getPlanConfig(normalizedPlanId);
     
-  if (!planConfig) {
+    if (!planConfig) {
       throw new AppError('Plano não encontrado', 400, 'INVALID_PLAN');
     }
 
-    // Handle trial differently - activate immediately (no payment needed)
-    if (normalizedPlanId === 'trial') {
-      if (user.hasUsedTrial) {
-    throw new AppError(
-          'Você já utilizou seu período de teste gratuito. Por favor, escolha um plano pago para continuar.',
-          403,
-          'TRIAL_ALREADY_USED'
-        );
-      }
-
-      const now = new Date();
-      const periodEnd = new Date(now);
-      periodEnd.setDate(periodEnd.getDate() + 7);
-
-      const existingSubscription = await prisma.subscription.findUnique({
-      where: { userId }
-    });
-
-    let subscription;
-    if (existingSubscription) {
-      subscription = await prisma.subscription.update({
-        where: { id: existingSubscription.id },
-        data: {
-            status: 'TRIAL',
-            planId: 'trial',
-            currentPeriodStart: now,
-            currentPeriodEnd: periodEnd,
-            trialEndsAt: periodEnd,
-          canceledAt: null
-        }
+    // Handle custom pricing plans (accountant)
+    if (planConfig.isCustomPricing) {
+      sendSuccess(res, 'Custom pricing plan - contact sales', {
+        checkout_url: null,
+        subscription_id: null,
+        plan_id: normalizedPlanId,
+        status: 'CONTACT_SALES',
+        message: 'Para o plano Contador, entre em contato com nossa equipe de vendas.',
+        contact_email: 'contato@mayassessorfiscal.com.br'
       });
-    } else {
-      subscription = await prisma.subscription.create({
-        data: {
-          userId,
-            status: 'TRIAL',
-            planId: 'trial',
-            stripeSubscriptionId: `trial_${Date.now()}_${userId.slice(0, 8)}`,
-            currentPeriodStart: now,
-            currentPeriodEnd: periodEnd,
-            trialEndsAt: periodEnd
-        }
-      });
+      return;
     }
 
-      await prisma.user.update({
-        where: { id: userId },
-        data: {
-          hasUsedTrial: true,
-          trialStartedAt: now
-        }
+    // Handle Pay per Use - activate immediately (no subscription needed)
+    if (isPayPerUsePlan(normalizedPlanId)) {
+      const existingSubscription = await prisma.subscription.findUnique({
+        where: { userId }
       });
 
-    await createNotificationWithIdempotency({
-      userId,
-        titulo: 'Bem-vindo à MAY!',
-        mensagem: 'Seu trial de 7 dias começou. Aproveite todas as funcionalidades!',
+      let subscription;
+      if (existingSubscription) {
+        // Update to pay_per_use
+        subscription = await prisma.subscription.update({
+          where: { id: existingSubscription.id },
+          data: {
+            status: 'ACTIVE',
+            planId: 'pay_per_use',
+            billingCycle: 'per_invoice',
+            canceledAt: null,
+            // Clear period dates (pay per use has no period)
+            currentPeriodStart: null,
+            currentPeriodEnd: null,
+            nextBillingAt: null
+          }
+        });
+      } else {
+        subscription = await prisma.subscription.create({
+          data: {
+            userId,
+            status: 'ACTIVE',
+            planId: 'pay_per_use',
+            billingCycle: 'per_invoice',
+            stripeSubscriptionId: `ppu_${Date.now()}_${userId.slice(0, 8)}`
+          }
+        });
+      }
+
+      await createNotificationWithIdempotency({
+        userId,
+        titulo: 'Pay per Use Ativado!',
+        mensagem: 'Agora você pode emitir notas fiscais por R$9 cada. Pague apenas quando usar.',
         tipo: 'sucesso',
         windowMinutes: 60
       });
 
-      const checkoutUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/payment-success?plan=trial&session_id=${subscription.stripeSubscriptionId}`;
+      const checkoutUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/payment-success?plan=pay_per_use&session_id=${subscription.stripeSubscriptionId}`;
 
-      sendSuccess(res, 'Trial started', {
+      sendSuccess(res, 'Pay per Use activated', {
         checkout_url: checkoutUrl,
-      subscription_id: subscription.id,
-        plan_id: 'trial',
-        status: 'TRIAL'
+        subscription_id: subscription.id,
+        plan_id: 'pay_per_use',
+        status: 'ACTIVE',
+        per_invoice_price: planConfig.perInvoicePrice,
+        per_invoice_price_formatted: 'R$ 9,00'
       });
-    } else {
-      // For paid plans, redirect to checkout page
-      const checkoutUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/checkout/subscription?plan=${plan_id}&cycle=${billing_cycle}`;
-      
-      sendSuccess(res, 'Redirect to checkout', {
-        checkout_url: checkoutUrl,
-        subscription_id: null,
-        plan_id: normalizedPlanId,
-        status: null
-      });
+      return;
     }
+
+    // For paid subscription plans (essential, professional), redirect to checkout page
+    const checkoutUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/checkout/subscription?plan=${normalizedPlanId}&cycle=${billing_cycle}`;
+    
+    sendSuccess(res, 'Redirect to checkout', {
+      checkout_url: checkoutUrl,
+      subscription_id: null,
+      plan_id: normalizedPlanId,
+      billing_cycle,
+      status: null
+    });
   })
 );
 
 /**
  * GET /api/subscriptions/trial-eligibility
- * Check if user is eligible for free trial
+ * @deprecated Trial plan has been removed. This endpoint is kept for backwards compatibility.
+ * Always returns not eligible.
  */
 router.get('/trial-eligibility', asyncHandler(async (req, res) => {
-  const userId = req.user.id;
-
-  const user = await prisma.user.findUnique({
-    where: { id: userId },
-    select: {
-      hasUsedTrial: true,
-      trialStartedAt: true,
-      trialEndedAt: true
-    }
-  });
-
-  if (!user) {
-    throw new AppError('Usuário não encontrado', 404, 'NOT_FOUND');
-  }
-
-  sendSuccess(res, 'Trial eligibility checked', {
-    eligible: !user.hasUsedTrial,
-    hasUsedTrial: user.hasUsedTrial || false,
-    trialStartedAt: user.trialStartedAt,
-    trialEndedAt: user.trialEndedAt,
-    message: user.hasUsedTrial 
-      ? 'Você já utilizou seu período de teste gratuito. Por favor, escolha um plano pago.'
-      : 'Você pode iniciar seu período de teste gratuito de 7 dias.'
+  sendSuccess(res, 'Trial plan is no longer available', {
+    eligible: false,
+    hasUsedTrial: true,
+    trialStartedAt: null,
+    trialEndedAt: null,
+    message: 'O período de teste não está mais disponível. Por favor, escolha um plano pago.'
   });
 }));
 
@@ -644,32 +630,19 @@ router.get('/status', asyncHandler(async (req, res) => {
     where: { id: userId }
   });
 
-  let status = 'trial';
+  let status = 'no_subscription';
   let planId = null;
   let currentPeriodEnd = null;
   let daysRemaining = 0;
 
-  const trialDays = 7;
-  const accountAgeDays = Math.floor((Date.now() - new Date(user.createdAt)) / (1000 * 60 * 60 * 24));
-  const isInTrialPeriod = accountAgeDays <= trialDays;
-
-    if (subscription) {
-      status = subscription.status;
+  if (subscription) {
+    status = subscription.status;
     planId = subscription.planId;
-      currentPeriodEnd = subscription.currentPeriodEnd;
+    currentPeriodEnd = subscription.currentPeriodEnd;
     
-      if (currentPeriodEnd) {
-        const now = new Date();
-        daysRemaining = Math.max(0, Math.ceil((new Date(currentPeriodEnd) - now) / (1000 * 60 * 60 * 24)));
-      }
-  } else if (user) {
-    if (isInTrialPeriod) {
-      status = 'trial';
-      daysRemaining = trialDays - accountAgeDays;
-      currentPeriodEnd = new Date(new Date(user.createdAt).getTime() + trialDays * 24 * 60 * 60 * 1000);
-    } else if (user.hasUsedTrial) {
-      status = 'PAST_DUE';
-      daysRemaining = 0;
+    if (currentPeriodEnd) {
+      const now = new Date();
+      daysRemaining = Math.max(0, Math.ceil((new Date(currentPeriodEnd) - now) / (1000 * 60 * 60 * 24)));
     }
   }
 
@@ -677,9 +650,7 @@ router.get('/status', asyncHandler(async (req, res) => {
     status,
     plan_id: planId,
     current_period_end: currentPeriodEnd,
-    days_remaining: daysRemaining,
-    has_used_trial: user?.hasUsedTrial || false,
-    trial_eligible: !(user?.hasUsedTrial)
+    days_remaining: daysRemaining
   });
 }));
 
@@ -704,12 +675,12 @@ router.get('/verify', asyncHandler(async (req, res) => {
 
   const stripeSubId = subscription.stripeSubscriptionId;
 
-  if (!stripeSubId || stripeSubId.startsWith('trial_')) {
+  if (!stripeSubId || stripeSubId.startsWith('ppu_')) {
     return sendSuccess(res, 'Assinatura local encontrada', {
-      isValid: subscription.status === 'ACTIVE' || subscription.status === 'TRIAL',
+      isValid: subscription.status === 'ACTIVE',
       status: subscription.status,
       subscriptionId: subscription.id,
-      message: stripeSubId?.startsWith('trial_') ? 'Trial subscription' : 'No Stripe subscription ID'
+      message: stripeSubId?.startsWith('ppu_') ? 'Pay per Use subscription' : 'No Stripe subscription ID'
     });
   }
 
@@ -720,8 +691,7 @@ router.get('/verify', asyncHandler(async (req, res) => {
       'active': 'ACTIVE',
       'past_due': 'PAST_DUE',
       'canceled': 'CANCELED',
-      'incomplete': 'PENDING',
-      'trialing': 'TRIAL'
+      'incomplete': 'PENDING'
     };
     const mappedStatus = statusMap[stripeSubscription.status] || 'PENDING';
 
@@ -775,7 +745,7 @@ router.get('/current', asyncHandler(async (req, res) => {
 
   if (!subscription) {
     return sendSuccess(res, 'Usuário não possui assinatura', {
-      status: 'TRIAL',
+      status: 'no_subscription',
       hasSubscription: false
     });
   }
@@ -803,8 +773,8 @@ router.post('/cancel',
   }
 
   try {
-      // Cancel in Stripe if subscription ID exists
-      if (subscription.stripeSubscriptionId && !subscription.stripeSubscriptionId.startsWith('trial_')) {
+      // Cancel in Stripe if subscription ID exists (skip pay_per_use local subscriptions)
+      if (subscription.stripeSubscriptionId && !subscription.stripeSubscriptionId.startsWith('ppu_')) {
         await stripeSDK.cancelSubscription(subscription.stripeSubscriptionId, false); // Cancel at period end
         console.log('[Stripe] Subscription canceled at period end:', subscription.stripeSubscriptionId);
       }
@@ -858,7 +828,7 @@ router.post('/reactivate',
     }
 
     try {
-      if (subscription.stripeSubscriptionId && !subscription.stripeSubscriptionId.startsWith('trial_')) {
+      if (subscription.stripeSubscriptionId && !subscription.stripeSubscriptionId.startsWith('ppu_')) {
         await stripeSDK.reactivateSubscription(subscription.stripeSubscriptionId);
       }
 

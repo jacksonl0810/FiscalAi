@@ -14,26 +14,6 @@ async function seedPlans() {
   try {
     // Get all plans from config
     const configPlans = Object.values(PLANS);
-    
-    // Add trial plan (special case, not in PLANS object)
-    configPlans.push({
-      planId: 'trial',
-      name: 'Trial',
-      description: 'Plano de teste gratuito',
-      monthlyPrice: 0,
-      annualPrice: null,
-      perInvoicePrice: null,
-      maxCompanies: 1,
-      maxInvoicesPerMonth: 5,
-      features: [
-        'Até 5 notas fiscais',
-        'Assistente IA completo',
-        'Comando por voz',
-        '1 empresa',
-        'Suporte por email'
-      ],
-      billingCycle: 'trial'
-    });
 
     let created = 0;
     let updated = 0;
@@ -44,12 +24,12 @@ async function seedPlans() {
       
       // Determine plan type
       let planType = 'monthly';
-      if (configPlan.billingCycle === 'trial') {
-        planType = 'trial';
-      } else if (configPlan.billingCycle === 'annual' || configPlan.billingCycle === 'yearly') {
+      if (configPlan.billingCycle === 'annual' || configPlan.billingCycle === 'yearly') {
         planType = 'yearly';
       } else if (configPlan.billingCycle === 'custom') {
         planType = 'custom';
+      } else if (planId === 'pay_per_use') {
+        planType = 'pay_per_use';
       }
 
       // Determine interval
@@ -58,9 +38,6 @@ async function seedPlans() {
       if (planType === 'yearly' || configPlan.billingCycle === 'annual') {
         interval = 'year';
         intervalCount = 1;
-      } else if (planType === 'trial') {
-        interval = 'day';
-        intervalCount = 7; // 7-day trial
       }
 
       // Prepare plan data
@@ -72,7 +49,7 @@ async function seedPlans() {
         annualAmountCents: configPlan.annualPrice || null,
         interval: interval,
         intervalCount: intervalCount,
-        trialDays: planType === 'trial' ? 7 : (configPlan.trialDays || 0),
+        trialDays: 0, // No trial
         planType: planType,
         maxCompanies: configPlan.maxCompanies || null,
         maxInvoicesPerMonth: configPlan.maxInvoicesPerMonth || null,

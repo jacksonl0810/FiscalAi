@@ -2744,7 +2744,7 @@ PERÍODOS SUPORTADOS:
 
 VALIDAÇÕES OBRIGATÓRIAS ANTES DE EMITIR:
 Antes de emitir qualquer nota, você DEVE confirmar:
-1. Status do plano (ACTIVE, TRIAL, PAST_DUE, CANCELED)
+1. Status do plano (ACTIVE, PAST_DUE, CANCELED)
 2. Limite de notas do plano (verificar se atingiu o limite mensal)
 3. Limite de empresas (se aplicável)
 4. Empresa registrada na Nuvem Fiscal

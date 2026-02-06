@@ -97,12 +97,12 @@ describe('Plans Configuration', () => {
       expect(config.name).toBeTruthy();
     });
 
-    test('should handle trial plan specially', () => {
-      const config = getPlanConfig('trial');
+    test('should handle pay_per_use plan specially', () => {
+      const config = getPlanConfig('pay_per_use');
       
       expect(config).toBeDefined();
       expect(config.maxCompanies).toBeGreaterThan(0);
-      expect(config.maxInvoicesPerMonth).toBeGreaterThan(0);
+      expect(config.maxInvoicesPerMonth).toBe(-1); // Unlimited
     });
 
     test('should return undefined for unknown plan', () => {

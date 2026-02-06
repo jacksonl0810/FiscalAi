@@ -723,7 +723,7 @@ export default function CompanySetup() {
   const canAddCompany = planLimits?.companyLimit?.allowed !== false;
   const companyLimitUsed = allCompanies.length;
   const companyLimitMax = planLimits?.companyLimit?.max || 1;
-  const planName = planLimits?.planName || 'Trial';
+  const planName = planLimits?.planName || 'Pay per Use';
 
   // List view first (like Clients page): show whenever we're not in "new company" flow
   if (showListView && !isNewCompany) {

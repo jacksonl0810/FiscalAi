@@ -36,7 +36,8 @@ export default function SubscriptionPending() {
     isPollingRef.current = isPolling;
   }, [isPolling]);
 
-  const hasActiveTrial = user?.is_in_trial && user?.trial_days_remaining > 0;
+  // Trial has been removed - no longer checking for active trial
+  const hasActiveTrial = false;
 
   // Refs for navigate/refresh so polling effect doesn't depend on them (avoids effect re-run killing the interval)
   const navigateRef = useRef(navigate);
@@ -90,7 +91,7 @@ export default function SubscriptionPending() {
             duration: 5000
           });
 
-          const plan = planIdRef.current || status?.plan_id || 'pro';
+          const plan = planIdRef.current || status?.plan_id || 'pay_per_use';
           const successUrl = `/payment-success?plan=${encodeURIComponent(plan)}&status=paid`;
           queryClientRef.current.invalidateQueries({ queryKey: ['subscription-status'] });
           setTimeout(() => {
@@ -109,7 +110,7 @@ export default function SubscriptionPending() {
           navigateRef.current('/payment-failed');
           return;
         }
-        if (statusValue === 'trial') setCurrentStatus('trial');
+        // Trial status no longer used
 
         setPollCount(prev => prev + 1);
       } catch (err) {
@@ -411,19 +412,6 @@ export default function SubscriptionPending() {
                   <CheckCircle className="w-5 h-5" />
                   Pagamento Confirmado! Acessar Dashboard
                 </motion.button>
-              ) : hasActiveTrial ? (
-              <motion.button
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.98 }}
-                  onClick={() => navigate('/dashboard')}
-                className="w-full py-4 px-6 rounded-2xl text-base font-semibold bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 text-white shadow-xl shadow-orange-500/25 transition-all duration-300 flex items-center justify-center gap-2"
-              >
-                  <Home className="w-5 h-5" />
-                  Continuar Usando Trial
-                  <span className="text-xs bg-white/20 px-2 py-0.5 rounded-full ml-1">
-                    {user?.trial_days_remaining} dias
-                  </span>
-              </motion.button>
               ) : (
                 <div className="w-full py-4 px-6 rounded-2xl text-base font-medium bg-slate-800/30 text-slate-400 border border-slate-700/30 flex items-center justify-center gap-3 cursor-not-allowed">
                   <Loader2 className="w-5 h-5 animate-spin" />
@@ -494,7 +482,7 @@ export default function SubscriptionPending() {
                 {isPolling ? `Verificando... (${pollCount})` : 'Verificar Status Manualmente'}
               </motion.button>
 
-              {!hasActiveTrial && !paymentConfirmed && (
+              {!paymentConfirmed && (
                 <p className="text-xs text-slate-500 text-center mt-2">
                   O acesso ao dashboard será liberado automaticamente após confirmação
                 </p>

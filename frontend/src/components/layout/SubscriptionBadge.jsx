@@ -2,26 +2,26 @@ import React from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
-import { Crown, Clock, AlertTriangle, XCircle, Zap, Building2, Sparkles } from "lucide-react";
+import { Crown, AlertTriangle, XCircle, Zap, Building2, Sparkles, CreditCard, Users, Clock } from "lucide-react";
 import { subscriptionsService } from "@/api/services/subscriptions";
 import { useAuth } from "@/lib/AuthContext";
 
 // Plan configuration with rich styling
 const statusConfig = {
-  trial: {
-    icon: Clock,
-    label: 'Trial',
-    gradient: 'from-blue-500 to-cyan-500',
-    bgGradient: 'from-blue-500/20 to-cyan-500/10',
-    borderColor: 'border-blue-500/40',
-    textColor: 'text-blue-300',
-    glowColor: 'shadow-blue-500/20',
-    ringColor: 'ring-blue-500/30'
-  },
   ativo: {
-    pro: {
+    pay_per_use: {
+      icon: CreditCard,
+      label: 'Pay per Use',
+      gradient: 'from-slate-500 to-slate-600',
+      bgGradient: 'from-slate-500/20 to-slate-600/10',
+      borderColor: 'border-slate-500/40',
+      textColor: 'text-slate-300',
+      glowColor: 'shadow-slate-500/20',
+      ringColor: 'ring-slate-500/30'
+    },
+    essential: {
       icon: Zap,
-      label: 'Pro',
+      label: 'Essential',
       gradient: 'from-orange-500 to-amber-500',
       bgGradient: 'from-orange-500/20 to-amber-500/10',
       borderColor: 'border-orange-500/40',
@@ -29,9 +29,9 @@ const statusConfig = {
       glowColor: 'shadow-orange-500/20',
       ringColor: 'ring-orange-500/30'
     },
-    business: {
+    professional: {
       icon: Building2,
-      label: 'Business',
+      label: 'Professional',
       gradient: 'from-violet-500 to-purple-500',
       bgGradient: 'from-violet-500/20 to-purple-500/10',
       borderColor: 'border-violet-500/40',
@@ -39,9 +39,19 @@ const statusConfig = {
       glowColor: 'shadow-violet-500/20',
       ringColor: 'ring-violet-500/30'
     },
+    accountant: {
+      icon: Users,
+      label: 'Contador',
+      gradient: 'from-purple-500 to-indigo-500',
+      bgGradient: 'from-purple-500/20 to-indigo-500/10',
+      borderColor: 'border-purple-500/40',
+      textColor: 'text-purple-300',
+      glowColor: 'shadow-purple-500/20',
+      ringColor: 'ring-purple-500/30'
+    },
     default: {
       icon: Crown,
-      label: 'Pro',
+      label: 'Essential',
       gradient: 'from-orange-500 to-amber-500',
       bgGradient: 'from-orange-500/20 to-amber-500/10',
       borderColor: 'border-orange-500/40',
@@ -102,18 +112,18 @@ export default function SubscriptionBadge() {
   }
 
   // ✅ PRIORITY: Prefer subscription-status API, then auth user (plan/subscription_status)
-  // Auth now returns subscription_status: 'ativo' and plan: 'pro'|'business' when DB is ACTIVE
-  let status = subscriptionStatus?.status ?? user?.subscription_status ?? 'trial';
-  let planId = subscriptionStatus?.plan_id ?? user?.plan ?? 'trial';
-  const daysRemaining = subscriptionStatus?.days_remaining ?? user?.trial_days_remaining;
+  // Auth now returns subscription_status: 'ativo' and plan: 'pay_per_use'|'essential'|'professional'|'accountant' when DB is ACTIVE
+  let status = subscriptionStatus?.status ?? user?.subscription_status ?? null;
+  let planId = subscriptionStatus?.plan_id ?? user?.plan ?? null;
+  const daysRemaining = subscriptionStatus?.days_remaining;
   
   // ✅ Normalize: backend can return 'ACTIVE' (status API) or 'ativo' (auth); config expects 'ativo'
   if (status === 'ACTIVE') status = 'ativo';
   
-  // ✅ When active, plan must be pro/business from API or user — never show Trial for paid plan
+  // ✅ When active, plan must be from API or user
   if (status === 'ativo') {
     const paidPlan = subscriptionStatus?.plan_id || user?.plan;
-    if (paidPlan && paidPlan !== 'trial') planId = paidPlan;
+    if (paidPlan) planId = paidPlan;
   }
 
   // ✅ FIX: Don't show "pending" status if user is just browsing checkout
@@ -122,11 +132,7 @@ export default function SubscriptionBadge() {
   if (status === 'pending') {
     // Check if there's actually a payment attempt (subscription with pending status has plan_id)
     // If user is just on checkout page, don't show pending status
-    const hasActiveTrial = user?.is_in_trial && user?.trial_days_remaining > 0;
-    if (hasActiveTrial) {
-      // User has active trial, show trial status instead
-      status = 'trial';
-    } else if (!subscriptionStatus?.plan_id) {
+    if (!subscriptionStatus?.plan_id) {
       // No plan_id means no actual subscription record yet
       // Don't show pending, show as if no subscription
       status = null;
@@ -137,11 +143,11 @@ export default function SubscriptionBadge() {
   let config;
   if (status === 'ativo') {
     config = statusConfig.ativo[planId] || statusConfig.ativo.default;
-  } else if (status === null || status === undefined) {
+  } else if (status === null || status === undefined || status === 'no_subscription') {
     // No subscription - don't show badge
     return null;
   } else {
-    config = statusConfig[status] || statusConfig.trial;
+    config = statusConfig[status] || statusConfig.ativo.default;
   }
 
   const Icon = config.icon;
@@ -188,16 +194,6 @@ export default function SubscriptionBadge() {
         <span className={`text-sm font-semibold ${config.textColor} tracking-wide`}>
           {config.label}
         </span>
-        
-        {/* Trial duration - always show for trial status */}
-        {status === 'trial' && (
-          <span className="text-[10px] text-slate-400 mt-0.5 font-medium">
-            {daysRemaining !== undefined && daysRemaining !== null
-              ? `${daysRemaining} ${daysRemaining === 1 ? 'dia' : 'dias'} restantes`
-              : '7 dias grátis'
-            }
-          </span>
-        )}
 
         {/* Active subscription - show status */}
         {status === 'ativo' && (
@@ -229,7 +225,7 @@ export default function SubscriptionBadge() {
         )}
       </div>
 
-      {/* Sparkle decoration for active pro/business */}
+      {/* Sparkle decoration for active subscriptions */}
       {status === 'ativo' && (
         <Sparkles className={`w-3 h-3 ${config.textColor} opacity-50 absolute -top-0.5 -right-0.5`} />
       )}

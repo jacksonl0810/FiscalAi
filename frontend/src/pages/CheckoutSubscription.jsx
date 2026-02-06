@@ -25,21 +25,37 @@ import { useAuth } from '@/lib/AuthContext';
 import { handleApiError, getTranslatedError } from '@/utils/errorHandler';
 
 const planDetails = {
-  pro: {
-    name: 'Pro',
-    description: 'Para profissionais autônomos e MEIs',
-    price: 97,
+  // New production plans
+  essential: {
+    name: 'Essential',
+    description: 'Para pequenos negócios',
+    price: 79,
+    annualPrice: 39, // R$39/month when annual (R$468/year)
     icon: Zap,
     color: 'orange',
-    features: ['Notas fiscais ilimitadas', 'Assistente IA completo', 'Comando por voz', '1 empresa']
+    features: [
+      'Até 2 empresas (CNPJs)',
+      'Até 30 notas fiscais/mês',
+      'Assistente IA completo',
+      'Comando por voz',
+      'Gestão fiscal básica'
+    ]
   },
-  business: {
-    name: 'Business',
-    description: 'Para empresas e escritórios contábeis',
-    price: 197,
+  professional: {
+    name: 'Professional',
+    description: 'Para empresas em crescimento',
+    price: 149,
+    annualPrice: 129, // R$129/month when annual (R$1,548/year)
     icon: Building2,
-    color: 'violet',
-    features: ['Tudo do Pro +', 'Até 5 empresas', 'Multiusuários', 'API de integração']
+    color: 'purple',
+    features: [
+      'Até 5 empresas (CNPJs)',
+      'Até 100 notas fiscais/mês',
+      'Assistente IA completo',
+      'Comando por voz',
+      'Revisão contábil opcional',
+      'Relatórios avançados'
+    ]
   }
 };
 
@@ -73,7 +89,7 @@ function CheckoutForm({ planId, plan }) {
   const [searchParams] = useSearchParams();
   const billingCycleParam = searchParams.get('billing_cycle') || searchParams.get('cycle') || 'monthly';
   
-  const validBillingCycles = ['monthly', 'semiannual', 'annual'];
+  const validBillingCycles = ['monthly', 'annual'];
   const getValidBillingCycle = (value) => {
     return validBillingCycles.includes(value) ? value : 'monthly';
   };
@@ -92,10 +108,18 @@ function CheckoutForm({ planId, plan }) {
   });
 
   const getPriceForBillingCycle = () => {
-    if (billingCycle === 'semiannual') {
-      return planId === 'pro' ? 540 : 1100;
-    } else if (billingCycle === 'annual') {
-      return planId === 'pro' ? 970 : 1970;
+    if (billingCycle === 'annual') {
+      // Annual price is the monthly equivalent (total/12)
+      // Display the full year price for payment
+      const annualMonthlyPrice = plan.annualPrice || plan.price;
+      return annualMonthlyPrice * 12; // Full year price
+    }
+    return plan.price;
+  };
+
+  const getDisplayPrice = () => {
+    if (billingCycle === 'annual') {
+      return plan.annualPrice || plan.price;
     }
     return plan.price;
   };
@@ -279,7 +303,8 @@ function CheckoutForm({ planId, plan }) {
   };
 
   const PlanIcon = plan.icon;
-  const isPro = planId === 'pro';
+  // Color scheme based on plan - orange for essential, violet/purple for professional
+  const isPro = planId === 'essential';
 
   return (
     <div className="min-h-screen bg-[#07070a] flex items-center justify-center p-4 py-12">
@@ -348,12 +373,12 @@ function CheckoutForm({ planId, plan }) {
                 {/* Billing Cycle Selector */}
                 <div className="mb-6">
                   <div className="flex items-center justify-center gap-2 p-1 bg-slate-800/30 rounded-xl border border-slate-700/50">
-                    {['monthly', 'semiannual', 'annual'].map((cycle) => (
+                    {['monthly', 'annual'].map((cycle) => (
                       <button
                         key={cycle}
                         type="button"
                         onClick={() => setBillingCycle(cycle)}
-                        className={`flex-1 px-3 py-2 rounded-lg text-xs font-semibold transition-all ${
+                        className={`flex-1 px-4 py-2.5 rounded-lg text-sm font-semibold transition-all ${
                           billingCycle === cycle
                             ? isPro
                               ? 'bg-orange-500/20 text-orange-300 border border-orange-500/40'
@@ -361,7 +386,12 @@ function CheckoutForm({ planId, plan }) {
                             : 'text-slate-500 hover:text-slate-300'
                         }`}
                       >
-                        {cycle === 'monthly' ? 'Mensal' : cycle === 'semiannual' ? 'Semestral' : 'Anual'}
+                        {cycle === 'monthly' ? 'Mensal' : 'Anual'}
+                        {cycle === 'annual' && plan.annualPrice && plan.annualPrice < plan.price && (
+                          <span className="ml-1 text-xs text-emerald-400">
+                            ({Math.round((1 - plan.annualPrice / plan.price) * 100)}% off)
+                          </span>
+                        )}
                       </button>
                     ))}
                   </div>
@@ -371,13 +401,16 @@ function CheckoutForm({ planId, plan }) {
                 <div className="mb-8">
                   <div className="flex items-baseline">
                     <span className="text-slate-500 text-xl">R$</span>
-                    <span className="text-5xl font-bold text-white mx-1">{getPriceForBillingCycle()}</span>
-                    <span className="text-slate-500 text-lg">
-                      {billingCycle === 'monthly' ? '/mês' : billingCycle === 'semiannual' ? '/semestre' : '/ano'}
-                    </span>
+                    <span className="text-5xl font-bold text-white mx-1">{getDisplayPrice()}</span>
+                    <span className="text-slate-500 text-lg">/mês</span>
                   </div>
+                  {billingCycle === 'annual' && (
+                    <p className="text-sm text-slate-400 mt-1">
+                      Total: R$ {getPriceForBillingCycle()}/ano
+                    </p>
+                  )}
                   <p className={`text-xs ${isPro ? 'text-orange-400/70' : 'text-violet-400/70'} mt-2`}>
-                    💳 {billingCycle === 'monthly' ? 'Cobrado mensalmente' : billingCycle === 'semiannual' ? 'Cobrado semestralmente' : 'Cobrado anualmente'} • Cancele quando quiser
+                    💳 {billingCycle === 'monthly' ? 'Cobrado mensalmente' : 'Cobrado anualmente'} • Cancele quando quiser
                   </p>
                 </div>
 
@@ -607,7 +640,8 @@ function CheckoutForm({ planId, plan }) {
                       ) : (
                         <>
                           <Lock className="w-5 h-5" />
-                          Confirmar — R$ {getPriceForBillingCycle()},00
+                          Confirmar — R$ {billingCycle === 'annual' ? getPriceForBillingCycle() : getDisplayPrice()},00
+                          {billingCycle === 'annual' && <span className="text-xs opacity-75 ml-1">/ano</span>}
                         </>
                       )}
                     </motion.button>

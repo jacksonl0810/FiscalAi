@@ -18,8 +18,7 @@ export async function syncPlans() {
   console.log('[Plan Sync] Starting plan synchronization...');
   
   const allPlans = {
-    ...PLANS,
-    trial: getPlanConfig('trial')
+    ...PLANS
   };
   
   const results = {
@@ -64,8 +63,8 @@ export async function syncPlan(planConfig) {
 
   // Determine plan type based on config
   let planType = 'subscription';
-  if (planId === 'trial') planType = 'trial';
-  else if (billingCycle === 'custom') planType = 'custom';
+  if (billingCycle === 'custom') planType = 'custom';
+  else if (planId === 'pay_per_use') planType = 'pay_per_use';
 
   // Get interval info
   const interval = billingCycle === 'annual' ? 'year' : 'month';
@@ -75,8 +74,8 @@ export async function syncPlan(planConfig) {
   const amountCents = monthlyPrice || 0;
   const annualAmountCents = annualPrice || 0;
 
-  // Trial days
-  const trialDays = planId === 'trial' ? 7 : 0;
+  // No trial days (trial plan removed)
+  const trialDays = 0;
 
   // Stripe price IDs
   const stripePriceIdMonthly = stripePrices?.monthly || null;
