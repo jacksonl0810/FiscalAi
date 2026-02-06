@@ -31,13 +31,11 @@ const LayoutWrapper = ({ children, currentPageName }) => Layout ?
  * 👉 Backend /auth/me decides access based on subscription_status
  * 
  * Access Priority:
- * 1. 'trial' - User is in active trial period (7 days) ✅ ALLOW
- * 2. 'ativo' - User has active paid subscription ✅ ALLOW
- * 3. 'pending' - Payment processing (backend may return 'trial' if trial still valid)
- * 4. 'trial_expired' - Trial ended, needs to subscribe
- * 5. 'inadimplente' - Payment failed
- * 6. 'cancelado' - Subscription canceled and period ended
- * 7. null/undefined - New user, needs to select plan
+ * 1. 'ativo' - User has active paid subscription ✅ ALLOW
+ * 2. 'pending' - Payment processing
+ * 3. 'inadimplente' - Payment failed
+ * 4. 'cancelado' - Subscription canceled and period ended
+ * 5. null/undefined - New user, needs to select plan
  */
 const ProtectedRoute = ({ children }) => {
   const { isAuthenticated, isLoadingAuth, user } = useAuth();
@@ -59,47 +57,37 @@ const ProtectedRoute = ({ children }) => {
   const status = user?.subscription_status;
   const plan = user?.plan;
 
-  // ✅ PRIORITY 1: User has a plan (pro/business/trial) → allow access
+  // ✅ PRIORITY 1: User has a plan (pay_per_use/essential/professional/accountant) → allow access
   // This ensures users with subscriptions can access dashboard even if status is weird
   // If user has ANY plan value, they have a subscription and should have access
   if (plan) {
     const planLower = String(plan).toLowerCase();
-    if (planLower === 'pro' || planLower === 'business' || planLower === 'trial' || planLower === 'essential') {
+    if (planLower === 'pay_per_use' || planLower === 'essential' || planLower === 'professional' || planLower === 'accountant') {
       return children;
     }
     // Even if plan value is unexpected, if it exists, allow access
     return children;
   }
 
-  // ✅ PRIORITY 2: Active trial or active subscription → allow access
+  // ✅ PRIORITY 2: Active subscription → allow access
   // Normalize status to lowercase for comparison (consistent with Login.jsx and GoogleCallback.jsx)
   const statusLower = status ? String(status).toLowerCase() : null;
-  if (statusLower === 'trial' || statusLower === 'ativo' || statusLower === 'active' || statusLower === 'trialing') {
+  if (statusLower === 'ativo' || statusLower === 'active') {
     return children;
   }
 
-  // ✅ PRIORITY 3: User has trial days remaining → allow access
-  if (user?.is_in_trial && user?.trial_days_remaining > 0) {
-    return children;
-  }
-
-  // ✅ PRIORITY 4: User has days remaining in subscription period → allow access
+  // ✅ PRIORITY 3: User has days remaining in subscription period → allow access
   if (user?.days_remaining > 0) {
     return children;
   }
 
   // 🚫 REDIRECT: New users without subscription must select a plan first
   // Only redirect to pricing if user truly has NO subscription
-  if ((statusLower === null || statusLower === undefined) && !plan) {
+  if ((statusLower === null || statusLower === undefined || statusLower === 'no_subscription') && !plan) {
     return <Navigate to="/pricing" replace />;
   }
 
-  // 🚫 REDIRECT: Trial expired - must subscribe
-  if (statusLower === 'trial_expired') {
-    return <Navigate to="/pricing" replace />;
-  }
-
-  // 🚫 REDIRECT: Payment is being processed (and no active trial)
+  // 🚫 REDIRECT: Payment is being processed
   if (statusLower === 'pending') {
     return <Navigate to="/subscription-pending" replace />;
   }

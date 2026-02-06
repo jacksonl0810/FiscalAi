@@ -17,31 +17,68 @@ import {
   Building2,
   X,
   ExternalLink,
-  Settings
+  Settings,
+  Users,
+  FileText
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { subscriptionsService } from "@/api/services/subscriptions";
 import { toast } from "sonner";
 
+/**
+ * FINAL PLAN STRUCTURE:
+ * - Pay per Use: R$9/invoice, 1 company, unlimited
+ * - Essential: R$79/month, 2 companies, 30 invoices/month
+ * - Professional: R$149/month, 5 companies, 100 invoices/month
+ * - Accountant: Custom, unlimited
+ */
 const planDetails = {
-  trial: {
-    name: 'Trial',
-    description: 'Experimente todas as funcionalidades',
-    price: 0,
-    features: ['Até 5 notas fiscais', 'Assistente IA completo', 'Comando por voz', '1 empresa']
+  pay_per_use: {
+    name: 'Pay per Use',
+    description: 'Pague apenas quando emitir',
+    price: 9,
+    priceLabel: 'R$ 9/nota',
+    icon: CreditCard,
+    color: 'slate',
+    features: ['1 empresa (CNPJ)', 'Notas ilimitadas', 'R$9 por nota emitida', 'Assistente IA completo', 'Comando por voz']
   },
-  pro: {
-    name: 'Pro',
-    description: 'Para profissionais autônomos e MEIs',
-    price: 97,
-    features: ['Notas fiscais ilimitadas', 'Assistente IA completo', 'Comando por voz', '1 empresa', 'Acompanhamento MEI', 'Relatórios mensais', 'Suporte prioritário']
+  essential: {
+    name: 'Essential',
+    description: 'Para pequenos negócios',
+    price: 79,
+    priceLabel: 'R$ 79/mês',
+    annualPrice: 39,
+    icon: Zap,
+    color: 'orange',
+    features: ['Até 2 empresas', 'Até 30 notas fiscais/mês', 'Assistente IA completo', 'Comando por voz', 'Gestão fiscal básica']
   },
-  business: {
-    name: 'Business',
-    description: 'Para empresas e escritórios contábeis',
-    price: 197,
-    features: ['Tudo do Pro +', 'Até 5 empresas', 'Multiusuários', 'API de integração', 'Relatórios avançados', 'Suporte dedicado', 'Treinamento incluso']
+  professional: {
+    name: 'Professional',
+    description: 'Para empresas em crescimento',
+    price: 149,
+    priceLabel: 'R$ 149/mês',
+    annualPrice: 129,
+    icon: Building2,
+    color: 'purple',
+    features: ['Até 5 empresas', 'Até 100 notas fiscais/mês', 'Assistente IA completo', 'Revisão contábil opcional', 'Relatórios avançados']
+  },
+  accountant: {
+    name: 'Contador',
+    description: 'Para contadores e escritórios',
+    price: null,
+    priceLabel: 'Personalizado',
+    icon: Users,
+    color: 'emerald',
+    features: ['Empresas ilimitadas', 'Notas fiscais ilimitadas', 'Integrações avançadas', 'API de integração', 'Suporte dedicado']
   }
+};
+
+const colorClasses = {
+  slate: { bg: 'bg-slate-500/20', text: 'text-slate-400', border: 'border-slate-500/30', gradient: 'from-slate-500 to-slate-600' },
+  orange: { bg: 'bg-orange-500/20', text: 'text-orange-400', border: 'border-orange-500/30', gradient: 'from-orange-500 to-orange-600' },
+  purple: { bg: 'bg-purple-500/20', text: 'text-purple-400', border: 'border-purple-500/30', gradient: 'from-purple-500 to-purple-600' },
+  emerald: { bg: 'bg-emerald-500/20', text: 'text-emerald-400', border: 'border-emerald-500/30', gradient: 'from-emerald-500 to-emerald-600' },
+  blue: { bg: 'bg-blue-500/20', text: 'text-blue-400', border: 'border-blue-500/30', gradient: 'from-blue-500 to-blue-600' }
 };
 
 export default function SubscriptionSettings() {
@@ -52,10 +89,10 @@ export default function SubscriptionSettings() {
   const { data: subscriptionStatus, isLoading } = useQuery({
     queryKey: ['subscription-status'],
     queryFn: subscriptionsService.getStatus,
-    staleTime: 5 * 60 * 1000, // Consider data fresh for 5 minutes
-    gcTime: 10 * 60 * 1000, // Keep in cache for 10 minutes
+    staleTime: 5 * 60 * 1000,
+    gcTime: 10 * 60 * 1000,
     refetchOnWindowFocus: false,
-    refetchOnMount: false, // Don't refetch when component mounts if data is fresh
+    refetchOnMount: false,
     refetchOnReconnect: false
   });
 
@@ -72,7 +109,6 @@ export default function SubscriptionSettings() {
     }
   });
 
-  // Stripe Customer Portal - manage payment methods, view invoices, etc.
   const portalMutation = useMutation({
     mutationFn: () => subscriptionsService.getPortalUrl(),
     onSuccess: (data) => {
@@ -96,26 +132,38 @@ export default function SubscriptionSettings() {
     );
   }
 
-  // Normalize: API returns ACTIVE/CANCELED (English); UI uses ativo/cancelado
-  let status = subscriptionStatus?.status || 'trial';
+  // Normalize status
+  let status = subscriptionStatus?.status || 'pay_per_use';
   if (status === 'ACTIVE') status = 'ativo';
   if (status === 'CANCELED') status = 'cancelado';
   if (status === 'PAST_DUE') status = 'inadimplente';
+  if (status === 'no_subscription') status = 'pay_per_use';
 
-  const planId = subscriptionStatus?.plan_id || 'trial';
-  const plan = planDetails[planId] || planDetails.trial;
+  const planId = subscriptionStatus?.plan_id || 'pay_per_use';
+  const plan = planDetails[planId] || planDetails.pay_per_use;
   const periodEnd = subscriptionStatus?.current_period_end;
   const daysRemaining = subscriptionStatus?.days_remaining || 0;
+  // @ts-ignore - billing_cycle may come from API response
+  const billingCycle = subscriptionStatus?.billing_cycle || subscriptionStatus?.billingCycle;
+
+  const PlanIcon = plan.icon || Crown;
+  const colors = colorClasses[plan.color] || colorClasses.orange;
+
+  // Calculate display price based on billing cycle
+  const displayPrice = billingCycle === 'annual' && plan.annualPrice 
+    ? plan.annualPrice 
+    : plan.price;
 
   const statusLabels = {
-    trial: { label: 'Trial Ativo', color: 'text-blue-400', bg: 'bg-blue-500/20' },
     ativo: { label: 'Assinatura Ativa', color: 'text-green-400', bg: 'bg-green-500/20' },
     inadimplente: { label: 'Pagamento Pendente', color: 'text-yellow-400', bg: 'bg-yellow-500/20' },
-    cancelado: { label: 'Cancelado', color: 'text-red-400', bg: 'bg-red-500/20' }
+    cancelado: { label: 'Cancelado', color: 'text-red-400', bg: 'bg-red-500/20' },
+    pay_per_use: { label: 'Pay per Use', color: 'text-slate-400', bg: 'bg-slate-500/20' }
   };
 
-  const currentStatus = statusLabels[status] || statusLabels.trial;
+  const currentStatus = statusLabels[status] || statusLabels.pay_per_use;
   const isPaidActive = status === 'ativo';
+  const isPayPerUse = planId === 'pay_per_use';
 
   return (
     <div className="max-w-4xl mx-auto">
@@ -134,12 +182,12 @@ export default function SubscriptionSettings() {
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.1 }}
-        className="glass-card rounded-2xl p-6 mb-6 border border-orange-500/20"
+        className={`glass-card rounded-2xl p-6 mb-6 border ${colors.border}`}
       >
         <div className="flex items-start justify-between mb-6">
           <div className="flex items-center gap-4">
-            <div className="w-14 h-14 rounded-xl bg-gradient-to-br from-orange-500 to-orange-600 flex items-center justify-center">
-              <Crown className="w-7 h-7 text-white" />
+            <div className={`w-14 h-14 rounded-xl bg-gradient-to-br ${colors.gradient} flex items-center justify-center`}>
+              <PlanIcon className="w-7 h-7 text-white" />
             </div>
             <div>
               <h2 className="text-2xl font-bold text-white">MAY {plan.name}</h2>
@@ -161,32 +209,68 @@ export default function SubscriptionSettings() {
               <span className="text-sm">Valor</span>
             </div>
             <p className="text-xl font-bold text-white">
-              {plan.price === 0 ? 'Grátis' : `R$ ${plan.price},00`}
-              {plan.price > 0 && <span className="text-sm font-normal text-gray-400">/mês</span>}
+              {isPayPerUse ? (
+                <>R$ 9<span className="text-sm font-normal text-gray-400">/nota</span></>
+              ) : displayPrice === 0 ? (
+                'Grátis'
+              ) : displayPrice === null ? (
+                'Personalizado'
+              ) : (
+                <>R$ {displayPrice}<span className="text-sm font-normal text-gray-400">/mês</span></>
+              )}
             </p>
+            {billingCycle === 'annual' && plan.annualPrice && (
+              <p className="text-xs text-green-400 mt-1">
+                Plano anual (economia de {Math.round((1 - plan.annualPrice / plan.price) * 100)}%)
+              </p>
+            )}
           </div>
 
-          <div className="bg-white/5 rounded-xl p-4">
-            <div className="flex items-center gap-2 text-gray-400 mb-1">
-              <Calendar className="w-4 h-4" />
-              <span className="text-sm">Próxima cobrança</span>
-            </div>
-            <p className="text-xl font-bold text-white">
-              {periodEnd 
-                ? format(new Date(periodEnd), "dd 'de' MMMM", { locale: ptBR })
-                : 'N/A'}
-            </p>
-          </div>
+          {!isPayPerUse && (
+            <>
+              <div className="bg-white/5 rounded-xl p-4">
+                <div className="flex items-center gap-2 text-gray-400 mb-1">
+                  <Calendar className="w-4 h-4" />
+                  <span className="text-sm">Próxima cobrança</span>
+                </div>
+                <p className="text-xl font-bold text-white">
+                  {periodEnd 
+                    ? format(new Date(periodEnd), "dd 'de' MMMM", { locale: ptBR })
+                    : 'N/A'}
+                </p>
+              </div>
 
-          <div className="bg-white/5 rounded-xl p-4">
-            <div className="flex items-center gap-2 text-gray-400 mb-1">
-              <Zap className="w-4 h-4" />
-              <span className="text-sm">Dias restantes</span>
-            </div>
-            <p className="text-xl font-bold text-white">
-              {daysRemaining} dias
-            </p>
-          </div>
+              <div className="bg-white/5 rounded-xl p-4">
+                <div className="flex items-center gap-2 text-gray-400 mb-1">
+                  <Zap className="w-4 h-4" />
+                  <span className="text-sm">Dias restantes</span>
+                </div>
+                <p className="text-xl font-bold text-white">
+                  {daysRemaining} dias
+                </p>
+              </div>
+            </>
+          )}
+
+          {isPayPerUse && (
+            <>
+              <div className="bg-white/5 rounded-xl p-4">
+                <div className="flex items-center gap-2 text-gray-400 mb-1">
+                  <FileText className="w-4 h-4" />
+                  <span className="text-sm">Tipo</span>
+                </div>
+                <p className="text-xl font-bold text-white">Sob Demanda</p>
+              </div>
+
+              <div className="bg-white/5 rounded-xl p-4">
+                <div className="flex items-center gap-2 text-gray-400 mb-1">
+                  <Shield className="w-4 h-4" />
+                  <span className="text-sm">Compromisso</span>
+                </div>
+                <p className="text-xl font-bold text-white">Nenhum</p>
+              </div>
+            </>
+          )}
         </div>
 
         {/* Features */}
@@ -218,8 +302,12 @@ export default function SubscriptionSettings() {
                 <Building2 className="w-5 h-5 text-purple-400" />
               </div>
               <div>
-                <h3 className="font-semibold text-white">Alterar Plano</h3>
-                <p className="text-sm text-gray-400">Faça upgrade ou downgrade</p>
+                <h3 className="font-semibold text-white">
+                  {isPayPerUse ? 'Ver Planos Mensais' : 'Alterar Plano'}
+                </h3>
+                <p className="text-sm text-gray-400">
+                  {isPayPerUse ? 'Economize com planos mensais' : 'Faça upgrade ou downgrade'}
+                </p>
               </div>
             </div>
             <Button
@@ -233,7 +321,7 @@ export default function SubscriptionSettings() {
         )}
 
         {/* Manage Billing - Stripe Customer Portal */}
-        {(status === 'ativo' || status === 'inadimplente') && (
+        {(status === 'ativo' || status === 'inadimplente') && !isPayPerUse && (
           <div className="glass-card rounded-2xl p-6 border border-white/10">
             <div className="flex items-center gap-3 mb-4">
               <div className="w-10 h-10 rounded-xl bg-blue-500/20 flex items-center justify-center">
@@ -261,7 +349,7 @@ export default function SubscriptionSettings() {
         )}
 
         {/* Cancel Subscription */}
-        {status === 'ativo' && (
+        {status === 'ativo' && !isPayPerUse && (
           <div className="glass-card rounded-2xl p-6 border border-white/10">
             <div className="flex items-center gap-3 mb-4">
               <div className="w-10 h-10 rounded-xl bg-red-500/20 flex items-center justify-center">
@@ -303,23 +391,23 @@ export default function SubscriptionSettings() {
           </div>
         )}
 
-        {/* Trial - Upgrade CTA */}
-        {status === 'trial' && (
-          <div className="glass-card rounded-2xl p-6 border border-orange-500/30 bg-gradient-to-br from-orange-500/10 to-purple-500/10">
+        {/* Pay per Use - Upgrade suggestion */}
+        {isPayPerUse && (
+          <div className="glass-card rounded-2xl p-6 border border-orange-500/30 bg-gradient-to-br from-orange-500/10 to-amber-500/10">
             <div className="flex items-center gap-3 mb-4">
               <div className="w-10 h-10 rounded-xl bg-orange-500/20 flex items-center justify-center">
                 <Zap className="w-5 h-5 text-orange-400" />
               </div>
               <div>
-                <h3 className="font-semibold text-white">Faça Upgrade</h3>
-                <p className="text-sm text-gray-400">Acesso ilimitado a todas as funcionalidades</p>
+                <h3 className="font-semibold text-white">Economize com Planos Mensais</h3>
+                <p className="text-sm text-gray-400">A partir de R$79/mês com mais recursos</p>
               </div>
             </div>
             <Button
               onClick={() => navigate('/pricing')}
-              className="w-full bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white"
+              className="w-full bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white"
             >
-              Assinar Agora
+              Assinar Essential
               <ArrowRight className="w-4 h-4 ml-2" />
             </Button>
           </div>
@@ -352,7 +440,7 @@ export default function SubscriptionSettings() {
                 </p>
               </div>
               <p className="text-gray-400">
-                Tem certeza que deseja cancelar sua assinatura? Você perderá acesso às funcionalidades premium após o término do período atual.
+                Tem certeza que deseja cancelar sua assinatura? Você poderá continuar usando o Pay per Use (R$9/nota) após o cancelamento.
               </p>
             </div>
 

@@ -23,14 +23,12 @@ const getRedirectPath = (userData, isNewUser) => {
   
   const status = userData?.subscription_status;
   const plan = userData?.plan;
-  const isInTrial = userData?.is_in_trial;
-  const trialDaysRemaining = userData?.trial_days_remaining;
   const daysRemaining = userData?.days_remaining;
   
   // ✅ PRIORITY 1: User has a plan → dashboard
   if (plan) {
     const planLower = String(plan).toLowerCase();
-    if (planLower === 'pro' || planLower === 'business' || planLower === 'trial' || planLower === 'essential') {
+    if (planLower === 'essential' || planLower === 'professional' || planLower === 'pay_per_use' || planLower === 'accountant') {
       return '/';
     }
     return '/';
@@ -38,16 +36,11 @@ const getRedirectPath = (userData, isNewUser) => {
   
   // ✅ PRIORITY 2: Active subscription status → dashboard
   const statusLower = status?.toLowerCase();
-  if (statusLower === 'trial' || statusLower === 'ativo' || statusLower === 'active' || statusLower === 'trialing') {
+  if (statusLower === 'ativo' || statusLower === 'active') {
     return '/';
   }
   
-  // ✅ PRIORITY 3: Trial days remaining → dashboard
-  if (isInTrial && trialDaysRemaining > 0) {
-    return '/';
-  }
-  
-  // ✅ PRIORITY 4: Subscription days remaining → dashboard
+  // ✅ PRIORITY 3: Subscription days remaining → dashboard
   if (daysRemaining > 0) {
     return '/';
   }

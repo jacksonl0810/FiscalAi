@@ -1,5 +1,5 @@
 // User & Authentication Types
-export type SubscriptionStatus = 'trial' | 'ativo' | 'pending' | 'inadimplente' | 'cancelado';
+export type SubscriptionStatus = 'ativo' | 'pending' | 'inadimplente' | 'cancelado' | 'no_subscription';
 
 export interface User {
   id: string;

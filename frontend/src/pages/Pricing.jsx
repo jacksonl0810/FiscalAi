@@ -15,77 +15,118 @@ import {
   Star,
   Lock,
   CheckCircle2,
-  Crown
+  Crown,
+  CreditCard,
+  Users,
+  Calculator,
+  Mail
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/lib/AuthContext";
 import { toast } from "sonner";
 import { subscriptionsService } from "@/api/services/subscriptions";
 
+/**
+ * FINAL PLAN STRUCTURE:
+ * 1. Pay per Use: R$9/invoice, 1 company, unlimited invoices
+ * 2. Essential: R$79/month or R$39/month (annual), 2 companies, 30 invoices/month
+ * 3. Professional: R$149/month or R$129/month (annual), 5 companies, 100 invoices/month
+ * 4. Accountant: Custom pricing, unlimited
+ */
 const plans = [
   {
-    id: 'trial',
-    name: 'Trial',
-    price: 0,
-    period: '7 dias',
-    description: 'Experimente todas as funcionalidades',
+    id: 'pay_per_use',
+    name: 'Pay per Use',
+    price: 9,
+    period: '/nota',
+    description: 'Pague apenas quando emitir',
     features: [
-      'Até 5 notas fiscais',
+      '1 empresa (CNPJ)',
+      'Notas ilimitadas',
+      'R$9 por nota emitida',
       'Assistente IA completo',
       'Comando por voz',
-      '1 empresa',
-      'Suporte por email'
+      'Uso sob demanda'
     ],
-    buttonText: 'Começar Grátis',
+    buttonText: 'Começar Agora',
     popular: false,
-    gradient: 'from-gray-600 to-gray-700',
-    monthlyPrice: 0,
-    semiannualPrice: 0,
-    annualPrice: 0
+    gradient: 'from-slate-600 to-slate-700',
+    icon: CreditCard,
+    monthlyPrice: null, // No monthly fee
+    annualPrice: null,
+    perInvoicePrice: 9,
+    isPayPerUse: true
   },
   {
-    id: 'pro',
-    name: 'Pro',
-    price: 97,
+    id: 'essential',
+    name: 'Essential',
+    price: 79,
     period: '/mês',
-    description: 'Para profissionais autônomos e MEIs',
+    description: 'Para pequenos negócios',
     features: [
-      'Notas fiscais ilimitadas',
+      'Até 2 empresas (CNPJs)',
+      'Até 30 notas fiscais/mês',
       'Assistente IA completo',
       'Comando por voz',
-      '1 empresa',
-      'Acompanhamento MEI',
-      'Relatórios mensais',
-      'Suporte prioritário'
+      'Gestão fiscal básica',
+      'Integrações fiscais'
     ],
-    buttonText: 'Assinar Pro',
+    buttonText: 'Assinar Essential',
     popular: true,
     gradient: 'from-orange-500 to-orange-600',
-    monthlyPrice: 97,
-    semiannualPrice: 540,
-    annualPrice: 970
+    icon: Zap,
+    monthlyPrice: 79,
+    annualPrice: 468, // R$39/month × 12
+    annualMonthlyEquivalent: 39,
+    isPayPerUse: false
   },
   {
-    id: 'business',
-    name: 'Business',
-    price: 197,
+    id: 'professional',
+    name: 'Professional',
+    price: 149,
     period: '/mês',
-    description: 'Para empresas e escritórios contábeis',
+    description: 'Para empresas em crescimento',
     features: [
-      'Tudo do Pro +',
-      'Até 5 empresas',
-      'Multiusuários',
-      'API de integração',
+      'Até 5 empresas (CNPJs)',
+      'Até 100 notas fiscais/mês',
+      'Assistente IA completo',
+      'Comando por voz',
+      'Revisão contábil opcional',
       'Relatórios avançados',
+      'Integrações fiscais avançadas'
+    ],
+    buttonText: 'Assinar Professional',
+    popular: false,
+    gradient: 'from-purple-500 to-purple-600',
+    icon: Building2,
+    monthlyPrice: 149,
+    annualPrice: 1548, // R$129/month × 12
+    annualMonthlyEquivalent: 129,
+    isPayPerUse: false
+  },
+  {
+    id: 'accountant',
+    name: 'Contador',
+    price: null,
+    period: 'personalizado',
+    description: 'Para contadores e escritórios',
+    features: [
+      'Empresas ilimitadas',
+      'Notas fiscais ilimitadas',
+      'Integrações avançadas',
+      'API de integração',
+      'Gestão de clientes',
       'Suporte dedicado',
       'Treinamento incluso'
     ],
-    buttonText: 'Assinar Business',
+    buttonText: 'Falar com Vendas',
     popular: false,
-    gradient: 'from-purple-500 to-purple-600',
-    monthlyPrice: 197,
-    semiannualPrice: 1100,
-    annualPrice: 1970
+    gradient: 'from-emerald-500 to-emerald-600',
+    icon: Users,
+    monthlyPrice: null,
+    annualPrice: null,
+    isPayPerUse: false,
+    isCustomPricing: true
   }
 ];
 
@@ -126,74 +167,36 @@ export default function Pricing() {
   const navigate = useNavigate();
   const { user, isAuthenticated } = useAuth();
   const [loadingPlan, setLoadingPlan] = useState(null);
-  /** @type {['monthly' | 'semiannual' | 'annual', React.Dispatch<React.SetStateAction<'monthly' | 'semiannual' | 'annual'>>]} */
-  const [selectedBillingCycle, setSelectedBillingCycle] = useState(/** @type {'monthly' | 'semiannual' | 'annual'} */ ('monthly'));
-  const [trialEligibility, setTrialEligibility] = useState({
-    eligible: true, // Default to eligible (for non-logged-in users)
-    hasUsedTrial: false,
-    loading: false,
-    trialStartedAt: /** @type {string | null} */ (null)
-  });
-
-  // Check trial eligibility when user is authenticated
-  useEffect(() => {
-    const checkTrialEligibility = async () => {
-      if (!isAuthenticated) {
-        setTrialEligibility({ eligible: true, hasUsedTrial: false, loading: false, trialStartedAt: null });
-        return;
-      }
-
-      setTrialEligibility(prev => ({ ...prev, loading: true }));
-      
-      try {
-        const result = await subscriptionsService.checkTrialEligibility();
-        setTrialEligibility({
-          eligible: result.eligible,
-          hasUsedTrial: result.hasUsedTrial,
-          trialStartedAt: result.trialStartedAt,
-          loading: false
-        });
-      } catch (error) {
-        // Silently handle trial eligibility check errors - default to eligible
-        setTrialEligibility({ eligible: true, hasUsedTrial: false, loading: false, trialStartedAt: null });
-      }
-    };
-
-    checkTrialEligibility();
-  }, [isAuthenticated]);
+  /** @type {['monthly' | 'annual', React.Dispatch<React.SetStateAction<'monthly' | 'annual'>>]} */
+  const [selectedBillingCycle, setSelectedBillingCycle] = useState(/** @type {'monthly' | 'annual'} */ ('monthly'));
 
   const handleSelectPlan = async (plan) => {
-    if (!isAuthenticated) {
-      // Redirect to login with plan info
-      navigate('/login', { state: { selectedPlan: plan.id } });
+    // Custom pricing - redirect to contact
+    if (plan.isCustomPricing) {
+      window.location.href = 'mailto:contato@mayassessorfiscal.com.br?subject=Interesse no Plano Contador&body=Olá, gostaria de saber mais sobre o plano Contador para escritórios de contabilidade.';
       return;
     }
 
-    // 🚫 Block trial if user has already used it
-    if (plan.id === 'trial' && trialEligibility.hasUsedTrial) {
-      toast.error('Você já utilizou seu período de teste gratuito. Por favor, escolha um plano pago.');
+    if (!isAuthenticated) {
+      navigate('/login', { state: { selectedPlan: plan.id } });
       return;
     }
 
     setLoadingPlan(plan.id);
 
     try {
-      // Call /subscriptions/start endpoint
-      // For trial: activates immediately
-      // For paid plans: creates PENDING subscription and returns checkout_url
       const result = await subscriptionsService.createCheckout({
         plan_id: plan.id,
-        billing_cycle: plan.id === 'trial' ? undefined : selectedBillingCycle,
-        return_url: plan.id === 'trial' 
-          ? `${window.location.origin}/payment-success?plan=trial`
+        billing_cycle: plan.isPayPerUse ? undefined : selectedBillingCycle,
+        return_url: plan.isPayPerUse 
+          ? `${window.location.origin}/payment-success?plan=pay_per_use`
           : `${window.location.origin}/subscription-pending?plan=${plan.id}`,
         cancel_url: `${window.location.origin}/pricing`
       });
 
       if (result.checkout_url) {
-        // Redirect to checkout URL (Pagar.me or success page for trial)
         const url = new URL(result.checkout_url, window.location.origin);
-        if (plan.id !== 'trial' && selectedBillingCycle) {
+        if (!plan.isPayPerUse && selectedBillingCycle) {
           url.searchParams.set('billing_cycle', selectedBillingCycle);
         }
         window.location.href = url.toString();
@@ -201,34 +204,39 @@ export default function Pricing() {
         throw new Error('Checkout URL not received');
       }
     } catch (error) {
-      // Handle specific trial error
-      if (error.code === 'TRIAL_ALREADY_USED') {
-        toast.error('Você já utilizou seu período de teste gratuito. Por favor, escolha um plano pago.');
-        setTrialEligibility(prev => ({ ...prev, eligible: false, hasUsedTrial: true }));
-      } else {
-        const { handleApiError } = await import('@/utils/errorHandler');
-        await handleApiError(error, { operation: 'create_checkout', planId: plan.id });
-      }
+      const { handleApiError } = await import('@/utils/errorHandler');
+      await handleApiError(error, { operation: 'create_checkout', planId: plan.id });
     } finally {
       setLoadingPlan(null);
     }
   };
 
-  // Check if trial option should be disabled
-  const isTrialDisabled = (planId) => {
-    return planId === 'trial' && isAuthenticated && trialEligibility.hasUsedTrial;
+  // Get display price based on billing cycle
+  const getDisplayPrice = (plan) => {
+    if (plan.isPayPerUse) return plan.perInvoicePrice;
+    if (plan.isCustomPricing) return null;
+    
+    if (selectedBillingCycle === 'annual' && plan.annualMonthlyEquivalent) {
+      return plan.annualMonthlyEquivalent;
+    }
+    return plan.monthlyPrice;
+  };
+
+  // Get period text based on billing cycle
+  const getPeriodText = (plan) => {
+    if (plan.isPayPerUse) return '/nota';
+    if (plan.isCustomPricing) return '';
+    return '/mês';
   };
 
   return (
     <div className="min-h-screen bg-[#07070a]">
       {/* Background Effects */}
       <div className="fixed inset-0 pointer-events-none overflow-hidden">
-        {/* Main gradient orbs */}
         <div className="absolute top-0 right-0 w-[1000px] h-[1000px] bg-gradient-radial from-orange-500/8 via-orange-500/3 to-transparent blur-3xl" />
         <div className="absolute top-1/3 left-0 w-[800px] h-[800px] bg-gradient-radial from-purple-500/6 via-purple-500/2 to-transparent blur-3xl" />
         <div className="absolute bottom-0 right-1/4 w-[600px] h-[600px] bg-gradient-radial from-amber-500/5 via-transparent to-transparent blur-3xl" />
         
-        {/* Subtle grid pattern */}
         <div 
           className="absolute inset-0 opacity-[0.02]"
           style={{
@@ -237,7 +245,6 @@ export default function Pricing() {
           }}
         />
         
-        {/* Top gradient line */}
         <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-orange-500/20 to-transparent" />
       </div>
 
@@ -272,21 +279,12 @@ export default function Pricing() {
                 const status = user?.subscription_status;
                 const plan = user?.plan;
                 
-                // Show Dashboard button if user has ANY subscription (trial, pro, business, essential)
-                // Same logic as login redirect and ProtectedRoute - users with subscriptions should access dashboard
-                
-                // Normalize plan and status to lowercase for comparison (consistent with App.jsx and Login.jsx)
                 const planLower = plan ? String(plan).toLowerCase() : null;
                 const statusLower = status ? String(status).toLowerCase() : null;
                 
                 const hasAccess = 
-                  // Has a plan (pro/business/trial/essential) - includes essential plan check
-                  (planLower === 'pro' || planLower === 'business' || planLower === 'trial' || planLower === 'essential') ||
-                  // Active subscription status
-                  (statusLower === 'trial' || statusLower === 'ativo' || statusLower === 'active' || statusLower === 'trialing') ||
-                  // Has trial days remaining
-                  (user?.is_in_trial && user?.trial_days_remaining > 0) ||
-                  // Has days remaining in subscription
+                  (planLower === 'pay_per_use' || planLower === 'essential' || planLower === 'professional' || planLower === 'accountant') ||
+                  (statusLower === 'ativo' || statusLower === 'active') ||
                   (user?.days_remaining > 0);
                 
                 return hasAccess ? (
@@ -351,13 +349,13 @@ export default function Pricing() {
                 <div className="w-5 h-5 rounded-full bg-emerald-500/20 flex items-center justify-center">
                   <Check className="w-3 h-3 text-emerald-400" />
                 </div>
-                <span className="text-slate-300">7 dias grátis</span>
+                <span className="text-slate-300">A partir de R$9/nota</span>
               </div>
               <div className="flex items-center gap-2 px-4 py-2 rounded-full bg-white/5 border border-white/10">
                 <div className="w-5 h-5 rounded-full bg-emerald-500/20 flex items-center justify-center">
                   <Check className="w-3 h-3 text-emerald-400" />
                 </div>
-                <span className="text-slate-300">Sem cartão de crédito</span>
+                <span className="text-slate-300">Sem mensalidade obrigatória</span>
               </div>
               <div className="flex items-center gap-2 px-4 py-2 rounded-full bg-white/5 border border-white/10">
                 <div className="w-5 h-5 rounded-full bg-emerald-500/20 flex items-center justify-center">
@@ -369,22 +367,51 @@ export default function Pricing() {
           </motion.div>
         </section>
 
+        {/* Billing Cycle Toggle (for subscription plans) */}
+        <section className="px-4 pb-8">
+          <div className="max-w-md mx-auto">
+            <div className="flex items-center justify-center gap-2 p-1.5 bg-slate-800/50 rounded-2xl border border-slate-700/50">
+              <button
+                type="button"
+                onClick={() => setSelectedBillingCycle('monthly')}
+                className={`flex-1 px-6 py-3 rounded-xl text-sm font-semibold transition-all ${
+                  selectedBillingCycle === 'monthly'
+                    ? 'bg-orange-500/20 text-orange-300 border border-orange-500/40'
+                    : 'text-slate-500 hover:text-slate-300'
+                }`}
+              >
+                Mensal
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelectedBillingCycle('annual')}
+                className={`flex-1 px-6 py-3 rounded-xl text-sm font-semibold transition-all relative ${
+                  selectedBillingCycle === 'annual'
+                    ? 'bg-orange-500/20 text-orange-300 border border-orange-500/40'
+                    : 'text-slate-500 hover:text-slate-300'
+                }`}
+              >
+                Anual
+                <span className="absolute -top-2 -right-2 px-2 py-0.5 bg-emerald-500 text-white text-[10px] font-bold rounded-full">
+                  -50%
+                </span>
+              </button>
+            </div>
+            {selectedBillingCycle === 'annual' && (
+              <p className="text-center text-sm text-emerald-400 mt-3">
+                💰 Economize até 50% pagando anualmente
+              </p>
+            )}
+          </div>
+        </section>
+
         {/* Pricing Cards */}
-        <section className="py-20 px-4">
-          <div className="max-w-6xl mx-auto">
-            <div className="grid md:grid-cols-3 gap-5 lg:gap-6 items-start">
+        <section className="py-12 px-4">
+          <div className="max-w-7xl mx-auto">
+            <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-5 lg:gap-6 items-start">
               {plans.map((plan, index) => {
-                const trialDisabled = isTrialDisabled(plan.id);
-                const trialCompleted = trialDisabled;
-                
-                // Define card theme colors
-                const cardTheme = trialCompleted 
-                  ? { primary: 'emerald', accent: 'teal' }
-                  : plan.popular 
-                    ? { primary: 'orange', accent: 'amber' }
-                    : plan.id === 'business'
-                      ? { primary: 'violet', accent: 'purple' }
-                      : { primary: 'slate', accent: 'gray' };
+                const PlanIcon = plan.icon;
+                const displayPrice = getDisplayPrice(plan);
                 
                 return (
                 <motion.div
@@ -392,287 +419,206 @@ export default function Pricing() {
                     initial={{ opacity: 0, y: 40 }}
                   animate={{ opacity: 1, y: 0 }}
                     transition={{ duration: 0.7, delay: index * 0.12, ease: [0.25, 0.46, 0.45, 0.94] }}
-                    className={`relative group ${plan.popular ? 'md:-mt-6 md:mb-6 z-10' : ''}`}
+                    className={`relative group ${plan.popular ? 'lg:-mt-4 lg:mb-4 z-10' : ''}`}
                   >
-                    {/* Luxury glow effect */}
+                    {/* Glow effect */}
                     <div className={`absolute -inset-[2px] rounded-[32px] opacity-0 group-hover:opacity-100 transition-all duration-700 blur-xl ${
-                      trialCompleted
-                        ? 'bg-gradient-to-br from-emerald-500/40 via-teal-500/20 to-emerald-500/40'
-                        : plan.popular
-                          ? 'bg-gradient-to-br from-orange-500/50 via-amber-400/30 to-orange-600/50'
-                          : plan.id === 'business'
-                            ? 'bg-gradient-to-br from-violet-500/40 via-purple-400/20 to-violet-600/40'
+                      plan.popular
+                        ? 'bg-gradient-to-br from-orange-500/50 via-amber-400/30 to-orange-600/50'
+                        : plan.id === 'professional'
+                          ? 'bg-gradient-to-br from-violet-500/40 via-purple-400/20 to-violet-600/40'
+                          : plan.id === 'accountant'
+                            ? 'bg-gradient-to-br from-emerald-500/40 via-teal-400/20 to-emerald-600/40'
                             : 'bg-gradient-to-br from-slate-400/20 via-slate-300/10 to-slate-400/20'
                     }`} />
                     
-                    {/* Popular card permanent glow */}
-                    {plan.popular && !trialCompleted && (
+                    {/* Popular badge glow */}
+                    {plan.popular && (
                       <div className="absolute -inset-[3px] bg-gradient-to-b from-orange-400/60 via-amber-500/30 to-orange-600/60 rounded-[32px] blur-md" />
                     )}
                     
                     {/* Main card */}
                     <div className={`relative h-full rounded-[28px] overflow-hidden transition-all duration-500 group-hover:translate-y-[-4px] ${
-                      trialCompleted
-                        ? 'bg-gradient-to-b from-[#0c1a14] via-[#0a1510] to-[#080f0c]'
-                        : plan.popular 
-                          ? 'bg-gradient-to-b from-[#1a1208] via-[#14100a] to-[#0d0a06]' 
-                          : plan.id === 'business'
-                            ? 'bg-gradient-to-b from-[#130d1a] via-[#0f0a14] to-[#0a070d]'
+                      plan.popular 
+                        ? 'bg-gradient-to-b from-[#1a1208] via-[#14100a] to-[#0d0a06]' 
+                        : plan.id === 'professional'
+                          ? 'bg-gradient-to-b from-[#130d1a] via-[#0f0a14] to-[#0a070d]'
+                          : plan.id === 'accountant'
+                            ? 'bg-gradient-to-b from-[#0c1a14] via-[#0a1510] to-[#080f0c]'
                             : 'bg-gradient-to-b from-[#12141a] via-[#0e1015] to-[#0a0b0f]'
                   }`}
                 >
-                      {/* Inner border effect */}
+                      {/* Inner border */}
                       <div className={`absolute inset-0 rounded-[28px] ${
-                        trialCompleted
-                          ? 'ring-1 ring-inset ring-emerald-500/20'
-                          : plan.popular
-                            ? 'ring-2 ring-inset ring-orange-500/30'
-                            : plan.id === 'business'
-                              ? 'ring-1 ring-inset ring-violet-500/20'
+                        plan.popular
+                          ? 'ring-2 ring-inset ring-orange-500/30'
+                          : plan.id === 'professional'
+                            ? 'ring-1 ring-inset ring-violet-500/20'
+                            : plan.id === 'accountant'
+                              ? 'ring-1 ring-inset ring-emerald-500/20'
                               : 'ring-1 ring-inset ring-white/[0.08]'
                       }`} />
                       
-                      {/* Subtle noise texture overlay */}
-                      <div className="absolute inset-0 opacity-[0.015]" style={{
-                        backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E")`
-                      }} />
-                      
                       {/* Top accent line */}
                       <div className={`absolute top-0 left-6 right-6 h-[1px] ${
-                        trialCompleted
-                          ? 'bg-gradient-to-r from-transparent via-emerald-400/50 to-transparent'
-                          : plan.popular
-                            ? 'bg-gradient-to-r from-transparent via-orange-400/60 to-transparent'
-                            : plan.id === 'business'
-                              ? 'bg-gradient-to-r from-transparent via-violet-400/50 to-transparent'
+                        plan.popular
+                          ? 'bg-gradient-to-r from-transparent via-orange-400/60 to-transparent'
+                          : plan.id === 'professional'
+                            ? 'bg-gradient-to-r from-transparent via-violet-400/50 to-transparent'
+                            : plan.id === 'accountant'
+                              ? 'bg-gradient-to-r from-transparent via-emerald-400/50 to-transparent'
                               : 'bg-gradient-to-r from-transparent via-white/10 to-transparent'
                       }`} />
 
                       {/* Card content */}
-                      <div className="relative p-8 pt-6">
+                      <div className="relative p-7 pt-6">
                         {/* Badge */}
-                        <div className="flex justify-center mb-8">
+                        <div className="flex justify-center mb-6">
                           <motion.div 
                             whileHover={{ scale: 1.05 }}
-                            className={`inline-flex items-center gap-2.5 px-5 py-2 rounded-full text-[11px] font-bold tracking-[0.1em] uppercase backdrop-blur-sm ${
-                              trialCompleted
-                                ? 'bg-emerald-950/80 text-emerald-300 border border-emerald-500/30 shadow-lg shadow-emerald-900/30'
-                                : plan.popular
-                                  ? 'bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-lg shadow-orange-500/30'
-                                  : plan.id === 'business'
-                                    ? 'bg-violet-950/80 text-violet-300 border border-violet-500/30 shadow-lg shadow-violet-900/30'
+                            className={`inline-flex items-center gap-2.5 px-4 py-2 rounded-full text-[10px] font-bold tracking-[0.1em] uppercase backdrop-blur-sm ${
+                              plan.popular
+                                ? 'bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-lg shadow-orange-500/30'
+                                : plan.id === 'professional'
+                                  ? 'bg-violet-950/80 text-violet-300 border border-violet-500/30'
+                                  : plan.id === 'accountant'
+                                    ? 'bg-emerald-950/80 text-emerald-300 border border-emerald-500/30'
                                     : 'bg-slate-800/80 text-slate-400 border border-slate-600/30'
                             }`}
                           >
-                            {trialCompleted ? (
-                              <>
-                                <CheckCircle2 className="w-3.5 h-3.5" />
-                                Concluído
-                              </>
-                            ) : plan.popular ? (
+                            {plan.popular ? (
                               <>
                                 <Crown className="w-3.5 h-3.5" />
                         Mais Popular
                               </>
-                            ) : plan.id === 'business' ? (
+                            ) : plan.id === 'professional' ? (
                               <>
                                 <Building2 className="w-3.5 h-3.5" />
-                                Enterprise
+                                Empresas
+                              </>
+                            ) : plan.id === 'accountant' ? (
+                              <>
+                                <Users className="w-3.5 h-3.5" />
+                                Escritórios
                               </>
                             ) : (
                               <>
-                                <Sparkles className="w-3.5 h-3.5" />
-                                Starter
+                                <CreditCard className="w-3.5 h-3.5" />
+                                Sob Demanda
                               </>
                             )}
                           </motion.div>
                     </div>
 
+                        {/* Plan icon */}
+                        <div className="flex justify-center mb-4">
+                          <div className={`w-14 h-14 rounded-2xl flex items-center justify-center ${
+                            plan.popular
+                              ? 'bg-orange-500/20 border border-orange-500/30'
+                              : plan.id === 'professional'
+                                ? 'bg-violet-500/20 border border-violet-500/30'
+                                : plan.id === 'accountant'
+                                  ? 'bg-emerald-500/20 border border-emerald-500/30'
+                                  : 'bg-slate-500/20 border border-slate-500/30'
+                          }`}>
+                            <PlanIcon className={`w-7 h-7 ${
+                              plan.popular
+                                ? 'text-orange-400'
+                                : plan.id === 'professional'
+                                  ? 'text-violet-400'
+                                  : plan.id === 'accountant'
+                                    ? 'text-emerald-400'
+                                    : 'text-slate-400'
+                            }`} />
+                          </div>
+                        </div>
+
                         {/* Plan name */}
                         <div className="text-center mb-2">
-                          <h3 className={`text-3xl font-bold tracking-tight ${
-                            trialCompleted 
-                              ? 'text-emerald-200' 
-                              : plan.popular 
-                                ? 'text-white' 
-                                : plan.id === 'business'
-                                  ? 'text-violet-100'
-                                  : 'text-white'
-                          }`}>
+                          <h3 className="text-2xl font-bold tracking-tight text-white">
                             {plan.name}
                           </h3>
                   </div>
 
                         {/* Description */}
-                        <p className="text-center text-sm text-slate-500 mb-8 leading-relaxed max-w-[220px] mx-auto">
-                          {trialCompleted 
-                            ? 'Você aproveitou seu trial! Obrigado por experimentar.' 
-                            : plan.description}
+                        <p className="text-center text-sm text-slate-500 mb-6 leading-relaxed">
+                          {plan.description}
                         </p>
 
-                        {/* Billing Cycle Selector (only for paid plans) */}
-                        {!trialCompleted && plan.price > 0 && (
-                          <div className="mb-6">
-                            <div className="flex items-center justify-center gap-2 p-1 bg-slate-800/30 rounded-xl border border-slate-700/50">
-                              <button
-                                type="button"
-                                onClick={() => setSelectedBillingCycle('monthly')}
-                                className={`flex-1 px-3 py-2 rounded-lg text-xs font-semibold transition-all ${
-                                  selectedBillingCycle === 'monthly'
-                                    ? plan.popular
-                                      ? 'bg-orange-500/20 text-orange-300 border border-orange-500/40'
-                                      : plan.id === 'business'
-                                        ? 'bg-violet-500/20 text-violet-300 border border-violet-500/40'
-                                        : 'bg-slate-700/50 text-white border border-slate-600/50'
-                                    : 'text-slate-500 hover:text-slate-300'
-                                }`}
-                              >
-                                Mensal
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => setSelectedBillingCycle('semiannual')}
-                                className={`flex-1 px-3 py-2 rounded-lg text-xs font-semibold transition-all ${
-                                  selectedBillingCycle === 'semiannual'
-                                    ? plan.popular
-                                      ? 'bg-orange-500/20 text-orange-300 border border-orange-500/40'
-                                      : plan.id === 'business'
-                                        ? 'bg-violet-500/20 text-violet-300 border border-violet-500/40'
-                                        : 'bg-slate-700/50 text-white border border-slate-600/50'
-                                    : 'text-slate-500 hover:text-slate-300'
-                                }`}
-                              >
-                                Semestral
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => setSelectedBillingCycle('annual')}
-                                className={`flex-1 px-3 py-2 rounded-lg text-xs font-semibold transition-all ${
-                                  selectedBillingCycle === 'annual'
-                                    ? plan.popular
-                                      ? 'bg-orange-500/20 text-orange-300 border border-orange-500/40'
-                                      : plan.id === 'business'
-                                        ? 'bg-violet-500/20 text-violet-300 border border-violet-500/40'
-                                        : 'bg-slate-700/50 text-white border border-slate-600/50'
-                                    : 'text-slate-500 hover:text-slate-300'
-                                }`}
-                              >
-                                Anual
-                              </button>
-                            </div>
-                          </div>
-                        )}
-
                         {/* Price section */}
-                        <div className="text-center mb-8">
-                          {trialCompleted ? (
-                            <div className="flex items-baseline justify-center gap-3">
-                              <span className="text-4xl font-bold text-slate-600 line-through decoration-2 decoration-emerald-500/40">
-                                Grátis
-                              </span>
-                              <span className="inline-flex items-center gap-1 text-sm text-emerald-400 font-semibold bg-emerald-500/10 px-3 py-1 rounded-full">
-                                <Check className="w-3.5 h-3.5" />
-                                Usado
-                              </span>
+                        <div className="text-center mb-6">
+                          {plan.isCustomPricing ? (
+                            <div className="flex items-baseline justify-center">
+                              <span className="text-3xl font-bold text-white">Personalizado</span>
                             </div>
                           ) : (
                             <>
                               <div className="flex items-baseline justify-center">
-                                {plan.price > 0 && (
-                                  <span className="text-slate-500 text-lg mr-1">R$</span>
-                                )}
-                                <span className={`text-5xl font-bold tracking-tight ${
-                                  plan.popular ? 'text-white' : 'text-white'
-                                }`}>
-                                  {plan.price === 0 ? 'Grátis' : (
-                                    selectedBillingCycle === 'monthly' ? plan.monthlyPrice :
-                                    selectedBillingCycle === 'semiannual' ? plan.semiannualPrice :
-                                    plan.annualPrice
-                                  )}
-                    </span>
-                    {plan.price > 0 && (
-                                  <span className="text-slate-500 text-base ml-1">
-                                    {selectedBillingCycle === 'monthly' ? '/mês' :
-                                     selectedBillingCycle === 'semiannual' ? '/semestre' :
-                                     '/ano'}
-                                  </span>
-                    )}
+                                <span className="text-slate-500 text-lg mr-1">R$</span>
+                                <span className="text-4xl font-bold tracking-tight text-white">
+                                  {displayPrice}
+                                </span>
+                                <span className="text-slate-500 text-base ml-1">
+                                  {getPeriodText(plan)}
+                                </span>
                               </div>
-                    {plan.price === 0 && (
-                                <span className="text-slate-500 text-sm">por {plan.period}</span>
-                              )}
-                              {plan.popular && selectedBillingCycle === 'annual' && (
-                                <p className="text-xs text-orange-400/90 mt-3 font-medium">
-                                  💰 Economize 20% no plano anual
+                              {!plan.isPayPerUse && selectedBillingCycle === 'annual' && plan.annualMonthlyEquivalent && (
+                                <p className="text-xs text-emerald-400 mt-2">
+                                  💰 Economia de {Math.round((1 - plan.annualMonthlyEquivalent / plan.monthlyPrice) * 100)}% no plano anual
                                 </p>
                               )}
-                              {plan.price > 0 && selectedBillingCycle !== 'monthly' && (
+                              {plan.isPayPerUse && (
                                 <p className="text-xs text-slate-500 mt-2">
-                                  {selectedBillingCycle === 'semiannual' 
-                                    ? `R$ ${(plan.semiannualPrice / 6).toFixed(2)}/mês equivalente`
-                                    : `R$ ${(plan.annualPrice / 12).toFixed(2)}/mês equivalente`}
+                                  Sem mensalidade • Pague apenas quando usar
                                 </p>
                               )}
                             </>
-                    )}
+                          )}
                   </div>
 
-                        {/* Elegant divider */}
-                        <div className="relative mb-8">
+                        {/* Divider */}
+                        <div className="relative mb-6">
                           <div className={`h-[1px] ${
-                            trialCompleted
-                              ? 'bg-gradient-to-r from-transparent via-emerald-500/20 to-transparent'
-                              : plan.popular
-                                ? 'bg-gradient-to-r from-transparent via-orange-500/30 to-transparent'
-                                : plan.id === 'business'
-                                  ? 'bg-gradient-to-r from-transparent via-violet-500/20 to-transparent'
+                            plan.popular
+                              ? 'bg-gradient-to-r from-transparent via-orange-500/30 to-transparent'
+                              : plan.id === 'professional'
+                                ? 'bg-gradient-to-r from-transparent via-violet-500/20 to-transparent'
+                                : plan.id === 'accountant'
+                                  ? 'bg-gradient-to-r from-transparent via-emerald-500/20 to-transparent'
                                   : 'bg-gradient-to-r from-transparent via-slate-700/50 to-transparent'
-                          }`} />
-                          <div className={`absolute left-1/2 -translate-x-1/2 -top-1 w-2 h-2 rounded-full ${
-                            trialCompleted
-                              ? 'bg-emerald-500/30'
-                              : plan.popular
-                                ? 'bg-orange-500/40'
-                                : plan.id === 'business'
-                                  ? 'bg-violet-500/30'
-                                  : 'bg-slate-600/30'
                           }`} />
                         </div>
 
                         {/* Features list */}
-                        <ul className="space-y-4 mb-10">
+                        <ul className="space-y-3 mb-8">
                     {plan.features.map((feature, idx) => (
                             <motion.li 
                               key={idx} 
                               initial={{ opacity: 0, x: -15 }}
                               animate={{ opacity: 1, x: 0 }}
                               transition={{ delay: 0.4 + idx * 0.06, duration: 0.4 }}
-                              className="flex items-center gap-3.5 group/item"
+                              className="flex items-center gap-3 group/item"
                             >
-                              <div className={`w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 transition-all duration-300 group-hover/item:scale-110 ${
-                                trialCompleted
-                                  ? 'bg-emerald-500/15 ring-1 ring-emerald-500/30'
-                                  : plan.popular
-                                    ? 'bg-orange-500/15 ring-1 ring-orange-500/30'
-                                    : plan.id === 'business'
-                                      ? 'bg-violet-500/15 ring-1 ring-violet-500/30'
+                              <div className={`w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 ${
+                                plan.popular
+                                  ? 'bg-orange-500/15 ring-1 ring-orange-500/30'
+                                  : plan.id === 'professional'
+                                    ? 'bg-violet-500/15 ring-1 ring-violet-500/30'
+                                    : plan.id === 'accountant'
+                                      ? 'bg-emerald-500/15 ring-1 ring-emerald-500/30'
                                       : 'bg-slate-500/10 ring-1 ring-slate-500/20'
                               }`}>
                                 <Check className={`w-3 h-3 ${
-                                  trialCompleted
-                                    ? 'text-emerald-400'
-                                    : plan.popular
-                                      ? 'text-orange-400'
-                                      : plan.id === 'business'
-                                        ? 'text-violet-400'
+                                  plan.popular
+                                    ? 'text-orange-400'
+                                    : plan.id === 'professional'
+                                      ? 'text-violet-400'
+                                      : plan.id === 'accountant'
+                                        ? 'text-emerald-400'
                                         : 'text-slate-500'
                                 }`} />
                               </div>
-                              <span className={`text-sm transition-colors duration-300 ${
-                                trialCompleted 
-                                  ? 'text-slate-500' 
-                                  : 'text-slate-400 group-hover/item:text-slate-300'
-                              }`}>
+                              <span className="text-sm text-slate-400 group-hover/item:text-slate-300 transition-colors">
                                 {feature}
                               </span>
                             </motion.li>
@@ -680,34 +626,18 @@ export default function Pricing() {
                   </ul>
 
                         {/* CTA Button */}
-                        {trialCompleted ? (
-                          <div className="space-y-4">
-                            <div className="w-full py-3.5 px-5 rounded-2xl bg-emerald-500/5 border border-emerald-500/20 flex items-center justify-center gap-2.5">
-                              <Lock className="w-4 h-4 text-emerald-500/70" />
-                              <span className="text-emerald-400/80 text-sm font-medium">Trial já utilizado</span>
-                            </div>
-                            <motion.button
-                              whileHover={{ scale: 1.02 }}
-                              whileTap={{ scale: 0.98 }}
-                              onClick={() => handleSelectPlan(plans[1])}
-                              className="w-full py-4 px-6 rounded-2xl text-base font-semibold bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 text-white shadow-xl shadow-orange-500/25 transition-all duration-300 flex items-center justify-center gap-2"
-                            >
-                              <Zap className="w-4 h-4" />
-                              Migrar para Pro
-                              <ArrowRight className="w-4 h-4" />
-                            </motion.button>
-                          </div>
-                        ) : (
-                          <motion.button
-                            whileHover={{ scale: 1.02 }}
-                            whileTap={{ scale: 0.98 }}
+                        <motion.button
+                          whileHover={{ scale: 1.02 }}
+                          whileTap={{ scale: 0.98 }}
                     onClick={() => handleSelectPlan(plan)}
                     disabled={loadingPlan === plan.id}
-                            className={`w-full py-4 px-6 rounded-2xl text-base font-semibold transition-all duration-300 flex items-center justify-center gap-2 ${
+                          className={`w-full py-4 px-6 rounded-2xl text-base font-semibold transition-all duration-300 flex items-center justify-center gap-2 ${
                       plan.popular
-                                ? 'bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 text-white shadow-xl shadow-orange-500/25'
-                                : plan.id === 'business'
-                                  ? 'bg-gradient-to-r from-violet-600/80 to-purple-600/80 hover:from-violet-500/80 hover:to-purple-500/80 text-white shadow-xl shadow-violet-500/20'
+                              ? 'bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 text-white shadow-xl shadow-orange-500/25'
+                              : plan.id === 'professional'
+                                ? 'bg-gradient-to-r from-violet-600/80 to-purple-600/80 hover:from-violet-500/80 hover:to-purple-500/80 text-white shadow-xl shadow-violet-500/20'
+                                : plan.id === 'accountant'
+                                  ? 'bg-gradient-to-r from-emerald-600/80 to-teal-600/80 hover:from-emerald-500/80 hover:to-teal-500/80 text-white shadow-xl shadow-emerald-500/20'
                                   : 'bg-white/[0.03] hover:bg-white/[0.06] text-white ring-1 ring-white/10 hover:ring-white/20'
                     }`}
                   >
@@ -718,12 +648,20 @@ export default function Pricing() {
                               </>
                     ) : (
                               <>
+                                {plan.isCustomPricing ? (
+                                  <>
+                                    <Mail className="w-4 h-4" />
+                                    {plan.buttonText}
+                                  </>
+                                ) : (
+                                  <>
                         {plan.buttonText}
-                                <ArrowRight className="w-4 h-4 transition-transform duration-300 group-hover:translate-x-1" />
+                                    <ArrowRight className="w-4 h-4" />
+                                  </>
+                                )}
                               </>
                             )}
                           </motion.button>
-                        )}
                       </div>
                     </div>
                 </motion.div>
@@ -755,7 +693,6 @@ export default function Pricing() {
             
             <div className="grid md:grid-cols-3 gap-5">
               {features.map((feature, index) => {
-                // Calculate row and column for staggered animation
                 const row = Math.floor(index / 3);
                 const col = index % 3;
                 
@@ -782,28 +719,18 @@ export default function Pricing() {
                     }}
                     className="group cursor-pointer"
                   >
-                    {/* 3D Card Container */}
                     <div 
                       className="relative h-full rounded-2xl overflow-hidden"
                       style={{ transformStyle: "preserve-3d" }}
                     >
-                      {/* Glow effect on hover */}
                       <div className="absolute -inset-1 bg-gradient-to-br from-orange-500/30 via-amber-500/20 to-orange-600/30 rounded-3xl blur-xl opacity-0 group-hover:opacity-60 transition-all duration-500" />
                       
-                      {/* Card */}
                       <div className="relative h-full bg-[#0d0f14] rounded-2xl border border-slate-800/80 group-hover:border-orange-500/30 transition-all duration-500 overflow-hidden">
-                        {/* Inner gradient overlay */}
                         <div className="absolute inset-0 bg-gradient-to-br from-slate-800/20 via-transparent to-slate-900/30 opacity-50" />
-                        
-                        {/* Top shine effect */}
                         <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-slate-600/50 to-transparent" />
-                        
-                        {/* Hover shine sweep effect */}
                         <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/[0.03] to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-1000 ease-out" />
                         
-                        {/* Content */}
                         <div className="relative p-7">
-                          {/* Icon container with 3D effect */}
                           <div 
                             className="w-14 h-14 rounded-xl bg-gradient-to-br from-orange-500/15 to-amber-500/10 border border-orange-500/20 flex items-center justify-center mb-6 group-hover:scale-110 group-hover:rotate-3 transition-all duration-500 shadow-lg shadow-orange-500/5 group-hover:shadow-orange-500/20"
                             style={{ transform: "translateZ(20px)" }}
@@ -811,7 +738,6 @@ export default function Pricing() {
                             <feature.icon className="w-6 h-6 text-orange-400 group-hover:text-orange-300 transition-colors duration-300" />
                           </div>
                           
-                          {/* Title */}
                           <h3 
                             className="text-lg font-semibold text-white mb-2.5 group-hover:text-orange-50 transition-colors duration-300"
                             style={{ transform: "translateZ(10px)" }}
@@ -819,7 +745,6 @@ export default function Pricing() {
                             {feature.title}
                           </h3>
                           
-                          {/* Description */}
                           <p 
                             className="text-sm text-slate-500 leading-relaxed group-hover:text-slate-400 transition-colors duration-300"
                             style={{ transform: "translateZ(5px)" }}
@@ -828,7 +753,6 @@ export default function Pricing() {
                           </p>
                         </div>
                         
-                        {/* Bottom accent line on hover */}
                         <div className="absolute bottom-0 left-4 right-4 h-px bg-gradient-to-r from-transparent via-orange-500/50 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
                       </div>
                   </div>
@@ -848,79 +772,38 @@ export default function Pricing() {
               transition={{ duration: 0.6, delay: 0.6 }}
               className="relative overflow-hidden"
             >
-              {/* Background glow */}
               <div className="absolute inset-0 bg-gradient-to-r from-orange-500/20 via-amber-500/10 to-purple-500/20 blur-3xl" />
               
-              <div className={`relative rounded-3xl p-12 md:p-16 backdrop-blur-xl border ${
-                trialEligibility.hasUsedTrial && isAuthenticated
-                  ? 'bg-gradient-to-br from-slate-900/90 via-emerald-950/20 to-slate-900/90 border-emerald-500/30'
-                  : 'bg-gradient-to-br from-slate-900/90 via-orange-950/20 to-slate-900/90 border-orange-500/40'
-              }`}>
-                {/* Decorative elements */}
+              <div className="relative rounded-3xl p-12 md:p-16 backdrop-blur-xl border bg-gradient-to-br from-slate-900/90 via-orange-950/20 to-slate-900/90 border-orange-500/40">
                 <div className="absolute top-0 left-1/4 w-32 h-32 bg-orange-500/10 rounded-full blur-3xl" />
                 <div className="absolute bottom-0 right-1/4 w-40 h-40 bg-purple-500/10 rounded-full blur-3xl" />
                 
-                {trialEligibility.hasUsedTrial && isAuthenticated ? (
-                  <div className="relative">
-                    <div className="w-20 h-20 mx-auto mb-6 rounded-2xl bg-gradient-to-br from-emerald-500/20 to-teal-500/20 flex items-center justify-center">
-                      <Crown className="w-10 h-10 text-emerald-400" />
-                    </div>
-                    <h2 className="text-3xl md:text-4xl font-bold text-white mb-4">
-                      Continue sua jornada
-                      <span className="block mt-2 bg-gradient-to-r from-orange-400 to-amber-400 text-transparent bg-clip-text">
-                        com a MAY
-                      </span>
-                    </h2>
-                    <p className="text-lg text-slate-400 mb-10 max-w-xl mx-auto">
-                      Seu período de trial foi concluído com sucesso. 
-                      Desbloqueie todo o potencial com um plano premium.
-                    </p>
-                    <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-                      <Button
-                        onClick={() => handleSelectPlan(plans[1])}
-                        className="bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white px-10 py-6 text-lg font-semibold shadow-xl shadow-orange-500/25 hover:shadow-orange-500/40 transition-all duration-300 hover:scale-105"
-                      >
-                        <Zap className="w-5 h-5 mr-2" />
-                        Assinar Pro — R$ 97/mês
-                      </Button>
-                      <Button
-                        onClick={() => handleSelectPlan(plans[2])}
-                        className="bg-gradient-to-r from-purple-600/20 to-violet-600/20 border-2 border-purple-500/40 text-purple-200 hover:from-purple-600/30 hover:to-violet-600/30 hover:border-purple-400/60 hover:text-white px-8 py-6 text-lg font-semibold transition-all duration-300 shadow-lg shadow-purple-500/10 hover:shadow-purple-500/20"
-                      >
-                        <Building2 className="w-5 h-5 mr-2" />
-                        Ver Business
-                        <ArrowRight className="w-5 h-5 ml-2" />
-                      </Button>
-                    </div>
+                <div className="relative">
+                  <div className="w-20 h-20 mx-auto mb-6 rounded-2xl bg-gradient-to-br from-orange-500/20 to-amber-500/20 flex items-center justify-center">
+                    <Zap className="w-10 h-10 text-orange-400" />
                   </div>
-                ) : (
-                  <div className="relative">
-                    <div className="w-20 h-20 mx-auto mb-6 rounded-2xl bg-gradient-to-br from-orange-500/20 to-amber-500/20 flex items-center justify-center">
-                      <Zap className="w-10 h-10 text-orange-400" />
-                    </div>
-                    <h2 className="text-3xl md:text-4xl font-bold text-white mb-4">
-                      Comece agora
-                      <span className="block mt-2 bg-gradient-to-r from-orange-400 to-amber-400 text-transparent bg-clip-text">
-                        gratuitamente
-                      </span>
+                  <h2 className="text-3xl md:text-4xl font-bold text-white mb-4">
+                    Comece agora
+                    <span className="block mt-2 bg-gradient-to-r from-orange-400 to-amber-400 text-transparent bg-clip-text">
+                      a partir de R$9
+                    </span>
               </h2>
-                    <p className="text-lg text-slate-400 mb-10 max-w-xl mx-auto">
-                      7 dias de trial com todas as funcionalidades premium.
-                      Sem cartão de crédito. Sem compromisso.
+                  <p className="text-lg text-slate-400 mb-10 max-w-xl mx-auto">
+                    Pague apenas quando emitir ou escolha um plano mensal.
+                    Sem compromisso. Cancele quando quiser.
               </p>
               <Button
                 onClick={() => handleSelectPlan(plans[0])}
-                      className="bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white px-10 py-6 text-lg font-semibold shadow-xl shadow-orange-500/25 hover:shadow-orange-500/40 transition-all duration-300 hover:scale-105"
+                    className="bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white px-10 py-6 text-lg font-semibold shadow-xl shadow-orange-500/25 hover:shadow-orange-500/40 transition-all duration-300 hover:scale-105"
               >
-                      <Sparkles className="w-5 h-5 mr-2" />
-                Começar Trial Grátis
+                    <CreditCard className="w-5 h-5 mr-2" />
+                    Começar com Pay per Use
                 <ArrowRight className="w-5 h-5 ml-2" />
               </Button>
-                    <p className="text-sm text-slate-500 mt-6">
-                      Junte-se a milhares de profissionais que já automatizaram suas notas fiscais
-                    </p>
-                  </div>
-                )}
+                  <p className="text-sm text-slate-500 mt-6">
+                    R$9 por nota fiscal emitida • Sem mensalidade
+                  </p>
+                </div>
               </div>
             </motion.div>
           </div>

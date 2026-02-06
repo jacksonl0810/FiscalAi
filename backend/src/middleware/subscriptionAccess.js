@@ -2,9 +2,7 @@
  * Subscription Access Control Middleware
  * 
  * Restricts access based on user subscription status.
- * Accepts both Prisma enum values (ACTIVE, TRIAL, etc.) and legacy Portuguese (ativo, trial).
- * 
- * IMPORTANT: Trial users can access even if they have a pending payment
+ * Accepts both Prisma enum values (ACTIVE, etc.) and legacy Portuguese (ativo).
  * 
  * Usage:
  *   router.use(requireActiveSubscription);  // Apply to all routes
@@ -16,56 +14,20 @@ import { AppError } from './errorHandler.js';
 
 /** Statuses that grant access (DB enum + legacy) */
 const ACTIVE_STATUSES = ['ACTIVE', 'ativo'];
-const TRIAL_STATUSES = ['TRIAL', 'trial'];
 const PENDING_STATUSES = ['PENDING', 'pending'];
 const DELINQUENT_STATUSES = ['PAST_DUE', 'inadimplente'];
 const CANCELED_STATUSES = ['CANCELED', 'cancelado'];
 const EXPIRED_STATUSES = ['EXPIRED', 'expired'];
 
 function isActive(s) { return s && ACTIVE_STATUSES.includes(s); }
-function isTrial(s) { return s && TRIAL_STATUSES.includes(s); }
 function isPending(s) { return s && PENDING_STATUSES.includes(s); }
 function isDelinquent(s) { return s && DELINQUENT_STATUSES.includes(s); }
 function isCanceled(s) { return s && CANCELED_STATUSES.includes(s); }
 
 /**
- * Helper: Check if user is in active trial period
- */
-async function isUserInTrialPeriod(userId) {
-  const now = new Date();
-  
-  // Check subscription trial (enum TRIAL or legacy 'trial')
-  const subscription = await prisma.subscription.findUnique({
-    where: { userId }
-  });
-  
-  if (subscription && isTrial(subscription.status) && subscription?.trialEndsAt) {
-    if (now <= new Date(subscription.trialEndsAt)) {
-      return { valid: true, daysRemaining: Math.ceil((new Date(subscription.trialEndsAt) - now) / (1000 * 60 * 60 * 24)) };
-    }
-  }
-  
-  // Check user's trialStartedAt
-  const user = await prisma.user.findUnique({
-    where: { id: userId },
-    select: { trialStartedAt: true, createdAt: true, hasUsedTrial: true }
-  });
-  
-  if (user?.trialStartedAt) {
-    const trialEnd = new Date(user.trialStartedAt);
-    trialEnd.setDate(trialEnd.getDate() + 7);
-    if (now <= trialEnd) {
-      return { valid: true, daysRemaining: Math.ceil((trialEnd - now) / (1000 * 60 * 60 * 24)) };
-    }
-  }
-  
-  return { valid: false, daysRemaining: 0 };
-}
-
-/**
  * Middleware to check if user has active subscription
- * Allows: 'ativo', 'trial', or valid trial period
- * Blocks: 'inadimplente', 'cancelado', null (unless in trial)
+ * Allows: 'ativo' or 'ACTIVE'
+ * Blocks: 'inadimplente', 'cancelado', null
  */
 export async function requireActiveSubscription(req, res, next) {
   try {
@@ -76,31 +38,8 @@ export async function requireActiveSubscription(req, res, next) {
       where: { userId }
     });
 
-    // ✅ PRIORITY 1: Check if user is in active trial period
-    // This takes precedence over pending payments
-    const trialCheck = await isUserInTrialPeriod(userId);
-    if (trialCheck.valid) {
-      console.log(`[SubscriptionAccess] User ${userId} in trial period (${trialCheck.daysRemaining} days remaining)`);
-      return next();
-    }
-
     // If no subscription record
     if (!subscription) {
-      // Check implicit trial period for new users
-      const user = await prisma.user.findUnique({
-        where: { id: userId },
-        select: { createdAt: true, hasUsedTrial: true }
-      });
-      
-      const userCreatedAt = new Date(user?.createdAt || new Date());
-      const implicitTrialEnd = new Date(userCreatedAt);
-      implicitTrialEnd.setDate(implicitTrialEnd.getDate() + 7);
-
-      if (now <= implicitTrialEnd && !user?.hasUsedTrial) {
-        // Allow implicit trial access for brand new users
-        return next();
-      }
-
       throw new AppError(
         'Assinatura necessária para acessar este recurso. Por favor, assine um plano.',
         403,
@@ -108,24 +47,12 @@ export async function requireActiveSubscription(req, res, next) {
       );
     }
 
-    // ✅ PRIORITY 2: Active subscription (DB: ACTIVE or legacy: ativo)
+    // ✅ PRIORITY 1: Active subscription (DB: ACTIVE or legacy: ativo)
     if (isActive(subscription.status)) {
       return next();
     }
 
-    // ✅ PRIORITY 3: Active trial subscription (DB: TRIAL or legacy: trial)
-    if (isTrial(subscription.status)) {
-      if (subscription.trialEndsAt && now > new Date(subscription.trialEndsAt)) {
-        throw new AppError(
-          'Período de teste expirado. Por favor, assine um plano.',
-          403,
-          'TRIAL_EXPIRED'
-        );
-      }
-      return next();
-    }
-
-    // ✅ PRIORITY 4: Pending payment - already checked trial above, so block
+    // ✅ PRIORITY 2: Pending payment - block
     if (isPending(subscription.status)) {
       throw new AppError(
         'Pagamento pendente. Aguarde a confirmação ou tente novamente.',
@@ -187,7 +114,7 @@ export async function requireActiveSubscription(req, res, next) {
 }
 
 /**
- * Middleware to check if user has paid subscription (not trial)
+ * Middleware to check if user has paid subscription
  * Only allows: ACTIVE or legacy 'ativo'
  */
 export async function requirePaidSubscription(req, res, next) {

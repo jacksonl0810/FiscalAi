@@ -136,16 +136,16 @@ const StatCard = ({ title, value, change, icon: Icon, color = "orange", subtitle
 const StatusBadge = ({ status }) => {
   const statusConfig = {
     ativo: { bg: 'bg-emerald-500/20', text: 'text-emerald-400', border: 'border-emerald-500/30', icon: CheckCircle, label: 'Ativo' },
-    trial: { bg: 'bg-blue-500/20', text: 'text-blue-400', border: 'border-blue-500/30', icon: Clock, label: 'Trial' },
     inadimplente: { bg: 'bg-red-500/20', text: 'text-red-400', border: 'border-red-500/30', icon: AlertCircle, label: 'Inadimplente' },
     cancelado: { bg: 'bg-gray-500/20', text: 'text-gray-400', border: 'border-gray-500/30', icon: XCircle, label: 'Cancelado' },
     pending: { bg: 'bg-amber-500/20', text: 'text-amber-400', border: 'border-amber-500/30', icon: Clock, label: 'Pendente' },
     autorizada: { bg: 'bg-emerald-500/20', text: 'text-emerald-400', border: 'border-emerald-500/30', icon: CheckCircle, label: 'Autorizada' },
     rejeitada: { bg: 'bg-red-500/20', text: 'text-red-400', border: 'border-red-500/30', icon: XCircle, label: 'Rejeitada' },
     processando: { bg: 'bg-amber-500/20', text: 'text-amber-400', border: 'border-amber-500/30', icon: RefreshCw, label: 'Processando' },
+    no_subscription: { bg: 'bg-slate-500/20', text: 'text-slate-400', border: 'border-slate-500/30', icon: Clock, label: 'Sem Assinatura' },
   };
 
-  const config = statusConfig[status] || statusConfig.pending;
+  const config = statusConfig[status] || statusConfig.no_subscription;
   const IconComponent = config.icon;
 
   return (
@@ -229,8 +229,8 @@ const UserDetailModal = ({ user, open, onClose, onUpdate }) => {
               <InfoCard icon={Mail} label="Email" value={user.email} />
               <InfoCard icon={Calendar} label="Cadastrado em" value={new Date(user.createdAt).toLocaleDateString('pt-BR')} />
               <InfoCard icon={Building2} label="Empresas" value={user._count?.companies || user.companies?.length || 0} />
-              <InfoCard icon={CreditCard} label="Plano" value={user.subscription?.planId || 'Trial'} />
-              <InfoCard icon={Activity} label="Status" value={<StatusBadge status={user.subscription?.status || 'trial'} />} />
+              <InfoCard icon={CreditCard} label="Plano" value={user.subscription?.planId || 'Pay per Use'} />
+              <InfoCard icon={Activity} label="Status" value={<StatusBadge status={user.subscription?.status || 'no_subscription'} />} />
               <InfoCard icon={Crown} label="Tipo" value={user.isAdmin ? 'Administrador' : 'Usuário'} />
             </div>
           )}
@@ -379,8 +379,8 @@ const UsersTab = () => {
                       <Building2 className="w-3.5 h-3.5" /> {user._count?.companies || 0}
                     </span>
                   </td>
-                  <td className="p-4 text-gray-300">{user.subscription?.planId || 'Trial'}</td>
-                  <td className="p-4"><StatusBadge status={user.subscription?.status || 'trial'} /></td>
+                  <td className="p-4 text-gray-300">{user.subscription?.planId || 'Pay per Use'}</td>
+                  <td className="p-4"><StatusBadge status={user.subscription?.status || 'no_subscription'} /></td>
                   <td className="p-4 text-gray-400 text-sm">{new Date(user.createdAt).toLocaleDateString('pt-BR')}</td>
                   <td className="p-4 text-right">
                     <DropdownMenu>
@@ -449,8 +449,8 @@ const SubscriptionsTab = () => {
 
   const statusOptions = [
     { value: 'all', label: 'Todos' },
-    { value: 'trial', label: 'Trial' },
     { value: 'ativo', label: 'Ativos' },
+    { value: 'pending', label: 'Pendentes' },
     { value: 'inadimplente', label: 'Inadimplentes' },
     { value: 'cancelado', label: 'Cancelados' },
   ];
@@ -516,8 +516,8 @@ const SubscriptionsTab = () => {
                         <DropdownMenuItem onClick={() => updateMutation.mutate({ id: sub.id, status: 'ativo' })} className="text-emerald-400 hover:bg-emerald-500/10">
                           <CheckCircle className="w-4 h-4 mr-2" /> Ativar
                         </DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => updateMutation.mutate({ id: sub.id, status: 'trial' })} className="text-blue-400 hover:bg-blue-500/10">
-                          <Clock className="w-4 h-4 mr-2" /> Trial
+                        <DropdownMenuItem onClick={() => updateMutation.mutate({ id: sub.id, status: 'pending' })} className="text-blue-400 hover:bg-blue-500/10">
+                          <Clock className="w-4 h-4 mr-2" /> Pendente
                         </DropdownMenuItem>
                         <DropdownMenuItem onClick={() => updateMutation.mutate({ id: sub.id, status: 'inadimplente' })} className="text-amber-400 hover:bg-amber-500/10">
                           <AlertCircle className="w-4 h-4 mr-2" /> Inadimplente

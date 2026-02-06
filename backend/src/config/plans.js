@@ -1,101 +1,112 @@
 /**
- * Plan Configuration
- * Defines all available subscription plans and their limits
+ * Plan Configuration - Final Production Plans
+ * 
+ * PLAN STRUCTURE (as per final business requirements):
+ * 1. Pay per Use: R$9/invoice, 1 company, unlimited invoices (pay per invoice)
+ * 2. Essential: R$79/month or R$39/month (annual), 2 companies, 30 invoices/month
+ * 3. Professional: R$149/month or R$129/month (annual), 5 companies, 100 invoices/month
+ * 4. Accountant: Custom pricing, unlimited companies, unlimited invoices
  * 
  * STRIPE INTEGRATION:
- * Each plan has Stripe price IDs for monthly and annual billing cycles.
- * These are used when creating subscriptions via the Stripe API.
+ * Each plan has Stripe price IDs for billing.
+ * Pay per Use uses one-time payments per invoice.
  */
 
 export const PLANS = {
-  pro: {
-    planId: 'pro',
-    name: 'Pro',
-    description: 'Para profissionais autônomos e MEIs',
-    monthlyPrice: 9700,
-    semiannualPrice: 54000,
-    annualPrice: 97000,
-    perInvoicePrice: null,
+  // ═══════════════════════════════════════════════════════════════════════
+  // PAY PER USE - R$9 per invoice
+  // ═══════════════════════════════════════════════════════════════════════
+  pay_per_use: {
+    planId: 'pay_per_use',
+    name: 'Pay per Use',
+    description: 'Pague apenas quando emitir',
+    monthlyPrice: null, // No monthly fee
+    annualPrice: null,
+    perInvoicePrice: 900, // R$9.00 per invoice in cents
     maxCompanies: 1,
-    maxInvoicesPerMonth: null,
+    maxInvoicesPerMonth: null, // Unlimited (pay per invoice)
     features: [
-      '1 empresa',
-      'Notas fiscais ilimitadas',
+      '1 empresa (CNPJ)',
+      'Notas ilimitadas (R$9 por nota)',
       'Assistente IA completo',
-      'Comando por voz'
+      'Comando por voz',
+      'Uso sob demanda'
     ],
-    billingCycle: 'monthly',
-    // Stripe Price IDs
+    billingCycle: 'per_invoice',
+    isPayPerUse: true,
+    // Stripe Price ID for one-time invoice payment
     stripePrices: {
-      monthly: 'price_1SwaPi44Zn6Patb48BLYX5vd',
-      annual: 'price_1SwaQK44Zn6Patb4ubEELerv'
+      per_invoice: 'price_1SxunaKTPq3SbMOc1F39Xlqq'
     }
   },
-  business: {
-    planId: 'business',
-    name: 'Business',
-    description: 'Para empresas e escritórios contábeis',
-    monthlyPrice: 19700,
-    semiannualPrice: 110000,
-    annualPrice: 197000,
-    perInvoicePrice: null,
-    maxCompanies: 5,
-    maxInvoicesPerMonth: null,
-    features: [
-      'Até 5 empresas',
-      'Notas fiscais ilimitadas',
-      'Multiusuários',
-      'API de integração'
-    ],
-    billingCycle: 'monthly',
-    // Stripe Price IDs
-    stripePrices: {
-      monthly: 'price_1SwaZW44Zn6Patb4KAFJRtUm',
-      annual: 'price_1SwabA44Zn6Patb4tgKG4LyX'
-    }
-  },
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // ESSENTIAL - R$79/month or R$39/month (annual)
+  // ═══════════════════════════════════════════════════════════════════════
   essential: {
     planId: 'essential',
     name: 'Essential',
     description: 'Para pequenos negócios',
-    monthlyPrice: 7900, // R$79.00 in cents
-    annualPrice: 3900, // R$39.00/month when annual (R$468/year = 3900 * 12)
+    monthlyPrice: 7900, // R$79.00/month in cents
+    annualPrice: 46800, // R$39.00/month × 12 = R$468/year in cents
+    annualMonthlyEquivalent: 3900, // R$39.00/month when paid annually
     perInvoicePrice: null,
     maxCompanies: 2,
     maxInvoicesPerMonth: 30,
     features: [
-      'Até 2 empresas',
+      'Até 2 empresas (CNPJs)',
       'Até 30 notas fiscais/mês',
       'Assistente IA completo',
       'Comando por voz',
-      'Gestão fiscal básica'
+      'Gestão fiscal básica',
+      'Integrações fiscais'
     ],
-    billingCycle: 'monthly' // or 'annual'
+    billingCycle: 'monthly',
+    isPayPerUse: false,
+    stripePrices: {
+      monthly: 'price_1SxubrKTPq3SbMOcbwHNdKSD',
+      annual: 'price_1SxueqKTPq3SbMOcZIjEyvJM'
+    }
   },
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // PROFESSIONAL - R$149/month or R$129/month (annual)
+  // ═══════════════════════════════════════════════════════════════════════
   professional: {
     planId: 'professional',
     name: 'Professional',
     description: 'Para empresas em crescimento',
-    monthlyPrice: 14900, // R$149.00 in cents
-    annualPrice: 12900, // R$129.00/month when annual (R$1,548/year = 12900 * 12)
+    monthlyPrice: 14900, // R$149.00/month in cents
+    annualPrice: 154800, // R$129.00/month × 12 = R$1,548/year in cents
+    annualMonthlyEquivalent: 12900, // R$129.00/month when paid annually
     perInvoicePrice: null,
     maxCompanies: 5,
     maxInvoicesPerMonth: 100,
     features: [
-      'Até 5 empresas',
+      'Até 5 empresas (CNPJs)',
       'Até 100 notas fiscais/mês',
       'Assistente IA completo',
       'Comando por voz',
       'Revisão contábil opcional',
-      'Relatórios avançados'
+      'Relatórios avançados',
+      'Integrações fiscais avançadas'
     ],
-    billingCycle: 'monthly' // or 'annual'
+    billingCycle: 'monthly',
+    isPayPerUse: false,
+    stripePrices: {
+      monthly: 'price_1SxuimKTPq3SbMOcidrSGuDg',
+      annual: 'price_1SxumNKTPq3SbMOcQoWYab7D'
+    }
   },
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // ACCOUNTANT - Custom pricing (contact sales)
+  // ═══════════════════════════════════════════════════════════════════════
   accountant: {
     planId: 'accountant',
-    name: 'Accountant',
+    name: 'Contador',
     description: 'Para contadores e escritórios',
-    monthlyPrice: null, // Custom pricing
+    monthlyPrice: null, // Custom pricing - contact sales
     annualPrice: null,
     perInvoicePrice: null,
     maxCompanies: null, // Unlimited
@@ -105,22 +116,22 @@ export const PLANS = {
       'Notas fiscais ilimitadas',
       'Integrações avançadas',
       'API de integração',
+      'Gestão de clientes',
       'Suporte dedicado',
       'Treinamento incluso'
     ],
-    billingCycle: 'custom'
+    billingCycle: 'custom',
+    isPayPerUse: false,
+    isCustomPricing: true,
+    stripePrices: null // Custom pricing - no Stripe product
   }
 };
 
 /**
  * Plan ID mapping - maps frontend plan IDs to backend plan IDs
- * ✅ Frontend 'pro' and 'business' now have their own plan definitions with correct prices
  */
 const PLAN_ID_MAPPING = {
-  'trial': 'trial', // Trial plan
-  'pro': 'pro', // Frontend 'pro' (R$97) - uses pro plan directly
-  'business': 'business', // Frontend 'business' (R$197) - uses business plan directly
-  // Backend plan IDs (no mapping needed)
+  'pay_per_use': 'pay_per_use',
   'essential': 'essential',
   'professional': 'professional',
   'accountant': 'accountant'
@@ -142,30 +153,17 @@ export function normalizePlanId(planId) {
  */
 export function getPlanConfig(planId) {
   const normalizedId = normalizePlanId(planId);
-  
-  // Handle 'trial' plan (special case, not in PLANS object)
-  if (normalizedId === 'trial') {
-    return {
-      planId: 'trial',
-      name: 'Trial',
-      description: 'Plano de teste gratuito',
-      monthlyPrice: 0,
-      annualPrice: null,
-      perInvoicePrice: null,
-      maxCompanies: 1,
-      maxInvoicesPerMonth: 5,
-      features: [
-        'Até 5 notas fiscais',
-        'Assistente IA completo',
-        'Comando por voz',
-        '1 empresa',
-        'Suporte por email'
-      ],
-      billingCycle: 'trial'
-    };
-  }
-  
   return PLANS[normalizedId] || null;
+}
+
+/**
+ * Get active plans (non-custom)
+ * @returns {array} Array of active plan configurations
+ */
+export function getActivePlans() {
+  return Object.values(PLANS).filter(plan => 
+    plan.isActive !== false && !plan.isCustomPricing
+  );
 }
 
 /**
@@ -174,7 +172,8 @@ export function getPlanConfig(planId) {
  * @returns {array} Array of upgrade options
  */
 export function getUpgradeOptions(currentPlanId) {
-  const planOrder = ['trial', 'essential', 'pro', 'professional', 'business', 'accountant'];
+  // Plan hierarchy for upgrades
+  const planOrder = ['pay_per_use', 'essential', 'professional', 'accountant'];
   const currentIndex = planOrder.indexOf(currentPlanId);
   
   if (currentIndex === -1 || currentIndex === planOrder.length - 1) {
@@ -183,8 +182,18 @@ export function getUpgradeOptions(currentPlanId) {
 
   const upgradePlans = planOrder.slice(currentIndex + 1);
   return upgradePlans
-    .map(planId => PLANS[planId])
-    .filter(plan => plan && plan.isActive !== false);
+    .map(planId => getPlanConfig(planId))
+    .filter(plan => plan && plan.isActive !== false && !plan.isCustomPricing);
+}
+
+/**
+ * Check if a plan is Pay per Use
+ * @param {string} planId - Plan identifier
+ * @returns {boolean} True if pay per use, false otherwise
+ */
+export function isPayPerUsePlan(planId) {
+  const plan = getPlanConfig(planId);
+  return plan ? plan.isPayPerUse === true : false;
 }
 
 /**
@@ -194,7 +203,9 @@ export function getUpgradeOptions(currentPlanId) {
  */
 export function hasUnlimitedInvoices(planId) {
   const plan = getPlanConfig(planId);
-  return plan ? plan.maxInvoicesPerMonth === null : false;
+  if (!plan) return false;
+  // Pay per use has "unlimited" but requires payment per invoice
+  return plan.maxInvoicesPerMonth === null;
 }
 
 /**
@@ -210,18 +221,21 @@ export function hasUnlimitedCompanies(planId) {
 /**
  * Get plan price based on billing cycle
  * @param {string} planId - Plan identifier
- * @param {string} billingCycle - 'monthly', 'semiannual', or 'annual'
+ * @param {string} billingCycle - 'monthly' or 'annual'
  * @returns {number|null} Price in cents or null if not applicable
  */
 export function getPlanPrice(planId, billingCycle = 'monthly') {
   const plan = getPlanConfig(planId);
   if (!plan) return null;
 
+  // Pay per use - return per invoice price
+  if (plan.isPayPerUse) {
+    return plan.perInvoicePrice;
+  }
+
   switch (billingCycle) {
     case 'annual':
       return plan.annualPrice !== null ? plan.annualPrice : plan.monthlyPrice;
-    case 'semiannual':
-      return plan.semiannualPrice !== null ? plan.semiannualPrice : plan.monthlyPrice;
     case 'monthly':
     default:
       return plan.monthlyPrice;
@@ -229,8 +243,16 @@ export function getPlanPrice(planId, billingCycle = 'monthly') {
 }
 
 /**
+ * Get per-invoice price for Pay per Use plan
+ * @returns {number} Price per invoice in cents
+ */
+export function getPayPerUseInvoicePrice() {
+  return PLANS.pay_per_use.perInvoicePrice;
+}
+
+/**
  * Get billing cycle configuration
- * @param {string} billingCycle - 'monthly', 'semiannual', or 'annual'
+ * @param {string} billingCycle - 'monthly' or 'annual'
  * @returns {object} Configuration with interval and intervalCount
  */
 export function getBillingCycleConfig(billingCycle) {
@@ -240,12 +262,6 @@ export function getBillingCycleConfig(billingCycle) {
         interval: 'year',
         intervalCount: 1,
         days: 365
-      };
-    case 'semiannual':
-      return {
-        interval: 'month',
-        intervalCount: 6,
-        days: 180
       };
     case 'monthly':
     default:
@@ -259,7 +275,7 @@ export function getBillingCycleConfig(billingCycle) {
 
 /**
  * Get Stripe price ID for a plan and billing cycle
- * @param {string} planId - Plan identifier (pro, business, etc.)
+ * @param {string} planId - Plan identifier
  * @param {string} billingCycle - 'monthly' or 'annual'
  * @returns {string|null} Stripe price ID or null if not found
  */
@@ -271,15 +287,7 @@ export function getStripePriceId(planId, billingCycle = 'monthly') {
     return null;
   }
   
-  // Map billing cycles to Stripe price keys
-  const cycleMap = {
-    'monthly': 'monthly',
-    'annual': 'annual',
-    'semiannual': 'annual' // Treat semiannual as annual for Stripe
-  };
-  
-  const stripeCycle = cycleMap[billingCycle] || 'monthly';
-  return plan.stripePrices[stripeCycle] || null;
+  return plan.stripePrices[billingCycle] || null;
 }
 
 export default PLANS;

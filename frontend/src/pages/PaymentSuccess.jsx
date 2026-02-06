@@ -7,20 +7,20 @@ import { useAuth } from "@/lib/AuthContext";
 import { subscriptionsService } from "@/api/services/subscriptions";
 
 const planConfig = {
-  'trial': {
-    name: 'MAY Trial',
-    icon: Gift,
-    features: ['7 dias grátis', 'Até 5 notas fiscais', 'Assistente IA completo'],
-  },
-  'pro': {
-    name: 'MAY Pro',
+  'pay_per_use': {
+    name: 'MAY Pay per Use',
     icon: Zap,
-    features: ['Notas ilimitadas', 'Assistente IA', 'Comando por voz'],
+    features: ['1 empresa', 'Notas ilimitadas (R$9/nota)', 'Assistente IA completo'],
   },
-  'business': {
-    name: 'MAY Business',
+  'essential': {
+    name: 'MAY Essential',
+    icon: Zap,
+    features: ['Até 2 empresas', 'Até 30 notas/mês', 'Assistente IA completo'],
+  },
+  'professional': {
+    name: 'MAY Professional',
     icon: Building2,
-    features: ['Até 5 empresas', 'Multiusuários', 'API de integração'],
+    features: ['Até 5 empresas', 'Até 100 notas/mês', 'Assistente IA completo'],
   }
 };
 
@@ -42,10 +42,10 @@ export default function PaymentSuccess() {
   const hasRunRef = useRef(false);
   const processingRef = useRef(false);
 
-  const planId = searchParams.get('plan') || 'pro';
+  const planId = searchParams.get('plan') || 'pay_per_use';
   const sessionId = searchParams.get('session_id');
   const paymentStatusParam = searchParams.get('status');
-  const plan = planConfig[planId] || planConfig.pro;
+  const plan = planConfig[planId] || planConfig.pay_per_use;
   const PlanIcon = plan.icon;
 
   useEffect(() => {
@@ -73,32 +73,6 @@ export default function PaymentSuccess() {
           return;
         }
 
-        if (planId === 'trial') {
-          if (user?.subscription_status === 'trial' || user?.is_in_trial) {
-            setLifecycle(LIFECYCLE_STATES.SUCCESS);
-            refreshUser?.().catch(() => {});
-            return;
-          }
-
-          if (sessionId) {
-            try {
-              await subscriptionsService.confirmCheckout(planId, sessionId);
-            } catch (err) {
-              if (err?.status === 429) {
-                if (user?.subscription_status === 'trial' || user?.is_in_trial) {
-                  setLifecycle(LIFECYCLE_STATES.SUCCESS);
-                  return;
-                }
-              }
-              console.error('[PaymentSuccess] Error confirming trial:', err);
-            }
-          }
-          
-          setLifecycle(LIFECYCLE_STATES.SUCCESS);
-          refreshUser?.().catch(() => {});
-          return;
-        }
-
         // Auth can return 'ativo' or 'ACTIVE' depending on backend path
         const isActive = user?.subscription_status === 'ativo' || user?.subscription_status === 'ACTIVE';
         if (isActive && user?.plan === planId) {
@@ -106,7 +80,7 @@ export default function PaymentSuccess() {
           return;
         }
 
-        if (sessionId?.startsWith('sim_') || sessionId?.startsWith('trial_')) {
+        if (sessionId?.startsWith('sim_') || sessionId?.startsWith('ppu_')) {
           try {
             await subscriptionsService.confirmCheckout(planId, sessionId);
             setLifecycle(LIFECYCLE_STATES.SUCCESS);
@@ -229,7 +203,7 @@ export default function PaymentSuccess() {
             >
               <Star className="w-4 h-4 text-emerald-400" />
               <span className="text-sm font-semibold text-emerald-300 tracking-wide">
-                {planId === 'trial' ? 'TRIAL ATIVADO' : 'PAGAMENTO CONFIRMADO'}
+                PAGAMENTO CONFIRMADO
               </span>
             </motion.div>
 
@@ -239,7 +213,7 @@ export default function PaymentSuccess() {
               transition={{ delay: 0.3 }}
               className="text-3xl font-bold text-white mb-3"
             >
-              {planId === 'trial' ? 'Bem-vindo à MAY!' : 'Parabéns!'}
+              Parabéns!
             </motion.h1>
 
             <motion.p 
@@ -248,9 +222,7 @@ export default function PaymentSuccess() {
               transition={{ delay: 0.4 }}
               className="text-slate-400 mb-8 max-w-sm mx-auto"
             >
-              {planId === 'trial' 
-                ? 'Seu trial de 7 dias está ativo. Explore todas as funcionalidades!'
-                : 'Sua assinatura está ativa. Você agora tem acesso completo à MAY.'}
+              Sua assinatura está ativa. Você agora tem acesso completo à MAY.
             </motion.p>
 
             <motion.div
@@ -258,35 +230,27 @@ export default function PaymentSuccess() {
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.5 }}
               className={`relative rounded-2xl p-6 mb-8 overflow-hidden ${
-                planId === 'trial' 
-                  ? 'bg-gradient-to-br from-emerald-500/10 to-teal-500/5 border border-emerald-500/20'
-                  : planId === 'business'
-                    ? 'bg-gradient-to-br from-violet-500/10 to-purple-500/5 border border-violet-500/20'
-                    : 'bg-gradient-to-br from-orange-500/10 to-amber-500/5 border border-orange-500/20'
+                planId === 'professional'
+                  ? 'bg-gradient-to-br from-violet-500/10 to-purple-500/5 border border-violet-500/20'
+                  : 'bg-gradient-to-br from-orange-500/10 to-amber-500/5 border border-orange-500/20'
               }`}
             >
               <div className="flex items-center justify-center gap-3 mb-4">
                 <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${
-                  planId === 'trial' 
-                    ? 'bg-emerald-500/20'
-                    : planId === 'business'
-                      ? 'bg-violet-500/20'
-                      : 'bg-orange-500/20'
+                  planId === 'professional'
+                    ? 'bg-violet-500/20'
+                    : 'bg-orange-500/20'
                 }`}>
                   <PlanIcon className={`w-5 h-5 ${
-                    planId === 'trial' 
-                      ? 'text-emerald-400'
-                      : planId === 'business'
-                        ? 'text-violet-400'
-                        : 'text-orange-400'
+                    planId === 'professional'
+                      ? 'text-violet-400'
+                      : 'text-orange-400'
                   }`} />
                 </div>
                 <span className={`text-xl font-bold ${
-                  planId === 'trial' 
-                    ? 'text-emerald-300'
-                    : planId === 'business'
-                      ? 'text-violet-300'
-                      : 'text-orange-300'
+                  planId === 'professional'
+                    ? 'text-violet-300'
+                    : 'text-orange-300'
                 }`}>
                   {plan.name}
                 </span>
@@ -299,11 +263,9 @@ export default function PaymentSuccess() {
                     className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/5"
                   >
                     <CheckCircle className={`w-3.5 h-3.5 ${
-                      planId === 'trial' 
-                        ? 'text-emerald-400'
-                        : planId === 'business'
-                          ? 'text-violet-400'
-                          : 'text-orange-400'
+                      planId === 'professional'
+                        ? 'text-violet-400'
+                        : 'text-orange-400'
                     }`} />
                     <span className="text-xs text-slate-400">{feature}</span>
                   </div>

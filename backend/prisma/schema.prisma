@@ -36,7 +36,7 @@ model User {
   emailVerified Boolean @default(false) @map("email_verified")
   authProvider  String  @default("email") @map("auth_provider") // 'email' or 'google'
 
-  // Trial tracking - users can only use trial ONCE
+  // Legacy trial tracking fields (kept for data compatibility)
   hasUsedTrial   Boolean   @default(false) @map("has_used_trial")
   trialStartedAt DateTime? @map("trial_started_at")
   trialEndedAt   DateTime? @map("trial_ended_at")
@@ -226,7 +226,7 @@ model FiscalIntegrationStatus {
 model Subscription {
   id                   String             @id @default(uuid())
   userId               String             @unique @map("user_id")
-  planId               String             @default("trial") @map("plan_id") // 'essential', 'professional', 'accountant', 'trial'
+  planId               String             @default("pay_per_use") @map("plan_id") // 'pay_per_use', 'essential', 'professional', 'accountant'
   
   // Stripe subscription and price IDs (replaces Pagar.me fields)
   stripeSubscriptionId String?            @unique @map("stripe_subscription_id")
@@ -256,7 +256,6 @@ enum SubscriptionStatus {
   PENDING    // Created, first invoice not paid yet
   ACTIVE     // Last invoice paid, subscription active
   PAST_DUE   // Payment failed, retry pending
-  TRIAL      // Trial period active
   CANCELED   // Canceled by user or system
   EXPIRED    // End date reached (optional)
 }
