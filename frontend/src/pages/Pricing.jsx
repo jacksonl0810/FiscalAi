@@ -19,7 +19,9 @@ import {
   CreditCard,
   Users,
   Calculator,
-  Mail
+  Mail,
+  AlertTriangle,
+  X
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/lib/AuthContext";
@@ -163,25 +165,39 @@ const features = [
   }
 ];
 
+// Plan hierarchy for upgrade/downgrade detection (lower index = lower tier)
+const PLAN_HIERARCHY = ['pay_per_use', 'essential', 'professional', 'accountant'];
+
 export default function Pricing() {
   const navigate = useNavigate();
   const { user, isAuthenticated } = useAuth();
   const [loadingPlan, setLoadingPlan] = useState(null);
   /** @type {['monthly' | 'annual', React.Dispatch<React.SetStateAction<'monthly' | 'annual'>>]} */
   const [selectedBillingCycle, setSelectedBillingCycle] = useState(/** @type {'monthly' | 'annual'} */ ('monthly'));
+  const [downgradeConfirm, setDowngradeConfirm] = useState({ show: false, plan: null });
 
-  const handleSelectPlan = async (plan) => {
-    // Custom pricing - redirect to contact
-    if (plan.isCustomPricing) {
-      window.location.href = 'mailto:contato@mayassessorfiscal.com.br?subject=Interesse no Plano Contador&body=Olá, gostaria de saber mais sobre o plano Contador para escritórios de contabilidade.';
-      return;
-    }
+  // Check if selecting a plan is a downgrade
+  const isDowngrade = (targetPlanId) => {
+    if (!isAuthenticated || !user?.plan) return false;
+    
+    const currentPlanIndex = PLAN_HIERARCHY.indexOf(user.plan.toLowerCase());
+    const targetPlanIndex = PLAN_HIERARCHY.indexOf(targetPlanId.toLowerCase());
+    
+    // If current plan is not found or target is not found, not a downgrade
+    if (currentPlanIndex === -1 || targetPlanIndex === -1) return false;
+    
+    // It's a downgrade if target plan is lower in hierarchy
+    return targetPlanIndex < currentPlanIndex;
+  };
 
-    if (!isAuthenticated) {
-      navigate('/login', { state: { selectedPlan: plan.id } });
-      return;
-    }
+  // Get plan name for display
+  const getPlanDisplayName = (planId) => {
+    const plan = plans.find(p => p.id === planId);
+    return plan?.name || planId;
+  };
 
+  // Process the actual plan selection
+  const processPlanSelection = async (plan) => {
     setLoadingPlan(plan.id);
 
     try {
@@ -211,6 +227,40 @@ export default function Pricing() {
     }
   };
 
+  const handleSelectPlan = async (plan) => {
+    // Custom pricing - redirect to contact
+    if (plan.isCustomPricing) {
+      window.location.href = 'mailto:contato@mayassessorfiscal.com.br?subject=Interesse no Plano Contador&body=Olá, gostaria de saber mais sobre o plano Contador para escritórios de contabilidade.';
+      return;
+    }
+
+    if (!isAuthenticated) {
+      navigate('/login', { state: { selectedPlan: plan.id } });
+      return;
+    }
+
+    // Check if this is a downgrade and show confirmation
+    if (isDowngrade(plan.id)) {
+      setDowngradeConfirm({ show: true, plan });
+      return;
+    }
+
+    // Process directly if not a downgrade
+    await processPlanSelection(plan);
+  };
+
+  // Handle downgrade confirmation
+  const handleConfirmDowngrade = async () => {
+    if (downgradeConfirm.plan) {
+      setDowngradeConfirm({ show: false, plan: null });
+      await processPlanSelection(downgradeConfirm.plan);
+    }
+  };
+
+  const handleCancelDowngrade = () => {
+    setDowngradeConfirm({ show: false, plan: null });
+  };
+
   // Get display price based on billing cycle
   const getDisplayPrice = (plan) => {
     if (plan.isPayPerUse) return plan.perInvoicePrice;
@@ -231,6 +281,109 @@ export default function Pricing() {
 
   return (
     <div className="min-h-screen bg-[#07070a]">
+      {/* Downgrade Confirmation Modal */}
+      {downgradeConfirm.show && downgradeConfirm.plan && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          {/* Backdrop */}
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="absolute inset-0 bg-black/70 backdrop-blur-sm"
+            onClick={handleCancelDowngrade}
+          />
+          
+          {/* Modal */}
+          <motion.div
+            initial={{ opacity: 0, scale: 0.9, y: 20 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.9, y: 20 }}
+            className="relative w-full max-w-md bg-gradient-to-b from-[#1a1a2e] to-[#12121a] rounded-3xl border border-amber-500/20 shadow-2xl shadow-black/50 overflow-hidden"
+          >
+            {/* Warning accent */}
+            <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-amber-500 via-orange-500 to-amber-500" />
+            
+            <div className="p-6">
+              {/* Header */}
+              <div className="flex items-start justify-between mb-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-2xl bg-amber-500/20 flex items-center justify-center">
+                    <AlertTriangle className="w-6 h-6 text-amber-400" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-bold text-white">Confirmar Downgrade</h3>
+                    <p className="text-sm text-slate-400">Alteração de plano</p>
+                  </div>
+                </div>
+                <button
+                  onClick={handleCancelDowngrade}
+                  className="p-2 rounded-xl hover:bg-white/5 transition-colors"
+                >
+                  <X className="w-5 h-5 text-slate-400" />
+                </button>
+              </div>
+              
+              {/* Content */}
+              <div className="space-y-4 mb-6">
+                <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/20">
+                  <p className="text-sm text-amber-200">
+                    Você está prestes a fazer <span className="font-semibold">downgrade</span> do seu plano{' '}
+                    <span className="font-bold text-white">{getPlanDisplayName(user?.plan)}</span> para{' '}
+                    <span className="font-bold text-white">{downgradeConfirm.plan.name}</span>.
+                  </p>
+                </div>
+                
+                <div className="space-y-2">
+                  <p className="text-sm text-slate-300">
+                    <span className="text-amber-400">⚠️</span> Ao fazer downgrade, você pode perder acesso a:
+                  </p>
+                  <ul className="text-sm text-slate-400 space-y-1 ml-5">
+                    {user?.plan?.toLowerCase() !== 'pay_per_use' && downgradeConfirm.plan.id === 'pay_per_use' && (
+                      <>
+                        <li>• Limite mensal de notas (passará a pagar por nota)</li>
+                        <li>• Empresas adicionais cadastradas</li>
+                      </>
+                    )}
+                    {(user?.plan?.toLowerCase() === 'professional' || user?.plan?.toLowerCase() === 'accountant') && downgradeConfirm.plan.id === 'essential' && (
+                      <>
+                        <li>• Limite de empresas reduzido para 2</li>
+                        <li>• Limite de notas reduzido para 30/mês</li>
+                        <li>• Relatórios avançados</li>
+                      </>
+                    )}
+                    <li>• Recursos exclusivos do plano atual</li>
+                  </ul>
+                </div>
+              </div>
+              
+              {/* Actions */}
+              <div className="flex gap-3">
+                <button
+                  onClick={handleCancelDowngrade}
+                  className="flex-1 py-3 px-4 rounded-xl text-sm font-semibold bg-white/5 hover:bg-white/10 text-slate-300 transition-all border border-white/10"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={handleConfirmDowngrade}
+                  disabled={loadingPlan}
+                  className="flex-1 py-3 px-4 rounded-xl text-sm font-semibold bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-white transition-all shadow-lg shadow-amber-500/25 flex items-center justify-center gap-2"
+                >
+                  {loadingPlan ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                      Processando...
+                    </>
+                  ) : (
+                    'Confirmar Downgrade'
+                  )}
+                </button>
+              </div>
+            </div>
+          </motion.div>
+        </div>
+      )}
+
       {/* Background Effects */}
       <div className="fixed inset-0 pointer-events-none overflow-hidden">
         <div className="absolute top-0 right-0 w-[1000px] h-[1000px] bg-gradient-radial from-orange-500/8 via-orange-500/3 to-transparent blur-3xl" />
@@ -413,6 +566,10 @@ export default function Pricing() {
                 const PlanIcon = plan.icon;
                 const displayPrice = getDisplayPrice(plan);
                 
+                // Check if this is the user's current plan
+                const userPlan = user?.plan?.toLowerCase();
+                const isCurrentPlan = isAuthenticated && userPlan === plan.id.toLowerCase();
+                
                 return (
                 <motion.div
                   key={plan.id}
@@ -422,14 +579,16 @@ export default function Pricing() {
                     className={`relative group ${plan.popular ? 'lg:-mt-4 lg:mb-4 z-10' : ''}`}
                   >
                     {/* Glow effect */}
-                    <div className={`absolute -inset-[2px] rounded-[32px] opacity-0 group-hover:opacity-100 transition-all duration-700 blur-xl ${
-                      plan.popular
-                        ? 'bg-gradient-to-br from-orange-500/50 via-amber-400/30 to-orange-600/50'
-                        : plan.id === 'professional'
-                          ? 'bg-gradient-to-br from-violet-500/40 via-purple-400/20 to-violet-600/40'
-                          : plan.id === 'accountant'
-                            ? 'bg-gradient-to-br from-emerald-500/40 via-teal-400/20 to-emerald-600/40'
-                            : 'bg-gradient-to-br from-slate-400/20 via-slate-300/10 to-slate-400/20'
+                    <div className={`absolute -inset-[2px] rounded-[32px] transition-all duration-700 blur-xl ${
+                      isCurrentPlan
+                        ? 'opacity-100 bg-gradient-to-br from-emerald-500/50 via-teal-400/30 to-emerald-600/50'
+                        : plan.popular
+                          ? 'opacity-0 group-hover:opacity-100 bg-gradient-to-br from-orange-500/50 via-amber-400/30 to-orange-600/50'
+                          : plan.id === 'professional'
+                            ? 'opacity-0 group-hover:opacity-100 bg-gradient-to-br from-violet-500/40 via-purple-400/20 to-violet-600/40'
+                            : plan.id === 'accountant'
+                              ? 'opacity-0 group-hover:opacity-100 bg-gradient-to-br from-emerald-500/40 via-teal-400/20 to-emerald-600/40'
+                              : 'opacity-0 group-hover:opacity-100 bg-gradient-to-br from-slate-400/20 via-slate-300/10 to-slate-400/20'
                     }`} />
                     
                     {/* Popular badge glow */}
@@ -450,28 +609,46 @@ export default function Pricing() {
                 >
                       {/* Inner border */}
                       <div className={`absolute inset-0 rounded-[28px] ${
-                        plan.popular
-                          ? 'ring-2 ring-inset ring-orange-500/30'
-                          : plan.id === 'professional'
-                            ? 'ring-1 ring-inset ring-violet-500/20'
-                            : plan.id === 'accountant'
-                              ? 'ring-1 ring-inset ring-emerald-500/20'
-                              : 'ring-1 ring-inset ring-white/[0.08]'
+                        isCurrentPlan
+                          ? 'ring-2 ring-inset ring-emerald-500/40'
+                          : plan.popular
+                            ? 'ring-2 ring-inset ring-orange-500/30'
+                            : plan.id === 'professional'
+                              ? 'ring-1 ring-inset ring-violet-500/20'
+                              : plan.id === 'accountant'
+                                ? 'ring-1 ring-inset ring-emerald-500/20'
+                                : 'ring-1 ring-inset ring-white/[0.08]'
                       }`} />
                       
                       {/* Top accent line */}
                       <div className={`absolute top-0 left-6 right-6 h-[1px] ${
-                        plan.popular
-                          ? 'bg-gradient-to-r from-transparent via-orange-400/60 to-transparent'
-                          : plan.id === 'professional'
-                            ? 'bg-gradient-to-r from-transparent via-violet-400/50 to-transparent'
-                            : plan.id === 'accountant'
-                              ? 'bg-gradient-to-r from-transparent via-emerald-400/50 to-transparent'
-                              : 'bg-gradient-to-r from-transparent via-white/10 to-transparent'
+                        isCurrentPlan
+                          ? 'bg-gradient-to-r from-transparent via-emerald-400/70 to-transparent'
+                          : plan.popular
+                            ? 'bg-gradient-to-r from-transparent via-orange-400/60 to-transparent'
+                            : plan.id === 'professional'
+                              ? 'bg-gradient-to-r from-transparent via-violet-400/50 to-transparent'
+                              : plan.id === 'accountant'
+                                ? 'bg-gradient-to-r from-transparent via-emerald-400/50 to-transparent'
+                                : 'bg-gradient-to-r from-transparent via-white/10 to-transparent'
                       }`} />
 
                       {/* Card content */}
                       <div className="relative p-7 pt-6">
+                        {/* Current Plan Badge - shown at top if this is user's plan */}
+                        {isCurrentPlan && (
+                          <div className="flex justify-center mb-3">
+                            <motion.div
+                              initial={{ opacity: 0, scale: 0.8 }}
+                              animate={{ opacity: 1, scale: 1 }}
+                              className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-gradient-to-r from-emerald-500 to-teal-500 text-white text-[10px] font-bold tracking-[0.1em] uppercase shadow-lg shadow-emerald-500/30"
+                            >
+                              <CheckCircle2 className="w-3.5 h-3.5" />
+                              Seu Plano Atual
+                            </motion.div>
+                          </div>
+                        )}
+
                         {/* Badge */}
                         <div className="flex justify-center mb-6">
                           <motion.div 
@@ -626,6 +803,12 @@ export default function Pricing() {
                   </ul>
 
                         {/* CTA Button */}
+                        {isCurrentPlan ? (
+                          <div className="w-full py-4 px-6 rounded-2xl text-base font-semibold bg-gradient-to-r from-emerald-500/20 to-teal-500/20 text-emerald-300 ring-1 ring-emerald-500/30 flex items-center justify-center gap-2 cursor-default">
+                            <CheckCircle2 className="w-5 h-5" />
+                            Plano Atual
+                          </div>
+                        ) : (
                         <motion.button
                           whileHover={{ scale: 1.02 }}
                           whileTap={{ scale: 0.98 }}
@@ -662,6 +845,7 @@ export default function Pricing() {
                               </>
                             )}
                           </motion.button>
+                        )}
                       </div>
                     </div>
                 </motion.div>

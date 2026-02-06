@@ -15,6 +15,8 @@ import * as stripeSDK from './stripeSDK.js';
 
 /**
  * Get subscriptions that need status sync
+ * Only returns subscriptions with valid Stripe subscription IDs (starting with 'sub_')
+ * Excludes pay_per_use plans as they don't use Stripe subscriptions
  * @returns {Promise<Array>} Array of subscriptions to sync
  */
 export async function getSubscriptionsToSync() {
@@ -25,7 +27,13 @@ export async function getSubscriptionsToSync() {
       },
       stripeSubscriptionId: {
         not: null,
-        notIn: ['']
+        notIn: [''],
+        // Only sync subscriptions with valid Stripe subscription IDs (start with 'sub_')
+        startsWith: 'sub_'
+      },
+      // Exclude pay_per_use plans (they don't use Stripe subscriptions)
+      planId: {
+        not: 'pay_per_use'
       }
     },
     include: {
@@ -49,13 +57,33 @@ export async function getSubscriptionsToSync() {
  * @returns {Promise<object>} Result of sync attempt
  */
 export async function syncSubscriptionWithStripe(subscription) {
-  const { stripeSubscriptionId, user } = subscription;
+  const { stripeSubscriptionId, user, planId } = subscription;
 
+  // Skip if no Stripe subscription ID
   if (!stripeSubscriptionId) {
     return {
       success: true,
       subscriptionId: subscription.id,
       message: 'Skipped - no Stripe subscription'
+    };
+  }
+
+  // Skip if not a valid Stripe subscription ID (should start with 'sub_')
+  if (!stripeSubscriptionId.startsWith('sub_')) {
+    console.log(`[RecurringBilling] Skipping subscription ${subscription.id} - invalid Stripe ID format: ${stripeSubscriptionId}`);
+    return {
+      success: true,
+      subscriptionId: subscription.id,
+      message: `Skipped - invalid Stripe subscription ID format (${stripeSubscriptionId})`
+    };
+  }
+
+  // Skip pay_per_use plans (they don't use Stripe subscriptions)
+  if (planId === 'pay_per_use') {
+    return {
+      success: true,
+      subscriptionId: subscription.id,
+      message: 'Skipped - pay_per_use plan does not use Stripe subscriptions'
     };
   }
 
