@@ -13,6 +13,26 @@ import { checkMEILimit } from '../services/meiLimitTracking.js';
 import { validateInvoiceForRegime, getRegimeRules, getRecommendedIssRate, getRegimeInvoiceDefaults } from '../services/regimeRules.js';
 import { assistantLimiter, assistantReadLimiter, invoiceEmissionLimiter } from '../middleware/rateLimiter.js';
 import { fetchWithTimeout, getTimeout } from '../utils/timeout.js';
+// Import new AI services for human-like understanding
+import { 
+  classifyIntent, 
+  extractMonetaryValue, 
+  extractDocument, 
+  extractClientName, 
+  extractPeriod,
+  normalizeInput,
+  needsClarification,
+  generateClarification,
+  INTENT_TYPES 
+} from '../services/aiIntentService.js';
+import { 
+  FUNCTION_DEFINITIONS, 
+  generateSystemPrompt, 
+  mapFunctionToAction, 
+  requiresConfirmation,
+  buildMessages,
+  getOpenAIConfig 
+} from '../services/aiPromptService.js';
 
 // Multer configuration for audio uploads
 const upload = multer({
@@ -99,10 +119,26 @@ router.post('/process', assistantLimiter, [
   // Check if OpenAI API key is configured
   const openaiApiKey = process.env.OPENAI_API_KEY;
 
-  // Run pattern matching first for high-value intents (emitir nota, clientes) so client lookup
-  // and confirmation flow are deterministic; only use LLM for other messages.
-  if (openaiApiKey && messageMatchesPriorityIntent(message)) {
-    const patternResult = await processWithPatternMatching(message, req.user.id, companyId, res);
+  // =====================================================
+  // STEP 1: Use AI Intent Service for human-like understanding
+  // =====================================================
+  const normalizedMessage = normalizeInput(message);
+  const intentClassification = classifyIntent(message, { company });
+  
+  console.log('[Assistant] Intent classification:', {
+    message: message.substring(0, 50),
+    intent: intentClassification.intent,
+    confidence: intentClassification.confidence,
+    data: intentClassification.data
+  });
+
+  // =====================================================
+  // STEP 2: Handle high-confidence pattern matches directly
+  // =====================================================
+  // For high-confidence intents, use pattern matching for real data
+  // This ensures deterministic responses for actions that need database queries
+  if (intentClassification.confidence >= 0.6 || messageMatchesPriorityIntent(message)) {
+    const patternResult = await processWithPatternMatching(message, req.user.id, companyId, res, intentClassification);
     if (patternResult && patternResult.explanation) {
       try {
         await prisma.conversationMessage.create({
@@ -120,71 +156,94 @@ router.post('/process', assistantLimiter, [
     return patternResult;
   }
 
+  // =====================================================
+  // STEP 3: Fallback to pattern matching if no OpenAI key
+  // =====================================================
   if (!openaiApiKey) {
-    // Fallback to pattern matching if no API key
-    return processWithPatternMatching(message, req.user.id, companyId, res);
+    return processWithPatternMatching(message, req.user.id, companyId, res, intentClassification);
   }
 
+  // =====================================================
+  // STEP 4: Use OpenAI with function calling for complex queries
+  // =====================================================
   try {
     const timeoutMs = getTimeout('openai');
 
-    // Call OpenAI API with timeout
+    // Build messages with improved system prompt
+    const messages = buildMessages(message, finalHistory, { company, user: req.user });
+    
+    // Get OpenAI config with function definitions
+    const openaiConfig = getOpenAIConfig(messages, true);
+
+    // Call OpenAI API with function calling
     const response = await fetchWithTimeout('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${openaiApiKey}`
       },
-      body: JSON.stringify({
-        model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
-        messages: [
-          {
-            role: 'system',
-            content: getSystemPrompt(company)
-          },
-          ...finalHistory.map(msg => ({
-            role: msg.role,
-            content: msg.content
-          })),
-          {
-            role: 'user',
-            content: message
-          }
-        ],
-        temperature: 0.7,
-        max_tokens: 1000
-      })
+      body: JSON.stringify(openaiConfig)
     }, timeoutMs);
 
     if (!response.ok) {
+      const errorText = await response.text();
+      console.error('[Assistant] OpenAI API error:', response.status, errorText);
       throw new Error('OpenAI API request failed');
     }
 
     const data = await response.json();
-    const assistantMessage = data.choices[0]?.message?.content;
+    const assistantResponse = data.choices[0]?.message;
 
-    if (!assistantMessage) {
+    if (!assistantResponse) {
       throw new Error('No response from OpenAI');
     }
 
-    // Try to parse as JSON
     let responseData;
-    try {
-      const parsed = JSON.parse(assistantMessage);
+
+    // Check if the model wants to call a function
+    if (assistantResponse.tool_calls && assistantResponse.tool_calls.length > 0) {
+      const toolCall = assistantResponse.tool_calls[0];
+      const functionName = toolCall.function.name;
+      const functionArgs = JSON.parse(toolCall.function.arguments || '{}');
+      
+      console.log('[Assistant] Function call:', functionName, functionArgs);
+      
+      // Map function to internal action type
+      const actionType = mapFunctionToAction(functionName);
+      const needsConfirm = requiresConfirmation(actionType);
+      
+      // Build response data with extracted action
       responseData = {
         success: true,
-        action: parsed.action,
-        explanation: parsed.explanation,
-        requiresConfirmation: parsed.requiresConfirmation || false
+        action: {
+          type: actionType,
+          data: functionArgs
+        },
+        explanation: assistantResponse.content || generateExplanationForAction(actionType, functionArgs),
+        requiresConfirmation: needsConfirm
       };
-    } catch {
-      // If not valid JSON, return as explanation only
-      responseData = {
-        success: true,
-        action: null,
-        explanation: assistantMessage,
-        requiresConfirmation: false
-      };
+    } else {
+      // No function call - just a text response
+      const assistantMessage = assistantResponse.content;
+      
+      // Try to parse as JSON (legacy format)
+      try {
+        const parsed = JSON.parse(assistantMessage);
+        responseData = {
+          success: true,
+          action: parsed.action,
+          explanation: parsed.explanation,
+          requiresConfirmation: parsed.requiresConfirmation || false
+        };
+      } catch {
+        // If not valid JSON, return as explanation only
+        responseData = {
+          success: true,
+          action: null,
+          explanation: assistantMessage,
+          requiresConfirmation: false
+        };
+      }
     }
 
     // Save assistant response to conversation history
@@ -201,9 +260,9 @@ router.post('/process', assistantLimiter, [
   } catch (error) {
     console.error('OpenAI API error:', error.message || error);
     
-    // Fallback to pattern matching
+    // Fallback to pattern matching with intent classification
     try {
-      const patternResult = await processWithPatternMatching(message, req.user.id, companyId, res);
+      const patternResult = await processWithPatternMatching(message, req.user.id, companyId, res, intentClassification);
       
       // Save pattern matching response to history if it returned data
       if (patternResult && patternResult.explanation) {
@@ -235,6 +294,65 @@ router.post('/process', assistantLimiter, [
     }
   }
 }));
+
+/**
+ * Generate human-friendly explanation for a function call action
+ * 
+ * @param {string} actionType - The action type
+ * @param {object} args - The function arguments
+ * @returns {string} Human-friendly explanation
+ */
+function generateExplanationForAction(actionType, args) {
+  switch (actionType) {
+    case 'emitir_nfse':
+      const value = args.value ? `R$ ${args.value.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : 'valor não informado';
+      const client = args.client_name || 'cliente não informado';
+      const service = args.service_description || 'serviço não especificado';
+      return `📝 **Nota fiscal preparada:**\n\n• **Valor:** ${value}\n• **Cliente:** ${client}\n• **Serviço:** ${service}\n\n✅ Deseja confirmar a emissão?`;
+    
+    case 'cancelar_nfse':
+      return `❌ Você quer cancelar a nota ${args.invoice_id || 'informada'}. Para prosseguir, preciso do motivo do cancelamento (mínimo 15 caracteres).`;
+    
+    case 'listar_notas':
+      const filters = [];
+      if (args.status) filters.push(`status: ${args.status}`);
+      if (args.period) filters.push(`período: ${args.period}`);
+      if (args.client_name) filters.push(`cliente: ${args.client_name}`);
+      return filters.length > 0 
+        ? `📋 Vou buscar suas notas fiscais com os filtros: ${filters.join(', ')}`
+        : '📋 Vou buscar suas notas fiscais mais recentes';
+    
+    case 'ultima_nota':
+      return '🔍 Vou buscar sua última nota fiscal emitida';
+    
+    case 'notas_rejeitadas':
+      return `⚠️ Vou verificar as notas fiscais rejeitadas${args.period ? ` do período: ${args.period}` : ''}`;
+    
+    case 'consultar_faturamento':
+      return `💰 Vou consultar seu faturamento${args.period ? ` do período: ${args.period}` : ' deste mês'}`;
+    
+    case 'criar_cliente':
+      return `👤 Vou cadastrar o cliente ${args.name || 'informado'}. ${args.document ? `Documento: ${args.document}` : 'Preciso do CPF ou CNPJ para continuar.'}`;
+    
+    case 'listar_clientes':
+      return '👥 Vou listar seus clientes cadastrados';
+    
+    case 'buscar_cliente':
+      return `🔍 Vou buscar o cliente: ${args.query || 'informado'}`;
+    
+    case 'ver_impostos':
+      return `📊 Vou verificar seus impostos${args.status ? ` com status: ${args.status}` : ' pendentes'}`;
+    
+    case 'verificar_conexao':
+      return '🔌 Vou verificar o status da conexão com a prefeitura';
+    
+    case 'ajuda':
+      return '❓ Como posso ajudar? Posso:\n\n• Emitir notas fiscais\n• Consultar faturamento\n• Ver impostos pendentes\n• Gerenciar clientes\n\nO que você precisa?';
+    
+    default:
+      return 'Processando sua solicitação...';
+  }
+}
 
 /**
  * Returns true if the message matches intents that must be handled by pattern matching first
@@ -300,8 +418,14 @@ function messageMatchesPriorityIntent(message) {
  * Pattern matching fallback when OpenAI is not available
  * Enhanced with comprehensive AI query handlers
  */
-async function processWithPatternMatching(message, userId, companyId, res) {
+async function processWithPatternMatching(message, userId, companyId, res, intentClassification = null) {
   const lowerMessage = message.toLowerCase();
+  const normalizedMessage = normalizeInput(message);
+  
+  // Use intent classification if provided, otherwise classify
+  const intent = intentClassification || classifyIntent(message);
+  
+  console.log('[PatternMatching] Processing with intent:', intent.intent, 'confidence:', intent.confidence);
 
   // Get user's companies for queries
   const companies = await prisma.company.findMany({

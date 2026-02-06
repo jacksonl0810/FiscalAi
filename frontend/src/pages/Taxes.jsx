@@ -459,8 +459,8 @@ export default function Taxes() {
           "flex items-center justify-between"
         )}>
           <div>
-            <h2 className="text-xl font-bold text-white mb-1">Guias DAS</h2>
-            <p className="text-sm text-gray-400 font-medium">Histórico de pagamentos mensais</p>
+          <h2 className="text-xl font-bold text-white mb-1">Guias DAS</h2>
+          <p className="text-sm text-gray-400 font-medium">Histórico de pagamentos mensais</p>
           </div>
           {company && (
             <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/5 border border-white/10">
@@ -558,10 +558,10 @@ export default function Taxes() {
                             <Badge 
                               variant="outline"
                               className={cn(
-                                "font-semibold border",
-                                config.bg.includes('yellow') ? "bg-gradient-to-br from-yellow-500/30 to-yellow-600/20 text-yellow-300 border-yellow-500/40 shadow-md shadow-yellow-500/20" :
-                                config.bg.includes('green') ? "bg-gradient-to-br from-green-500/30 to-emerald-600/20 text-green-300 border-green-500/40 shadow-md shadow-green-500/20" :
-                                "bg-gradient-to-br from-red-500/30 to-red-600/20 text-red-300 border-red-500/40 shadow-md shadow-red-500/20"
+                              "font-semibold border",
+                              config.bg.includes('yellow') ? "bg-gradient-to-br from-yellow-500/30 to-yellow-600/20 text-yellow-300 border-yellow-500/40 shadow-md shadow-yellow-500/20" :
+                              config.bg.includes('green') ? "bg-gradient-to-br from-green-500/30 to-emerald-600/20 text-green-300 border-green-500/40 shadow-md shadow-green-500/20" :
+                              "bg-gradient-to-br from-red-500/30 to-red-600/20 text-red-300 border-red-500/40 shadow-md shadow-red-500/20"
                               )}
                             >
                               {config.label}
@@ -655,21 +655,21 @@ export default function Taxes() {
                       )}
 
                       <div className="flex gap-3">
-                        <Button 
-                          className={cn(
-                            "bg-gradient-to-br from-orange-500/30 via-orange-600/20 to-orange-500/30",
-                            "text-orange-300 hover:text-orange-200",
-                            "border border-orange-500/40",
-                            "hover:from-orange-500/40 hover:via-orange-600/30 hover:to-orange-500/40",
-                            "shadow-lg shadow-orange-500/20 hover:shadow-xl hover:shadow-orange-500/30",
-                            "transition-all duration-200",
-                            "font-semibold"
-                          )}
-                          onClick={() => handleDownloadPdf(das)}
-                        >
-                          <Download className="w-4 h-4 mr-2" />
-                          Baixar Guia PDF
-                        </Button>
+                          <Button 
+                            className={cn(
+                              "bg-gradient-to-br from-orange-500/30 via-orange-600/20 to-orange-500/30",
+                              "text-orange-300 hover:text-orange-200",
+                              "border border-orange-500/40",
+                              "hover:from-orange-500/40 hover:via-orange-600/30 hover:to-orange-500/40",
+                              "shadow-lg shadow-orange-500/20 hover:shadow-xl hover:shadow-orange-500/30",
+                              "transition-all duration-200",
+                              "font-semibold"
+                            )}
+                            onClick={() => handleDownloadPdf(das)}
+                          >
+                            <Download className="w-4 h-4 mr-2" />
+                            Baixar Guia PDF
+                          </Button>
                         {das.status === 'pendente' && (
                           <Button 
                             variant="outline" 
@@ -694,8 +694,8 @@ export default function Taxes() {
                               </>
                             ) : (
                               <>
-                                <CheckCircle className="w-4 h-4 mr-2" />
-                                Marcar como pago
+                            <CheckCircle className="w-4 h-4 mr-2" />
+                            Marcar como pago
                               </>
                             )}
                           </Button>
@@ -735,10 +735,10 @@ export default function Taxes() {
           <div>
             <h3 className="text-white font-bold mb-3 text-lg">Sobre o DAS - MEI</h3>
             <div className="space-y-2">
-              <p className="text-sm text-gray-300 leading-relaxed font-medium">
-                O DAS (Documento de Arrecadação do Simples Nacional) é a guia mensal de pagamento dos tributos do MEI. 
-                O vencimento é sempre no dia 20 de cada mês.
-              </p>
+            <p className="text-sm text-gray-300 leading-relaxed font-medium">
+              O DAS (Documento de Arrecadação do Simples Nacional) é a guia mensal de pagamento dos tributos do MEI. 
+              O vencimento é sempre no dia 20 de cada mês.
+            </p>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4 p-4 rounded-xl bg-white/5 border border-white/10">
                 <div>
                   <p className="text-xs text-gray-400 font-semibold uppercase tracking-wider">INSS (5% do SM)</p>

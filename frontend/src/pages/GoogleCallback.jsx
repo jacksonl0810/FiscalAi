@@ -2,8 +2,74 @@ import React, { useEffect, useState, useRef, useCallback } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "@/lib/AuthContext";
 import { setToken, setRefreshToken } from "@/api/services";
+import { authService } from "@/api/services";
 import { Loader2, CheckCircle, XCircle } from "lucide-react";
 import { toast } from "sonner";
+
+/**
+ * Determine the correct redirect path based on user subscription status.
+ * Same logic as Login.jsx - ensures consistent redirect behavior.
+ */
+const getRedirectPath = (userData, isNewUser) => {
+  // New users always go to pricing to select a plan
+  if (isNewUser) {
+    return '/pricing';
+  }
+  
+  if (!userData) {
+    console.warn('[Google Callback] No user data, redirecting to pricing');
+    return '/pricing';
+  }
+  
+  const status = userData?.subscription_status;
+  const plan = userData?.plan;
+  const isInTrial = userData?.is_in_trial;
+  const trialDaysRemaining = userData?.trial_days_remaining;
+  const daysRemaining = userData?.days_remaining;
+  
+  // ✅ PRIORITY 1: User has a plan → dashboard
+  if (plan) {
+    const planLower = String(plan).toLowerCase();
+    if (planLower === 'pro' || planLower === 'business' || planLower === 'trial' || planLower === 'essential') {
+      return '/';
+    }
+    return '/';
+  }
+  
+  // ✅ PRIORITY 2: Active subscription status → dashboard
+  const statusLower = status?.toLowerCase();
+  if (statusLower === 'trial' || statusLower === 'ativo' || statusLower === 'active' || statusLower === 'trialing') {
+    return '/';
+  }
+  
+  // ✅ PRIORITY 3: Trial days remaining → dashboard
+  if (isInTrial && trialDaysRemaining > 0) {
+    return '/';
+  }
+  
+  // ✅ PRIORITY 4: Subscription days remaining → dashboard
+  if (daysRemaining > 0) {
+    return '/';
+  }
+  
+  // 🚫 REDIRECT: Pending payment
+  if (statusLower === 'pending') {
+    return '/subscription-pending';
+  }
+  
+  // 🚫 REDIRECT: Payment failed or overdue
+  if (statusLower === 'inadimplente' || statusLower === 'past_due') {
+    return '/payment-delinquent';
+  }
+  
+  // 🚫 REDIRECT: Subscription canceled
+  if (statusLower === 'cancelado' || statusLower === 'canceled') {
+    return '/subscription-blocked';
+  }
+  
+  // 🚫 REDIRECT: No subscription → pricing page
+  return '/pricing';
+};
 
 /**
  * Google OAuth Callback Page
@@ -27,7 +93,6 @@ export default function GoogleCallback() {
   const hasProcessed = useRef(false);
 
   const handleCallback = useCallback(async () => {
-    console.log("[Google Callback] Starting callback processing...");
     
     try {
       // Check for error from backend
@@ -41,19 +106,13 @@ export default function GoogleCallback() {
       const token = searchParams.get("token");
       const refreshTokenValue = searchParams.get("refreshToken");
       const isNewUser = searchParams.get("isNewUser") === "true";
-      
+
       // Get user data from URL (sent by backend to avoid extra API call)
       const userId = searchParams.get("userId");
       const userEmail = searchParams.get("userEmail");
       const userName = searchParams.get("userName");
       const userAvatar = searchParams.get("userAvatar");
 
-      console.log("[Google Callback] Data received:", { 
-        hasToken: !!token, 
-        hasRefreshToken: !!refreshTokenValue, 
-        hasUserData: !!(userId && userEmail),
-        isNewUser 
-      });
 
       if (!token || !refreshTokenValue) {
         throw new Error("Tokens não encontrados na resposta");
@@ -63,23 +122,33 @@ export default function GoogleCallback() {
       setToken(token);
       setRefreshToken(refreshTokenValue);
 
-      // Set user data directly if available (avoids extra API call)
+      // Set user data directly for immediate UI feedback
       if (userId && userEmail && setUserDirectly) {
-        console.log("[Google Callback] Setting user directly from URL params...");
         setUserDirectly({
           id: userId,
           email: userEmail,
           name: userName || userEmail.split('@')[0],
           avatar: userAvatar || null,
         });
-      } else {
-        // Fallback: refresh user data via API if not provided in URL
-        console.log("[Google Callback] Falling back to refreshUser API call...");
-        await refreshUser();
+      }
+      
+      // Always fetch full user data via /auth/me to get subscription info
+      // This is needed to determine the correct redirect path
+      let fullUserData;
+      try {
+        fullUserData = await authService.me();
+      } catch (meError) {
+        console.error("[Google Callback] Failed to fetch /auth/me:", meError);
+        throw new Error("Falha ao obter dados do usuário");
+      }
+      
+      // Update auth context with full user data by setting directly
+      // This ensures context is immediately synchronized with the data we'll use for redirect
+      if (setUserDirectly) {
+        setUserDirectly(fullUserData);
       }
 
       setStatus("success");
-      console.log("[Google Callback] Success!");
       
       // Show success message with toast ID to prevent duplicates
       const toastMessage = isNewUser 
@@ -94,11 +163,17 @@ export default function GoogleCallback() {
       // Clear URL params for security (tokens shouldn't stay in URL)
       window.history.replaceState({}, document.title, window.location.pathname);
 
-      // Redirect to dashboard
-      console.log("[Google Callback] Redirecting to dashboard...");
+      // Determine redirect path using the same logic as Login.jsx
+      const redirectPath = getRedirectPath(fullUserData, isNewUser);
+      
+      // Use requestAnimationFrame to ensure state updates have flushed before navigation
+      // This prevents race condition where navigation happens before context propagates to components
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      
+      // Shorter delay now that we've synchronized state properly
       setTimeout(() => {
-        navigate("/", { replace: true });
-      }, 1000);
+        navigate(redirectPath, { replace: true });
+      }, 300);
     } catch (err) {
       console.error("[Google Callback] Error:", err);
       const { handleApiError } = await import('@/utils/errorHandler');

@@ -126,18 +126,20 @@ export default function Pricing() {
   const navigate = useNavigate();
   const { user, isAuthenticated } = useAuth();
   const [loadingPlan, setLoadingPlan] = useState(null);
-  const [selectedBillingCycle, setSelectedBillingCycle] = useState('monthly');
+  /** @type {['monthly' | 'semiannual' | 'annual', React.Dispatch<React.SetStateAction<'monthly' | 'semiannual' | 'annual'>>]} */
+  const [selectedBillingCycle, setSelectedBillingCycle] = useState(/** @type {'monthly' | 'semiannual' | 'annual'} */ ('monthly'));
   const [trialEligibility, setTrialEligibility] = useState({
     eligible: true, // Default to eligible (for non-logged-in users)
     hasUsedTrial: false,
-    loading: false
+    loading: false,
+    trialStartedAt: /** @type {string | null} */ (null)
   });
 
   // Check trial eligibility when user is authenticated
   useEffect(() => {
     const checkTrialEligibility = async () => {
       if (!isAuthenticated) {
-        setTrialEligibility({ eligible: true, hasUsedTrial: false, loading: false });
+        setTrialEligibility({ eligible: true, hasUsedTrial: false, loading: false, trialStartedAt: null });
         return;
       }
 
@@ -153,7 +155,7 @@ export default function Pricing() {
         });
       } catch (error) {
         // Silently handle trial eligibility check errors - default to eligible
-        setTrialEligibility({ eligible: true, hasUsedTrial: false, loading: false });
+        setTrialEligibility({ eligible: true, hasUsedTrial: false, loading: false, trialStartedAt: null });
       }
     };
 
@@ -266,6 +268,28 @@ export default function Pricing() {
               animate={{ opacity: 1, x: 0 }}
             >
             {isAuthenticated ? (
+              (() => {
+                const status = user?.subscription_status;
+                const plan = user?.plan;
+                
+                // Show Dashboard button if user has ANY subscription (trial, pro, business, essential)
+                // Same logic as login redirect and ProtectedRoute - users with subscriptions should access dashboard
+                
+                // Normalize plan and status to lowercase for comparison (consistent with App.jsx and Login.jsx)
+                const planLower = plan ? String(plan).toLowerCase() : null;
+                const statusLower = status ? String(status).toLowerCase() : null;
+                
+                const hasAccess = 
+                  // Has a plan (pro/business/trial/essential) - includes essential plan check
+                  (planLower === 'pro' || planLower === 'business' || planLower === 'trial' || planLower === 'essential') ||
+                  // Active subscription status
+                  (statusLower === 'trial' || statusLower === 'ativo' || statusLower === 'active' || statusLower === 'trialing') ||
+                  // Has trial days remaining
+                  (user?.is_in_trial && user?.trial_days_remaining > 0) ||
+                  // Has days remaining in subscription
+                  (user?.days_remaining > 0);
+                
+                return hasAccess ? (
               <Button 
                 onClick={() => navigate('/')}
                   className="relative overflow-hidden bg-gradient-to-r from-orange-500/10 to-amber-500/10 border border-orange-500/30 text-orange-300 hover:text-white hover:border-orange-500/50 hover:from-orange-500/20 hover:to-amber-500/20 transition-all duration-300 group px-6"
@@ -275,6 +299,12 @@ export default function Pricing() {
                   <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
                 </span>
               </Button>
+                ) : (
+                  <div className="flex items-center gap-3">
+                    <span className="text-slate-500 text-sm">{user?.name || user?.email}</span>
+                  </div>
+                );
+              })()
             ) : (
               <Button 
                 onClick={() => navigate('/login')}

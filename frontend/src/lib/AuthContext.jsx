@@ -88,11 +88,22 @@ export const AuthProvider = ({ children }) => {
       setAuthError(null);
 
       const response = await authService.login({ email, password });
-      // Set user directly from response - no need for extra API call
-      setUser(response.user);
+      
+      // After login, fetch full user data from /auth/me to get subscription info
+      // The login response only returns basic user fields (no subscription_status)
+      let fullUser;
+      try {
+        fullUser = await authService.me();
+      } catch (meError) {
+        console.error('[AuthContext] Failed to fetch /auth/me, using login response user:', meError);
+        // Fallback to login response user if /me fails
+        fullUser = response.user;
+      }
+      
+      setUser(fullUser);
       setIsAuthenticated(true);
       
-      return response;
+      return { ...response, user: fullUser };
     } catch (error) {
       setAuthError({
         type: 'login_failed',
@@ -110,11 +121,20 @@ export const AuthProvider = ({ children }) => {
       setAuthError(null);
 
       const response = await authService.register({ name, email, password });
-      // Set user directly from response - no need for extra API call
-      setUser(response.user);
+      
+      // After register, fetch full user data from /auth/me to get subscription info
+      let fullUser;
+      try {
+        fullUser = await authService.me();
+      } catch {
+        // Fallback to register response user if /me fails
+        fullUser = response.user;
+      }
+      
+      setUser(fullUser);
       setIsAuthenticated(true);
       
-      return response;
+      return { ...response, user: fullUser };
     } catch (error) {
       setAuthError({
         type: 'register_failed',
