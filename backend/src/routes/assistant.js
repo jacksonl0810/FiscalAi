@@ -227,22 +227,22 @@ router.post('/process', assistantLimiter, [
       const assistantMessage = assistantResponse.content;
       
       // Try to parse as JSON (legacy format)
-      try {
-        const parsed = JSON.parse(assistantMessage);
-        responseData = {
-          success: true,
-          action: parsed.action,
-          explanation: parsed.explanation,
-          requiresConfirmation: parsed.requiresConfirmation || false
-        };
-      } catch {
-        // If not valid JSON, return as explanation only
-        responseData = {
-          success: true,
-          action: null,
-          explanation: assistantMessage,
-          requiresConfirmation: false
-        };
+    try {
+      const parsed = JSON.parse(assistantMessage);
+      responseData = {
+        success: true,
+        action: parsed.action,
+        explanation: parsed.explanation,
+        requiresConfirmation: parsed.requiresConfirmation || false
+      };
+    } catch {
+      // If not valid JSON, return as explanation only
+      responseData = {
+        success: true,
+        action: null,
+        explanation: assistantMessage,
+        requiresConfirmation: false
+      };
       }
     }
 

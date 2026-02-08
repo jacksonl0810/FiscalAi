@@ -190,6 +190,7 @@ router.post('/login', authLimiter, [
       email: user.email,
       name: user.name,
       avatar: user.avatar,
+      isAdmin: user.isAdmin || false,
       createdAt: user.createdAt
     },
     token,

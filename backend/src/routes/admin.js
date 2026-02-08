@@ -59,12 +59,12 @@ router.get('/stats', asyncHandler(async (req, res) => {
     prisma.user.count({ where: { createdAt: { gte: startOfLastMonth, lt: startOfMonth } } }),
     prisma.company.count(),
     prisma.subscription.count(),
-    prisma.subscription.count({ where: { status: 'ativo' } }),
+    prisma.subscription.count({ where: { status: 'ACTIVE' } }),
     prisma.invoice.count(),
     prisma.invoice.count({ where: { dataEmissao: { gte: startOfMonth } } }),
-    prisma.payment.aggregate({ where: { status: 'paid' }, _sum: { amount: true } }),
+    prisma.payment.aggregate({ where: { status: 'PAID' }, _sum: { amount: true } }),
     prisma.payment.aggregate({ 
-      where: { status: 'paid', paidAt: { gte: startOfMonth } }, 
+      where: { status: 'PAID', paidAt: { gte: startOfMonth } }, 
       _sum: { amount: true } 
     })
   ]);
@@ -144,7 +144,7 @@ router.get('/stats/chart', asyncHandler(async (req, res) => {
     const [users, revenue, invoices] = await Promise.all([
       prisma.user.count({ where: { createdAt: { gte: startDate, lte: endDate } } }),
       prisma.payment.aggregate({
-        where: { status: 'paid', paidAt: { gte: startDate, lte: endDate } },
+        where: { status: 'PAID', paidAt: { gte: startDate, lte: endDate } },
         _sum: { amount: true }
       }),
       prisma.invoice.count({ where: { dataEmissao: { gte: startDate, lte: endDate } } })
@@ -440,7 +440,7 @@ router.get('/subscriptions', [
  * Update subscription status
  */
 router.put('/subscriptions/:id', [
-  body('status').isIn(['ativo', 'pending', 'inadimplente', 'cancelado'])
+  body('status').isIn(['ACTIVE', 'PENDING', 'PAST_DUE', 'CANCELED', 'EXPIRED'])
 ], validateRequest, asyncHandler(async (req, res) => {
   const subscription = await prisma.subscription.findUnique({
     where: { id: req.params.id }
@@ -610,6 +610,396 @@ router.get('/settings', asyncHandler(async (req, res) => {
   };
 
   sendSuccess(res, 'Settings retrieved', { settings });
+}));
+
+// ==========================================
+// ACTIVITY LOGS
+// ==========================================
+
+/**
+ * GET /api/admin/activity
+ * Get recent activity logs
+ */
+router.get('/activity', [
+  query('page').optional().isInt({ min: 1 }),
+  query('limit').optional().isInt({ min: 1, max: 100 }),
+  query('type').optional().isIn(['all', 'users', 'subscriptions', 'invoices', 'companies'])
+], validateRequest, asyncHandler(async (req, res) => {
+  const page = parseInt(req.query.page) || 1;
+  const limit = parseInt(req.query.limit) || 20;
+  const skip = (page - 1) * limit;
+  const type = req.query.type || 'all';
+
+  // Get recent activity based on type
+  const activities = [];
+
+  if (type === 'all' || type === 'users') {
+    const recentUsers = await prisma.user.findMany({
+      take: type === 'users' ? limit : 5,
+      skip: type === 'users' ? skip : 0,
+      orderBy: { createdAt: 'desc' },
+      select: { id: true, name: true, email: true, createdAt: true }
+    });
+    activities.push(...recentUsers.map(u => ({
+      type: 'user_created',
+      entity: 'user',
+      entityId: u.id,
+      description: `Novo usuário: ${u.name || u.email}`,
+      timestamp: u.createdAt,
+      data: u
+    })));
+  }
+
+  if (type === 'all' || type === 'subscriptions') {
+    const recentSubs = await prisma.subscription.findMany({
+      take: type === 'subscriptions' ? limit : 5,
+      skip: type === 'subscriptions' ? skip : 0,
+      orderBy: { updatedAt: 'desc' },
+      include: { user: { select: { name: true, email: true } } }
+    });
+    activities.push(...recentSubs.map(s => ({
+      type: 'subscription_updated',
+      entity: 'subscription',
+      entityId: s.id,
+      description: `Assinatura ${s.status}: ${s.user?.name || s.user?.email}`,
+      timestamp: s.updatedAt,
+      data: s
+    })));
+  }
+
+  if (type === 'all' || type === 'invoices') {
+    const recentInvoices = await prisma.invoice.findMany({
+      take: type === 'invoices' ? limit : 5,
+      skip: type === 'invoices' ? skip : 0,
+      orderBy: { dataEmissao: 'desc' },
+      include: { company: { select: { razaoSocial: true, nomeFantasia: true } } }
+    });
+    activities.push(...recentInvoices.map(i => ({
+      type: 'invoice_created',
+      entity: 'invoice',
+      entityId: i.id,
+      description: `Nota #${i.numero || 'N/A'}: R$ ${parseFloat(i.valor || 0).toFixed(2)}`,
+      timestamp: i.dataEmissao,
+      data: i
+    })));
+  }
+
+  if (type === 'all' || type === 'companies') {
+    const recentCompanies = await prisma.company.findMany({
+      take: type === 'companies' ? limit : 5,
+      skip: type === 'companies' ? skip : 0,
+      orderBy: { createdAt: 'desc' },
+      select: { id: true, razaoSocial: true, nomeFantasia: true, cnpj: true, createdAt: true }
+    });
+    activities.push(...recentCompanies.map(c => ({
+      type: 'company_created',
+      entity: 'company',
+      entityId: c.id,
+      description: `Nova empresa: ${c.razaoSocial || c.nomeFantasia}`,
+      timestamp: c.createdAt,
+      data: c
+    })));
+  }
+
+  // Sort by timestamp
+  activities.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+
+  sendSuccess(res, 'Activity retrieved', {
+    activities: activities.slice(0, limit),
+    pagination: { page, limit }
+  });
+}));
+
+// ==========================================
+// PLAN MANAGEMENT
+// ==========================================
+
+/**
+ * PUT /api/admin/subscriptions/:id/plan
+ * Change subscription plan
+ */
+router.put('/subscriptions/:id/plan', [
+  body('planId').isIn(['pay_per_use', 'essential', 'professional', 'accountant']),
+  body('billingCycle').optional().isIn(['monthly', 'annual'])
+], validateRequest, asyncHandler(async (req, res) => {
+  const { planId, billingCycle } = req.body;
+
+  const subscription = await prisma.subscription.findUnique({
+    where: { id: req.params.id },
+    include: { user: { select: { name: true, email: true } } }
+  });
+
+  if (!subscription) {
+    throw new AppError('Subscription not found', 404, 'NOT_FOUND');
+  }
+
+  const updated = await prisma.subscription.update({
+    where: { id: req.params.id },
+    data: {
+      planId,
+      billingCycle: billingCycle || subscription.billingCycle,
+      updatedAt: new Date()
+    },
+    include: { user: { select: { name: true, email: true } } }
+  });
+
+  sendSuccess(res, 'Plan updated', { subscription: updated });
+}));
+
+/**
+ * POST /api/admin/subscriptions/:id/extend
+ * Extend subscription period
+ */
+router.post('/subscriptions/:id/extend', [
+  body('days').isInt({ min: 1, max: 365 })
+], validateRequest, asyncHandler(async (req, res) => {
+  const { days } = req.body;
+
+  const subscription = await prisma.subscription.findUnique({
+    where: { id: req.params.id }
+  });
+
+  if (!subscription) {
+    throw new AppError('Subscription not found', 404, 'NOT_FOUND');
+  }
+
+  const currentEnd = subscription.currentPeriodEnd || new Date();
+  const newEnd = new Date(currentEnd);
+  newEnd.setDate(newEnd.getDate() + days);
+
+  const updated = await prisma.subscription.update({
+    where: { id: req.params.id },
+    data: {
+      currentPeriodEnd: newEnd,
+      status: 'ACTIVE'
+    },
+    include: { user: { select: { name: true, email: true } } }
+  });
+
+  sendSuccess(res, `Subscription extended by ${days} days`, { subscription: updated });
+}));
+
+// ==========================================
+// BULK ACTIONS
+// ==========================================
+
+/**
+ * POST /api/admin/users/bulk-action
+ * Perform bulk action on users
+ */
+router.post('/users/bulk-action', [
+  body('userIds').isArray({ min: 1 }),
+  body('action').isIn(['delete', 'make_admin', 'remove_admin'])
+], validateRequest, asyncHandler(async (req, res) => {
+  const { userIds, action } = req.body;
+
+  // Filter out current admin from deletion
+  const filteredIds = userIds.filter(id => id !== req.user.id);
+
+  let result;
+  switch (action) {
+    case 'delete':
+      result = await prisma.user.deleteMany({
+        where: { id: { in: filteredIds } }
+      });
+      break;
+    case 'make_admin':
+      result = await prisma.user.updateMany({
+        where: { id: { in: filteredIds } },
+        data: { isAdmin: true }
+      });
+      break;
+    case 'remove_admin':
+      result = await prisma.user.updateMany({
+        where: { id: { in: filteredIds } },
+        data: { isAdmin: false }
+      });
+      break;
+  }
+
+  sendSuccess(res, `Bulk action completed: ${result.count} users affected`);
+}));
+
+/**
+ * POST /api/admin/subscriptions/bulk-action
+ * Perform bulk action on subscriptions
+ */
+router.post('/subscriptions/bulk-action', [
+  body('subscriptionIds').isArray({ min: 1 }),
+  body('action').isIn(['activate', 'cancel', 'suspend'])
+], validateRequest, asyncHandler(async (req, res) => {
+  const { subscriptionIds, action } = req.body;
+
+  const statusMap = {
+    activate: 'ACTIVE',
+    cancel: 'CANCELED',
+    suspend: 'PAST_DUE'
+  };
+
+  const result = await prisma.subscription.updateMany({
+    where: { id: { in: subscriptionIds } },
+    data: { status: statusMap[action] }
+  });
+
+  sendSuccess(res, `Bulk action completed: ${result.count} subscriptions affected`);
+}));
+
+// ==========================================
+// EXPORT DATA
+// ==========================================
+
+/**
+ * GET /api/admin/export/users
+ * Export users data as JSON
+ */
+router.get('/export/users', asyncHandler(async (req, res) => {
+  const users = await prisma.user.findMany({
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      isAdmin: true,
+      createdAt: true,
+      subscription: {
+        select: { planId: true, status: true }
+      },
+      _count: { select: { companies: true } }
+    }
+  });
+
+  res.setHeader('Content-Type', 'application/json');
+  res.setHeader('Content-Disposition', `attachment; filename=users-export-${new Date().toISOString().split('T')[0]}.json`);
+  res.send(JSON.stringify(users, null, 2));
+}));
+
+/**
+ * GET /api/admin/export/subscriptions
+ * Export subscriptions data as JSON
+ */
+router.get('/export/subscriptions', asyncHandler(async (req, res) => {
+  const subscriptions = await prisma.subscription.findMany({
+    include: {
+      user: { select: { name: true, email: true } }
+    }
+  });
+
+  res.setHeader('Content-Type', 'application/json');
+  res.setHeader('Content-Disposition', `attachment; filename=subscriptions-export-${new Date().toISOString().split('T')[0]}.json`);
+  res.send(JSON.stringify(subscriptions, null, 2));
+}));
+
+/**
+ * GET /api/admin/export/invoices
+ * Export invoices data as JSON
+ */
+router.get('/export/invoices', asyncHandler(async (req, res) => {
+  const invoices = await prisma.invoice.findMany({
+    include: {
+      company: { select: { razaoSocial: true, cnpj: true } }
+    }
+  });
+
+  res.setHeader('Content-Type', 'application/json');
+  res.setHeader('Content-Disposition', `attachment; filename=invoices-export-${new Date().toISOString().split('T')[0]}.json`);
+  res.send(JSON.stringify(invoices, null, 2));
+}));
+
+// ==========================================
+// SYSTEM HEALTH
+// ==========================================
+
+/**
+ * GET /api/admin/health
+ * Get system health status
+ */
+router.get('/health', asyncHandler(async (req, res) => {
+  const startTime = Date.now();
+  
+  // Check database connection
+  let dbStatus = 'healthy';
+  let dbLatency = 0;
+  try {
+    const dbStart = Date.now();
+    await prisma.$queryRaw`SELECT 1`;
+    dbLatency = Date.now() - dbStart;
+  } catch (error) {
+    dbStatus = 'unhealthy';
+  }
+
+  // Get system stats
+  const [userCount, activeSubCount, invoiceCount] = await Promise.all([
+    prisma.user.count(),
+    prisma.subscription.count({ where: { status: 'ACTIVE' } }),
+    prisma.invoice.count()
+  ]);
+
+  const uptime = process.uptime();
+  const memoryUsage = process.memoryUsage();
+
+  sendSuccess(res, 'Health check completed', {
+    status: dbStatus === 'healthy' ? 'healthy' : 'degraded',
+    timestamp: new Date().toISOString(),
+    responseTime: Date.now() - startTime,
+    database: {
+      status: dbStatus,
+      latency: dbLatency
+    },
+    system: {
+      uptime: Math.floor(uptime),
+      uptimeFormatted: `${Math.floor(uptime / 3600)}h ${Math.floor((uptime % 3600) / 60)}m`,
+      memory: {
+        heapUsed: Math.round(memoryUsage.heapUsed / 1024 / 1024),
+        heapTotal: Math.round(memoryUsage.heapTotal / 1024 / 1024),
+        external: Math.round(memoryUsage.external / 1024 / 1024)
+      }
+    },
+    counts: {
+      users: userCount,
+      activeSubscriptions: activeSubCount,
+      invoices: invoiceCount
+    }
+  });
+}));
+
+// ==========================================
+// ADMIN AUTHENTICATION
+// ==========================================
+
+/**
+ * POST /api/admin/verify-password
+ * Verify admin password for step-up authentication
+ * This endpoint allows admins to re-authenticate without creating a new session
+ */
+router.post('/verify-password', [
+  body('password').notEmpty().withMessage('Password is required')
+], validateRequest, asyncHandler(async (req, res) => {
+  const { password } = req.body;
+
+  // Get current user with password hash
+  const user = await prisma.user.findUnique({
+    where: { id: req.user.id },
+    select: { id: true, passwordHash: true, isAdmin: true }
+  });
+
+  if (!user) {
+    throw new AppError('User not found', 404, 'NOT_FOUND');
+  }
+
+  if (!user.isAdmin) {
+    throw new AppError('Access denied. Admin privileges required.', 403, 'FORBIDDEN');
+  }
+
+  if (!user.passwordHash) {
+    throw new AppError('This account uses Google authentication. Password verification not available.', 400, 'GOOGLE_AUTH_USER');
+  }
+
+  // Verify password
+  const isValid = await bcrypt.compare(password, user.passwordHash);
+  if (!isValid) {
+    throw new AppError('Invalid password', 401, 'INVALID_PASSWORD');
+  }
+
+  sendSuccess(res, 'Password verified', { verified: true });
 }));
 
 export default router;

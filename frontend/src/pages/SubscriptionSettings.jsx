@@ -228,27 +228,27 @@ export default function SubscriptionSettings() {
 
           {!isPayPerUse && (
             <>
-              <div className="bg-white/5 rounded-xl p-4">
-                <div className="flex items-center gap-2 text-gray-400 mb-1">
-                  <Calendar className="w-4 h-4" />
-                  <span className="text-sm">Próxima cobrança</span>
-                </div>
-                <p className="text-xl font-bold text-white">
-                  {periodEnd 
-                    ? format(new Date(periodEnd), "dd 'de' MMMM", { locale: ptBR })
-                    : 'N/A'}
-                </p>
-              </div>
+          <div className="bg-white/5 rounded-xl p-4">
+            <div className="flex items-center gap-2 text-gray-400 mb-1">
+              <Calendar className="w-4 h-4" />
+              <span className="text-sm">Próxima cobrança</span>
+            </div>
+            <p className="text-xl font-bold text-white">
+              {periodEnd 
+                ? format(new Date(periodEnd), "dd 'de' MMMM", { locale: ptBR })
+                : 'N/A'}
+            </p>
+          </div>
 
-              <div className="bg-white/5 rounded-xl p-4">
-                <div className="flex items-center gap-2 text-gray-400 mb-1">
-                  <Zap className="w-4 h-4" />
-                  <span className="text-sm">Dias restantes</span>
-                </div>
-                <p className="text-xl font-bold text-white">
-                  {daysRemaining} dias
-                </p>
-              </div>
+          <div className="bg-white/5 rounded-xl p-4">
+            <div className="flex items-center gap-2 text-gray-400 mb-1">
+              <Zap className="w-4 h-4" />
+              <span className="text-sm">Dias restantes</span>
+            </div>
+            <p className="text-xl font-bold text-white">
+              {daysRemaining} dias
+            </p>
+          </div>
             </>
           )}
 

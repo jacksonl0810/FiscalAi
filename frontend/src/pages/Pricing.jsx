@@ -220,8 +220,8 @@ export default function Pricing() {
         throw new Error('Checkout URL not received');
       }
     } catch (error) {
-      const { handleApiError } = await import('@/utils/errorHandler');
-      await handleApiError(error, { operation: 'create_checkout', planId: plan.id });
+        const { handleApiError } = await import('@/utils/errorHandler');
+        await handleApiError(error, { operation: 'create_checkout', planId: plan.id });
     } finally {
       setLoadingPlan(null);
     }
@@ -599,9 +599,9 @@ export default function Pricing() {
                     {/* Main card */}
                     <div className={`relative h-full rounded-[28px] overflow-hidden transition-all duration-500 group-hover:translate-y-[-4px] ${
                       plan.popular 
-                        ? 'bg-gradient-to-b from-[#1a1208] via-[#14100a] to-[#0d0a06]' 
+                          ? 'bg-gradient-to-b from-[#1a1208] via-[#14100a] to-[#0d0a06]' 
                         : plan.id === 'professional'
-                          ? 'bg-gradient-to-b from-[#130d1a] via-[#0f0a14] to-[#0a070d]'
+                            ? 'bg-gradient-to-b from-[#130d1a] via-[#0f0a14] to-[#0a070d]'
                           : plan.id === 'accountant'
                             ? 'bg-gradient-to-b from-[#0c1a14] via-[#0a1510] to-[#080f0c]'
                             : 'bg-gradient-to-b from-[#12141a] via-[#0e1015] to-[#0a0b0f]'
@@ -617,7 +617,7 @@ export default function Pricing() {
                               ? 'ring-1 ring-inset ring-violet-500/20'
                               : plan.id === 'accountant'
                                 ? 'ring-1 ring-inset ring-emerald-500/20'
-                                : 'ring-1 ring-inset ring-white/[0.08]'
+                              : 'ring-1 ring-inset ring-white/[0.08]'
                       }`} />
                       
                       {/* Top accent line */}
@@ -630,7 +630,7 @@ export default function Pricing() {
                               ? 'bg-gradient-to-r from-transparent via-violet-400/50 to-transparent'
                               : plan.id === 'accountant'
                                 ? 'bg-gradient-to-r from-transparent via-emerald-400/50 to-transparent'
-                                : 'bg-gradient-to-r from-transparent via-white/10 to-transparent'
+                              : 'bg-gradient-to-r from-transparent via-white/10 to-transparent'
                       }`} />
 
                       {/* Card content */}
@@ -655,7 +655,7 @@ export default function Pricing() {
                             whileHover={{ scale: 1.05 }}
                             className={`inline-flex items-center gap-2.5 px-4 py-2 rounded-full text-[10px] font-bold tracking-[0.1em] uppercase backdrop-blur-sm ${
                               plan.popular
-                                ? 'bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-lg shadow-orange-500/30'
+                                  ? 'bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-lg shadow-orange-500/30'
                                 : plan.id === 'professional'
                                   ? 'bg-violet-950/80 text-violet-300 border border-violet-500/30'
                                   : plan.id === 'accountant'
@@ -708,7 +708,7 @@ export default function Pricing() {
                                     : 'text-slate-400'
                             }`} />
                           </div>
-                        </div>
+                    </div>
 
                         {/* Plan name */}
                         <div className="text-center mb-2">
@@ -731,13 +731,13 @@ export default function Pricing() {
                           ) : (
                             <>
                               <div className="flex items-baseline justify-center">
-                                <span className="text-slate-500 text-lg mr-1">R$</span>
+                                  <span className="text-slate-500 text-lg mr-1">R$</span>
                                 <span className="text-4xl font-bold tracking-tight text-white">
                                   {displayPrice}
-                                </span>
-                                <span className="text-slate-500 text-base ml-1">
+                    </span>
+                                  <span className="text-slate-500 text-base ml-1">
                                   {getPeriodText(plan)}
-                                </span>
+                                  </span>
                               </div>
                               {!plan.isPayPerUse && selectedBillingCycle === 'annual' && plan.annualMonthlyEquivalent && (
                                 <p className="text-xs text-emerald-400 mt-2">
@@ -750,16 +750,16 @@ export default function Pricing() {
                                 </p>
                               )}
                             </>
-                          )}
+                    )}
                   </div>
 
                         {/* Divider */}
                         <div className="relative mb-6">
                           <div className={`h-[1px] ${
                             plan.popular
-                              ? 'bg-gradient-to-r from-transparent via-orange-500/30 to-transparent'
+                                ? 'bg-gradient-to-r from-transparent via-orange-500/30 to-transparent'
                               : plan.id === 'professional'
-                                ? 'bg-gradient-to-r from-transparent via-violet-500/20 to-transparent'
+                                  ? 'bg-gradient-to-r from-transparent via-violet-500/20 to-transparent'
                                 : plan.id === 'accountant'
                                   ? 'bg-gradient-to-r from-transparent via-emerald-500/20 to-transparent'
                                   : 'bg-gradient-to-r from-transparent via-slate-700/50 to-transparent'
@@ -778,18 +778,18 @@ export default function Pricing() {
                             >
                               <div className={`w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 ${
                                 plan.popular
-                                  ? 'bg-orange-500/15 ring-1 ring-orange-500/30'
+                                    ? 'bg-orange-500/15 ring-1 ring-orange-500/30'
                                   : plan.id === 'professional'
-                                    ? 'bg-violet-500/15 ring-1 ring-violet-500/30'
+                                      ? 'bg-violet-500/15 ring-1 ring-violet-500/30'
                                     : plan.id === 'accountant'
                                       ? 'bg-emerald-500/15 ring-1 ring-emerald-500/30'
                                       : 'bg-slate-500/10 ring-1 ring-slate-500/20'
                               }`}>
                                 <Check className={`w-3 h-3 ${
                                   plan.popular
-                                    ? 'text-orange-400'
+                                      ? 'text-orange-400'
                                     : plan.id === 'professional'
-                                      ? 'text-violet-400'
+                                        ? 'text-violet-400'
                                       : plan.id === 'accountant'
                                         ? 'text-emerald-400'
                                         : 'text-slate-500'
@@ -809,16 +809,16 @@ export default function Pricing() {
                             Plano Atual
                           </div>
                         ) : (
-                        <motion.button
-                          whileHover={{ scale: 1.02 }}
-                          whileTap={{ scale: 0.98 }}
+                          <motion.button
+                            whileHover={{ scale: 1.02 }}
+                            whileTap={{ scale: 0.98 }}
                     onClick={() => handleSelectPlan(plan)}
                     disabled={loadingPlan === plan.id}
-                          className={`w-full py-4 px-6 rounded-2xl text-base font-semibold transition-all duration-300 flex items-center justify-center gap-2 ${
+                            className={`w-full py-4 px-6 rounded-2xl text-base font-semibold transition-all duration-300 flex items-center justify-center gap-2 ${
                       plan.popular
-                              ? 'bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 text-white shadow-xl shadow-orange-500/25'
+                                ? 'bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 text-white shadow-xl shadow-orange-500/25'
                               : plan.id === 'professional'
-                                ? 'bg-gradient-to-r from-violet-600/80 to-purple-600/80 hover:from-violet-500/80 hover:to-purple-500/80 text-white shadow-xl shadow-violet-500/20'
+                                  ? 'bg-gradient-to-r from-violet-600/80 to-purple-600/80 hover:from-violet-500/80 hover:to-purple-500/80 text-white shadow-xl shadow-violet-500/20'
                                 : plan.id === 'accountant'
                                   ? 'bg-gradient-to-r from-emerald-600/80 to-teal-600/80 hover:from-emerald-500/80 hover:to-teal-500/80 text-white shadow-xl shadow-emerald-500/20'
                                   : 'bg-white/[0.03] hover:bg-white/[0.06] text-white ring-1 ring-white/10 hover:ring-white/20'
@@ -834,7 +834,7 @@ export default function Pricing() {
                                 {plan.isCustomPricing ? (
                                   <>
                                     <Mail className="w-4 h-4" />
-                                    {plan.buttonText}
+                        {plan.buttonText}
                                   </>
                                 ) : (
                                   <>
@@ -962,32 +962,32 @@ export default function Pricing() {
                 <div className="absolute top-0 left-1/4 w-32 h-32 bg-orange-500/10 rounded-full blur-3xl" />
                 <div className="absolute bottom-0 right-1/4 w-40 h-40 bg-purple-500/10 rounded-full blur-3xl" />
                 
-                <div className="relative">
-                  <div className="w-20 h-20 mx-auto mb-6 rounded-2xl bg-gradient-to-br from-orange-500/20 to-amber-500/20 flex items-center justify-center">
-                    <Zap className="w-10 h-10 text-orange-400" />
-                  </div>
-                  <h2 className="text-3xl md:text-4xl font-bold text-white mb-4">
-                    Comece agora
-                    <span className="block mt-2 bg-gradient-to-r from-orange-400 to-amber-400 text-transparent bg-clip-text">
+                  <div className="relative">
+                    <div className="w-20 h-20 mx-auto mb-6 rounded-2xl bg-gradient-to-br from-orange-500/20 to-amber-500/20 flex items-center justify-center">
+                      <Zap className="w-10 h-10 text-orange-400" />
+                    </div>
+                    <h2 className="text-3xl md:text-4xl font-bold text-white mb-4">
+                      Comece agora
+                      <span className="block mt-2 bg-gradient-to-r from-orange-400 to-amber-400 text-transparent bg-clip-text">
                       a partir de R$9
-                    </span>
+                      </span>
               </h2>
-                  <p className="text-lg text-slate-400 mb-10 max-w-xl mx-auto">
+                    <p className="text-lg text-slate-400 mb-10 max-w-xl mx-auto">
                     Pague apenas quando emitir ou escolha um plano mensal.
                     Sem compromisso. Cancele quando quiser.
               </p>
               <Button
                 onClick={() => handleSelectPlan(plans[0])}
-                    className="bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white px-10 py-6 text-lg font-semibold shadow-xl shadow-orange-500/25 hover:shadow-orange-500/40 transition-all duration-300 hover:scale-105"
+                      className="bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white px-10 py-6 text-lg font-semibold shadow-xl shadow-orange-500/25 hover:shadow-orange-500/40 transition-all duration-300 hover:scale-105"
               >
                     <CreditCard className="w-5 h-5 mr-2" />
                     Começar com Pay per Use
                 <ArrowRight className="w-5 h-5 ml-2" />
               </Button>
-                  <p className="text-sm text-slate-500 mt-6">
+                    <p className="text-sm text-slate-500 mt-6">
                     R$9 por nota fiscal emitida • Sem mensalidade
-                  </p>
-                </div>
+                    </p>
+                  </div>
               </div>
             </motion.div>
           </div>
