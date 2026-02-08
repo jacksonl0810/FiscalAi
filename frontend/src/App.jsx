@@ -8,6 +8,8 @@ import PageNotFound from './lib/PageNotFound';
 import { AuthProvider, useAuth } from '@/lib/AuthContext';
 import UserNotRegisteredError from '@/components/UserNotRegisteredError';
 import Login from '@/pages/Login';
+import AdminLogin from '@/pages/AdminLogin';
+import Admin from '@/pages/Admin';
 import Pricing from '@/pages/Pricing';
 import PaymentSuccess from '@/pages/PaymentSuccess';
 import PaymentFailed from '@/pages/PaymentFailed';
@@ -129,6 +131,7 @@ const AppRoutes = () => {
     <Routes>
       {/* Public routes */}
       <Route path="/login" element={<Login />} />
+      <Route path="/admin/login" element={<AdminLogin />} />
       <Route path="/pricing" element={<Pricing />} />
       <Route path="/checkout/subscription" element={<CheckoutSubscription />} />
       <Route path="/payment-success" element={<PaymentSuccess />} />
@@ -149,6 +152,13 @@ const AppRoutes = () => {
         </ProtectedRoute>
       } />
       
+      {/* Admin route - self-protecting (redirects to /admin/login if not authenticated as admin) */}
+      <Route path="/Admin" element={
+        <LayoutWrapper currentPageName="Admin">
+          <Admin />
+        </LayoutWrapper>
+      } />
+      
       {/* Protected routes */}
       <Route path="/" element={
         <ProtectedRoute>
@@ -158,7 +168,9 @@ const AppRoutes = () => {
         </ProtectedRoute>
       } />
       
-      {Object.entries(Pages).map(([path, Page]) => (
+      {Object.entries(Pages)
+        .filter(([path]) => path !== 'Admin') // Admin has its own route with self-protection
+        .map(([path, Page]) => (
         <Route
           key={path}
           path={`/${path}`}

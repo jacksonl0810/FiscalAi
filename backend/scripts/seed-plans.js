@@ -14,7 +14,7 @@ async function seedPlans() {
   try {
     // Get all plans from config
     const configPlans = Object.values(PLANS);
-
+    
     let created = 0;
     let updated = 0;
     let skipped = 0;

@@ -120,7 +120,8 @@ export default function Layout({ children, currentPageName }) {
     { name: "Impostos (DAS)", page: "Taxes", icon: Receipt },
     { name: "Minhas Empresas", page: "CompanySetup", icon: Building2 },
     { name: "Notificações", page: "Notifications", icon: Bell, badge: unreadCount },
-    ...(user?.isAdmin ? [{ name: "Admin", page: "Admin", icon: Shield }] : []),
+    // Admin link goes to admin login for re-authentication (step-up security)
+    ...(user?.isAdmin ? [{ name: "Admin", page: "admin/login", icon: Shield, customPath: "/admin/login" }] : []),
   ];
 
   const handleLogout = async () => {
@@ -268,11 +269,11 @@ export default function Layout({ children, currentPageName }) {
           {/* Navigation */}
           <nav className="flex-1 px-4 py-6 space-y-2 overflow-y-auto">
             {navigation.map((item) => {
-              const isActive = currentPageName === item.page;
+              const isActive = currentPageName === item.page || (item.customPath && currentPageName === 'Admin');
               return (
                 <Link
                   key={item.page}
-                  to={createPageUrl(item.page)}
+                  to={item.customPath || createPageUrl(item.page)}
                   className={cn(
                     "flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-300 ease-out group relative overflow-hidden",
                     "backdrop-blur-sm",
@@ -320,13 +321,16 @@ export default function Layout({ children, currentPageName }) {
                             damping: 30
                           }}
                         >
-                          <Badge className={cn(
-                            "ml-auto",
-                            "bg-gradient-to-br from-orange-500/30 to-orange-600/20",
-                            "text-orange-300 border border-orange-500/40",
-                            "shadow-md shadow-orange-500/20",
-                            "font-semibold"
-                          )}>
+                          <Badge 
+                            variant="outline"
+                            className={cn(
+                              "ml-auto",
+                              "bg-gradient-to-br from-orange-500/30 to-orange-600/20",
+                              "text-orange-300 border border-orange-500/40",
+                              "shadow-md shadow-orange-500/20",
+                              "font-semibold"
+                            )}
+                          >
                             {item.badge}
                           </Badge>
                         </motion.div>

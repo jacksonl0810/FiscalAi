@@ -6,6 +6,28 @@ const prisma = new PrismaClient();
 async function main() {
   console.log('🌱 Starting seed...');
 
+  // Create admin user
+  const adminPasswordHash = await bcrypt.hash('admin123!@#', 12);
+  
+  const admin = await prisma.user.upsert({
+    where: { email: 'admin@gmail.com' },
+    update: {
+      passwordHash: adminPasswordHash,
+      isAdmin: true,
+      name: 'Administrador'
+    },
+    create: {
+      email: 'admin@gmail.com',
+      passwordHash: adminPasswordHash,
+      name: 'Administrador',
+      isAdmin: true
+    }
+  });
+
+  console.log('✅ Admin user created:', admin.email);
+  console.log('   Password: admin123!@#');
+  console.log('   isAdmin: true');
+
   // Create demo user
   const passwordHash = await bcrypt.hash('demo123', 12);
   
@@ -15,7 +37,8 @@ async function main() {
     create: {
       email: 'demo@fiscalai.com',
       passwordHash,
-      name: 'Usuário Demo'
+      name: 'Usuário Demo',
+      isAdmin: false
     }
   });
 
@@ -184,6 +207,9 @@ async function main() {
   console.log('✅ Demo notifications created');
 
   console.log('\n🎉 Seed completed successfully!');
+  console.log('\n📋 Admin credentials:');
+  console.log('   Email: admin@gmail.com');
+  console.log('   Password: admin123!@#');
   console.log('\n📋 Demo credentials:');
   console.log('   Email: demo@fiscalai.com');
   console.log('   Password: demo123');

@@ -28,6 +28,7 @@ export const authenticate = async (req, res, next) => {
         email: true,
         name: true,
         avatar: true,
+        isAdmin: true,
         createdAt: true
       }
     });
@@ -86,7 +87,8 @@ export const optionalAuth = async (req, res, next) => {
         id: true,
         email: true,
         name: true,
-        avatar: true
+        avatar: true,
+        isAdmin: true
       }
     });
 

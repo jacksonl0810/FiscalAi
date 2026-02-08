@@ -231,26 +231,26 @@ export default function PaymentSuccess() {
               transition={{ delay: 0.5 }}
               className={`relative rounded-2xl p-6 mb-8 overflow-hidden ${
                 planId === 'professional'
-                  ? 'bg-gradient-to-br from-violet-500/10 to-purple-500/5 border border-violet-500/20'
-                  : 'bg-gradient-to-br from-orange-500/10 to-amber-500/5 border border-orange-500/20'
+                    ? 'bg-gradient-to-br from-violet-500/10 to-purple-500/5 border border-violet-500/20'
+                    : 'bg-gradient-to-br from-orange-500/10 to-amber-500/5 border border-orange-500/20'
               }`}
             >
               <div className="flex items-center justify-center gap-3 mb-4">
                 <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${
                   planId === 'professional'
-                    ? 'bg-violet-500/20'
-                    : 'bg-orange-500/20'
+                      ? 'bg-violet-500/20'
+                      : 'bg-orange-500/20'
                 }`}>
                   <PlanIcon className={`w-5 h-5 ${
                     planId === 'professional'
-                      ? 'text-violet-400'
-                      : 'text-orange-400'
+                        ? 'text-violet-400'
+                        : 'text-orange-400'
                   }`} />
                 </div>
                 <span className={`text-xl font-bold ${
                   planId === 'professional'
-                    ? 'text-violet-300'
-                    : 'text-orange-300'
+                      ? 'text-violet-300'
+                      : 'text-orange-300'
                 }`}>
                   {plan.name}
                 </span>
@@ -264,8 +264,8 @@ export default function PaymentSuccess() {
                   >
                     <CheckCircle className={`w-3.5 h-3.5 ${
                       planId === 'professional'
-                        ? 'text-violet-400'
-                        : 'text-orange-400'
+                          ? 'text-violet-400'
+                          : 'text-orange-400'
                     }`} />
                     <span className="text-xs text-slate-400">{feature}</span>
                   </div>

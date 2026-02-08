@@ -500,21 +500,21 @@ router.post('/start',
   validateRequest, 
   asyncHandler(async (req, res) => {
     const { plan_id, billing_cycle = 'monthly' } = req.body;
-    const userId = req.user.id;
+  const userId = req.user.id;
 
-    const user = await prisma.user.findUnique({
+  const user = await prisma.user.findUnique({
       where: { id: userId }
-    });
+  });
 
-    if (!user) {
+  if (!user) {
       throw new AppError('Usuário não encontrado', 404, 'NOT_FOUND');
-    }
+  }
 
     const { getPlanConfig, normalizePlanId, isPayPerUsePlan } = await import('../config/plans.js');
-    const normalizedPlanId = normalizePlanId(plan_id);
-    const planConfig = getPlanConfig(normalizedPlanId);
+  const normalizedPlanId = normalizePlanId(plan_id);
+  const planConfig = getPlanConfig(normalizedPlanId);
     
-    if (!planConfig) {
+  if (!planConfig) {
       throw new AppError('Plano não encontrado', 400, 'INVALID_PLAN');
     }
 
@@ -534,15 +534,15 @@ router.post('/start',
     // Handle Pay per Use - activate immediately (no subscription needed)
     if (isPayPerUsePlan(normalizedPlanId)) {
       const existingSubscription = await prisma.subscription.findUnique({
-        where: { userId }
-      });
+      where: { userId }
+    });
 
-      let subscription;
-      if (existingSubscription) {
+    let subscription;
+    if (existingSubscription) {
         // Update to pay_per_use
-        subscription = await prisma.subscription.update({
-          where: { id: existingSubscription.id },
-          data: {
+      subscription = await prisma.subscription.update({
+        where: { id: existingSubscription.id },
+        data: {
             status: 'ACTIVE',
             planId: 'pay_per_use',
             billingCycle: 'per_invoice',
@@ -551,22 +551,22 @@ router.post('/start',
             currentPeriodStart: null,
             currentPeriodEnd: null,
             nextBillingAt: null
-          }
-        });
-      } else {
-        subscription = await prisma.subscription.create({
-          data: {
-            userId,
+        }
+      });
+    } else {
+      subscription = await prisma.subscription.create({
+        data: {
+          userId,
             status: 'ACTIVE',
             planId: 'pay_per_use',
             billingCycle: 'per_invoice',
             stripeSubscriptionId: `ppu_${Date.now()}_${userId.slice(0, 8)}`
-          }
-        });
-      }
+        }
+      });
+    }
 
-      await createNotificationWithIdempotency({
-        userId,
+    await createNotificationWithIdempotency({
+      userId,
         titulo: 'Pay per Use Ativado!',
         mensagem: 'Agora você pode emitir notas fiscais por R$9 cada. Pague apenas quando usar.',
         tipo: 'sucesso',
@@ -577,7 +577,7 @@ router.post('/start',
 
       sendSuccess(res, 'Pay per Use activated', {
         checkout_url: checkoutUrl,
-        subscription_id: subscription.id,
+      subscription_id: subscription.id,
         plan_id: 'pay_per_use',
         status: 'ACTIVE',
         per_invoice_price: planConfig.perInvoicePrice,
@@ -588,14 +588,14 @@ router.post('/start',
 
     // For paid subscription plans (essential, professional), redirect to checkout page
     const checkoutUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/checkout/subscription?plan=${normalizedPlanId}&cycle=${billing_cycle}`;
-    
-    sendSuccess(res, 'Redirect to checkout', {
-      checkout_url: checkoutUrl,
-      subscription_id: null,
-      plan_id: normalizedPlanId,
+      
+      sendSuccess(res, 'Redirect to checkout', {
+        checkout_url: checkoutUrl,
+        subscription_id: null,
+        plan_id: normalizedPlanId,
       billing_cycle,
-      status: null
-    });
+        status: null
+      });
   })
 );
 
@@ -607,7 +607,7 @@ router.post('/start',
 router.get('/trial-eligibility', asyncHandler(async (req, res) => {
   sendSuccess(res, 'Trial plan is no longer available', {
     eligible: false,
-    hasUsedTrial: true,
+      hasUsedTrial: true,
     trialStartedAt: null,
     trialEndedAt: null,
     message: 'O período de teste não está mais disponível. Por favor, escolha um plano pago.'
@@ -635,14 +635,14 @@ router.get('/status', asyncHandler(async (req, res) => {
   let currentPeriodEnd = null;
   let daysRemaining = 0;
 
-  if (subscription) {
-    status = subscription.status;
+    if (subscription) {
+      status = subscription.status;
     planId = subscription.planId;
-    currentPeriodEnd = subscription.currentPeriodEnd;
+      currentPeriodEnd = subscription.currentPeriodEnd;
     
-    if (currentPeriodEnd) {
-      const now = new Date();
-      daysRemaining = Math.max(0, Math.ceil((new Date(currentPeriodEnd) - now) / (1000 * 60 * 60 * 24)));
+      if (currentPeriodEnd) {
+        const now = new Date();
+        daysRemaining = Math.max(0, Math.ceil((new Date(currentPeriodEnd) - now) / (1000 * 60 * 60 * 24)));
     }
   }
 

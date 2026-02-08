@@ -600,6 +600,14 @@ export default function Login() {
               <a href="#" className="hover:text-orange-400 transition-colors">Privacidade</a>
               <span>•</span>
               <a href="#" className="hover:text-orange-400 transition-colors">Suporte</a>
+              <span>•</span>
+              <button 
+                onClick={() => navigate('/admin/login')} 
+                className="hover:text-violet-400 transition-colors flex items-center gap-1"
+              >
+                <Shield className="w-3 h-3" />
+                Admin
+              </button>
             </div>
           </div>
         </motion.div>

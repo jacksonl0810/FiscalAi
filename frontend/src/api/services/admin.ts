@@ -125,6 +125,18 @@ export const adminService = {
   getSettings: async () => {
     const response = await apiClient.get('/admin/settings');
     return response.data.data;
+  },
+
+  // Activity
+  getActivity: async (params?: { page?: number; limit?: number; type?: string }) => {
+    const response = await apiClient.get('/admin/activity', { params });
+    return response.data.data;
+  },
+
+  // Admin Authentication
+  verifyPassword: async (password: string): Promise<{ verified: boolean }> => {
+    const response = await apiClient.post('/admin/verify-password', { password });
+    return response.data.data;
   }
 };
 
