@@ -306,7 +306,7 @@ export default function Dashboard() {
                   )}
                   style={{ 
                     width: planLimits.invoiceLimit?.max === null 
-                      ? '10%' 
+                      ? (planLimits.invoiceLimit?.used > 0 ? '10%' : '0%')
                       : `${Math.min((planLimits.invoiceLimit?.used / planLimits.invoiceLimit?.max) * 100, 100)}%` 
                   }}
                 />

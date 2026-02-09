@@ -12,6 +12,7 @@ import {
   Eye, 
   EyeOff, 
   ArrowRight, 
+  ArrowLeft,
   AlertTriangle,
   ShieldCheck,
   KeyRound,
@@ -21,6 +22,7 @@ import {
   Activity
 } from "lucide-react";
 import { toast } from "sonner";
+import { createPageUrl } from "@/utils";
 
 export default function AdminLogin() {
   const navigate = useNavigate();
@@ -473,10 +475,17 @@ export default function AdminLogin() {
             <div className="px-8 py-4 bg-white/[0.02] border-t border-white/5">
               <div className="flex items-center justify-between text-sm">
                 <button
-                  onClick={() => navigate('/login')}
-                  className="text-gray-400 hover:text-white transition-colors flex items-center gap-2"
+                  onClick={() => {
+                    if (isAuthenticated) {
+                      navigate(createPageUrl("Dashboard"));
+                    } else {
+                      navigate('/login');
+                    }
+                  }}
+                  className="text-gray-400 hover:text-white transition-colors flex items-center gap-2 group"
                 >
-                  ← Voltar ao login normal
+                  <ArrowLeft className="w-4 h-4 group-hover:-translate-x-1 transition-transform" />
+                  {isAuthenticated ? 'Voltar ao Dashboard' : 'Voltar ao login normal'}
                 </button>
                 <span className="text-gray-600 flex items-center gap-1.5">
                   <Sparkles className="w-4 h-4 text-violet-400" />
