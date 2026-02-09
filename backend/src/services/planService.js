@@ -136,14 +136,45 @@ export async function checkInvoiceLimit(userId) {
 
   // Pay per Use plan - always "allowed" but requires payment per invoice
   if (planConfig.isPayPerUse) {
+    const now = new Date();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
+
+    // Count actual invoices issued this month for Pay per Use
+    const invoiceCount = await prisma.invoice.count({
+      where: {
+        company: {
+          userId: userId
+        },
+        status: {
+          notIn: ['rascunho'] // Only exclude drafts
+        },
+        OR: [
+          {
+            dataEmissao: {
+              gte: startOfMonth,
+              lte: endOfMonth
+            }
+          },
+          {
+            dataEmissao: null,
+            createdAt: {
+              gte: startOfMonth,
+              lte: endOfMonth
+            }
+          }
+        ]
+      }
+    });
+
     return {
       allowed: true,
       unlimited: true,
       isPayPerUse: true,
       perInvoicePrice: planConfig.perInvoicePrice,
       perInvoicePriceFormatted: `R$ ${(planConfig.perInvoicePrice / 100).toFixed(2).replace('.', ',')}`,
-      current: 0,
-      used: 0,
+      current: invoiceCount,
+      used: invoiceCount,
       max: null,
       remaining: null,
       requiresPayment: true,

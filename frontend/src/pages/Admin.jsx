@@ -71,7 +71,8 @@ import {
   ListChecks,
   LayoutDashboard,
   Bell,
-  ChevronDown
+  ChevronDown,
+  LogOut
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -1944,7 +1945,7 @@ const SettingsTab = () => {
 // ==========================================
 
 export default function Admin() {
-  const { user, isAuthenticated, isLoading: authLoading } = useAuth();
+  const { user, isAuthenticated, isLoading: authLoading, logout } = useAuth();
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('overview');
   const [hasValidAdminSession, setHasValidAdminSession] = useState(false);
@@ -2099,6 +2100,54 @@ export default function Admin() {
             <div className="relative flex items-center gap-2 z-10">
               <RefreshCw className={`w-4 h-4 text-gray-400 group-hover:text-orange-400 transition-colors duration-500 ${statsFetching ? 'animate-spin' : ''}`} />
               <span className="group-hover:text-orange-100 transition-colors duration-500">Atualizar</span>
+            </div>
+          </motion.button>
+          <motion.button
+            onClick={() => {
+              // Clear admin session only (step-up authentication)
+              sessionStorage.removeItem('adminAuthenticated');
+              setHasValidAdminSession(false);
+              toast.success('Logout do painel administrativo realizado com sucesso');
+              // Redirect to admin login page (user remains logged in to main app)
+              navigate('/admin/login', { replace: true });
+            }}
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+            className="group relative overflow-hidden px-5 py-2.5 rounded-xl font-medium text-sm
+              bg-gradient-to-br from-[#1a1a2e]/80 to-[#0f0f1a]/80 backdrop-blur-sm
+              border border-white/10 text-gray-300
+              hover:border-red-500/60 hover:text-white
+              hover:bg-gradient-to-br hover:from-red-500/20 hover:via-red-600/10 hover:to-[#0f0f1a]/80
+              hover:shadow-xl hover:shadow-red-500/25
+              transition-all duration-500 ease-out"
+          >
+            {/* Animated gradient shimmer effect */}
+            <motion.div
+              className="absolute inset-0 bg-gradient-to-r from-transparent via-red-500/30 to-transparent opacity-0 group-hover:opacity-100"
+              initial={{ x: '-100%' }}
+              whileHover={{ x: '100%' }}
+              transition={{ duration: 1.5, repeat: Infinity, ease: 'linear' }}
+            />
+            
+            {/* Glow effect overlay */}
+            <div className="absolute inset-0 bg-gradient-to-br from-red-500/0 via-red-500/0 to-red-500/20 opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
+            
+            {/* Pulsing border glow */}
+            <motion.div
+              className="absolute inset-0 rounded-xl border-2 border-red-500/0 group-hover:border-red-500/40"
+              animate={{
+                boxShadow: [
+                  '0 0 0px rgba(239, 68, 68, 0)',
+                  '0 0 20px rgba(239, 68, 68, 0.3)',
+                  '0 0 0px rgba(239, 68, 68, 0)',
+                ],
+              }}
+              transition={{ duration: 2, repeat: Infinity, ease: 'easeInOut' }}
+            />
+            
+            <div className="relative flex items-center gap-2 z-10">
+              <LogOut className="w-4 h-4 text-gray-400 group-hover:text-red-400 transition-colors duration-500" />
+              <span className="group-hover:text-red-100 transition-colors duration-500">Sair</span>
             </div>
           </motion.button>
       </div>
