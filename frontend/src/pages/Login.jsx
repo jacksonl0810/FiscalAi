@@ -2,9 +2,10 @@ import React, { useState, useEffect } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "@/lib/AuthContext";
 import { motion, AnimatePresence } from "framer-motion";
-import { Sparkles, Mail, Lock, Loader2, Eye, EyeOff, User, ArrowRight, Shield, Zap, CheckCircle } from "lucide-react";
+import { Sparkles, Mail, Lock, Loader2, Eye, EyeOff, User, ArrowRight, Shield, Zap, CheckCircle, HelpCircle, X } from "lucide-react";
 import { toast } from "sonner";
 import apiClient from "@/api/client";
+import { authService } from "@/api/services";
 
 export default function Login() {
   const navigate = useNavigate();
@@ -16,6 +17,9 @@ export default function Login() {
   const [googleLoading, setGoogleLoading] = useState(false);
   const [googleConfigured, setGoogleConfigured] = useState(false);
   const [focusedField, setFocusedField] = useState(null);
+  const [showForgotPassword, setShowForgotPassword] = useState(false);
+  const [forgotPasswordEmail, setForgotPasswordEmail] = useState('');
+  const [forgotPasswordLoading, setForgotPasswordLoading] = useState(false);
   const [formData, setFormData] = useState({
     name: "",
     email: "",
@@ -145,10 +149,19 @@ export default function Login() {
       }
       
       try {
-        await register(formData.name, formData.email, formData.password);
-        toast.success("Conta criada com sucesso!");
-        // New users always go to pricing to select a plan
-        navigate("/pricing");
+        const response = await register(formData.name, formData.email, formData.password);
+        
+        // Check if email verification is required
+        if (response?.requiresEmailVerification) {
+          toast.success("Conta criada! Verifique seu email para ativar sua conta.", {
+            duration: 5000
+          });
+          navigate(`/verify-email?email=${encodeURIComponent(formData.email)}`);
+        } else {
+          toast.success("Conta criada com sucesso!");
+          // New users always go to pricing to select a plan
+          navigate("/pricing");
+        }
       } catch (error) {
         const { handleApiError } = await import('@/utils/errorHandler');
         await handleApiError(error, { operation: 'register' });
@@ -170,6 +183,15 @@ export default function Login() {
         
         navigate(redirectPath);
       } catch (error) {
+        // Check if it's an email verification error
+        const errorData = error?.response?.data;
+        if (errorData?.code === 'EMAIL_NOT_VERIFIED') {
+          toast.error(errorData.message || 'Por favor, verifique seu email antes de fazer login.');
+          // Redirect to verification page with email pre-filled
+          navigate(`/verify-email?email=${encodeURIComponent(formData.email)}`);
+          return;
+        }
+        
         const { handleApiError } = await import('@/utils/errorHandler');
         await handleApiError(error, { operation: 'login' });
       }
@@ -185,6 +207,31 @@ export default function Login() {
       password: "",
       confirmPassword: ""
     });
+  };
+
+  const handleForgotPassword = async () => {
+    if (!forgotPasswordEmail) {
+      toast.error('Por favor, informe seu email');
+      return;
+    }
+
+    if (!forgotPasswordEmail.includes('@')) {
+      toast.error('Por favor, informe um email válido');
+      return;
+    }
+
+    setForgotPasswordLoading(true);
+    try {
+      await authService.forgotPassword(forgotPasswordEmail);
+      toast.success('Email de recuperação enviado! Verifique sua caixa de entrada.');
+      setShowForgotPassword(false);
+      setForgotPasswordEmail('');
+    } catch (error) {
+      const errorMessage = error?.response?.data?.message || error?.message || 'Erro ao enviar email de recuperação';
+      toast.error(errorMessage);
+    } finally {
+      setForgotPasswordLoading(false);
+    }
   };
 
   const features = [
@@ -415,9 +462,20 @@ export default function Login() {
 
                   {/* Password */}
                   <div className="space-y-2">
-                    <label className="block text-sm font-medium text-slate-400 mb-2">
-                      Senha
-                    </label>
+                    <div className="flex items-center justify-between mb-2">
+                      <label className="block text-sm font-medium text-slate-400">
+                        Senha
+                      </label>
+                      {!isRegister && (
+                        <button
+                          type="button"
+                          onClick={() => setShowForgotPassword(true)}
+                          className="text-sm text-orange-400 hover:text-orange-300 transition-colors"
+                        >
+                          Esqueceu a senha?
+                        </button>
+                      )}
+                    </div>
                     <div className={`relative group rounded-2xl transition-all duration-300 ${
                       focusedField === 'password' ? 'ring-2 ring-orange-500/50' : ''
                     }`}>
@@ -595,23 +653,134 @@ export default function Login() {
               © {new Date().getFullYear()} MAY Fiscal AI. Todos os direitos reservados.
             </p>
             <div className="flex items-center justify-center gap-4 mt-3 text-xs text-slate-600">
-              <a href="#" className="hover:text-orange-400 transition-colors">Termos</a>
+              <a href="/termos" className="hover:text-orange-400 transition-colors">Termos</a>
               <span>•</span>
-              <a href="#" className="hover:text-orange-400 transition-colors">Privacidade</a>
+              <a href="/privacidade" className="hover:text-orange-400 transition-colors">Privacidade</a>
               <span>•</span>
-              <a href="#" className="hover:text-orange-400 transition-colors">Suporte</a>
-              <span>•</span>
-              <button 
-                onClick={() => navigate('/admin/login')} 
-                className="hover:text-violet-400 transition-colors flex items-center gap-1"
-              >
-                <Shield className="w-3 h-3" />
-                Admin
-              </button>
+              <a href="/suporte" className="hover:text-orange-400 transition-colors">Suporte</a>
             </div>
           </div>
         </motion.div>
       </div>
+
+      {/* Forgot Password Modal */}
+      <AnimatePresence>
+        {showForgotPassword && (
+          <>
+            {/* Backdrop */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowForgotPassword(false)}
+              className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50"
+            />
+            
+            {/* Modal */}
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="fixed inset-0 z-50 flex items-center justify-center p-4"
+            >
+              <div className="relative w-full max-w-md">
+                {/* Card glow */}
+                <div className="absolute -inset-1 bg-gradient-to-br from-orange-500/20 via-amber-500/10 to-orange-500/20 rounded-[32px] blur-2xl opacity-40" />
+                
+                <div className="relative bg-gradient-to-b from-[#0f1014] via-[#0c0d10] to-[#09090c] rounded-3xl border border-slate-700/40 overflow-hidden">
+                  {/* Top accent line */}
+                  <div className="absolute top-0 left-8 right-8 h-px bg-gradient-to-r from-transparent via-orange-500/40 to-transparent" />
+                  
+                  <div className="relative p-8">
+                    {/* Header */}
+                    <div className="flex items-center justify-between mb-6">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-xl bg-orange-500/20 flex items-center justify-center">
+                          <HelpCircle className="w-5 h-5 text-orange-400" />
+                        </div>
+                        <div>
+                          <h3 className="text-xl font-bold text-white">Esqueceu sua senha?</h3>
+                          <p className="text-sm text-slate-500">Recupere o acesso à sua conta</p>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => {
+                          setShowForgotPassword(false);
+                          setForgotPasswordEmail('');
+                        }}
+                        className="text-slate-500 hover:text-white transition-colors"
+                      >
+                        <X className="w-5 h-5" />
+                      </button>
+                    </div>
+
+                    {/* Content */}
+                    <div className="space-y-4">
+                      <p className="text-slate-400 text-sm">
+                        Digite seu email cadastrado e enviaremos um link para redefinir sua senha.
+                      </p>
+                      
+                      <div className="space-y-2">
+                        <label className="block text-sm font-medium text-slate-400">
+                          Email
+                        </label>
+                        <div className="relative group rounded-2xl transition-all duration-300">
+                          <div className="absolute inset-0 bg-gradient-to-r from-orange-500/10 to-amber-500/10 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity" />
+                          <div className="relative flex items-center">
+                            <Mail className="absolute left-4 w-5 h-5 text-slate-500" />
+                            <input
+                              type="email"
+                              value={forgotPasswordEmail}
+                              onChange={(e) => setForgotPasswordEmail(e.target.value)}
+                              placeholder="seu@email.com"
+                              className="w-full px-4 py-4 pl-12 bg-slate-800/30 border border-slate-700/50 rounded-2xl text-white placeholder-slate-600 focus:outline-none focus:border-orange-500/50 transition-all"
+                              autoFocus
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Buttons */}
+                      <div className="flex gap-3 pt-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowForgotPassword(false);
+                            setForgotPasswordEmail('');
+                          }}
+                          className="flex-1 py-3 px-6 rounded-2xl text-base font-medium bg-slate-800/30 hover:bg-slate-700/30 text-slate-300 hover:text-white border border-slate-700/50 transition-all"
+                        >
+                          Cancelar
+                        </button>
+                        <motion.button
+                          type="button"
+                          onClick={handleForgotPassword}
+                          disabled={forgotPasswordLoading || !forgotPasswordEmail}
+                          whileHover={{ scale: forgotPasswordLoading ? 1 : 1.01 }}
+                          whileTap={{ scale: forgotPasswordLoading ? 1 : 0.99 }}
+                          className="flex-1 py-3 px-6 rounded-2xl text-base font-semibold bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 text-white shadow-xl shadow-orange-500/25 transition-all duration-300 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {forgotPasswordLoading ? (
+                            <>
+                              <Loader2 className="w-5 h-5 animate-spin" />
+                              Enviando...
+                            </>
+                          ) : (
+                            <>
+                              Enviar
+                              <ArrowRight className="w-5 h-5" />
+                            </>
+                          )}
+                        </motion.button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

@@ -678,11 +678,50 @@ const UsersTab = () => {
           {selectedUsers.length > 0 && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="outline" className="border-orange-500/30 text-orange-400">
-                  <ListChecks className="w-4 h-4 mr-2" />
-                  Ações em Massa ({selectedUsers.length})
-                  <ChevronDown className="w-4 h-4 ml-2" />
-                </Button>
+                <motion.button
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  className="group relative overflow-hidden px-5 py-2.5 h-11 rounded-xl font-medium text-sm
+                    bg-gradient-to-br from-orange-500/20 via-orange-500/10 to-orange-500/5 backdrop-blur-sm
+                    border border-orange-500/40 text-orange-300
+                    hover:border-orange-500/60 hover:text-orange-200
+                    hover:bg-gradient-to-br hover:from-orange-500/30 hover:via-orange-600/15 hover:to-orange-500/10
+                    hover:shadow-xl hover:shadow-orange-500/30
+                    transition-all duration-500 ease-out
+                    flex items-center gap-2"
+                >
+                  {/* Animated gradient shimmer effect */}
+                  <motion.div
+                    className="absolute inset-0 bg-gradient-to-r from-transparent via-orange-400/40 to-transparent opacity-0 group-hover:opacity-100"
+                    initial={{ x: '-100%' }}
+                    whileHover={{ x: '100%' }}
+                    transition={{ duration: 1.5, repeat: Infinity, ease: 'linear' }}
+                  />
+                  
+                  {/* Glow effect overlay */}
+                  <div className="absolute inset-0 bg-gradient-to-br from-orange-500/0 via-orange-500/10 to-orange-500/20 opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
+                  
+                  {/* Pulsing border glow */}
+                  <motion.div
+                    className="absolute inset-0 rounded-xl border-2 border-orange-500/40"
+                    animate={{
+                      boxShadow: [
+                        '0 0 0px rgba(249, 115, 22, 0.3)',
+                        '0 0 20px rgba(249, 115, 22, 0.5)',
+                        '0 0 0px rgba(249, 115, 22, 0.3)',
+                      ],
+                    }}
+                    transition={{ duration: 2, repeat: Infinity, ease: 'easeInOut' }}
+                  />
+                  
+                  <div className="relative flex items-center gap-2 z-10">
+                    <ListChecks className="w-4 h-4 text-orange-400 group-hover:text-orange-300 transition-colors duration-500" />
+                    <span className="group-hover:text-orange-100 transition-colors duration-500">
+                      Ações em Massa ({selectedUsers.length})
+                    </span>
+                    <ChevronDown className="w-4 h-4 text-orange-400/70 group-hover:text-orange-300 transition-colors duration-500" />
+                  </div>
+                </motion.button>
               </DropdownMenuTrigger>
               <DropdownMenuContent className="bg-[#1a1a2e] border-white/10">
                 <DropdownMenuLabel className="text-gray-400">Ações em Massa</DropdownMenuLabel>

@@ -10,7 +10,10 @@ import {
   ChevronDown,
   ChevronUp,
   User,
-  Save
+  Save,
+  Lock,
+  Eye,
+  EyeOff
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -36,6 +39,16 @@ export default function Settings() {
   });
 
   const [cpfCnpj, setCpfCnpj] = useState('');
+  const [passwordData, setPasswordData] = useState({
+    currentPassword: '',
+    newPassword: '',
+    confirmPassword: ''
+  });
+  const [showPasswords, setShowPasswords] = useState({
+    current: false,
+    new: false,
+    confirm: false
+  });
 
   useEffect(() => {
     if (settings) {
@@ -81,6 +94,22 @@ export default function Settings() {
     }
   });
 
+  const changePasswordMutation = useMutation({
+    mutationFn: ({ currentPassword, newPassword }) => authService.changePassword(currentPassword, newPassword),
+    onSuccess: () => {
+      toast.success('Senha alterada com sucesso');
+      setPasswordData({
+        currentPassword: '',
+        newPassword: '',
+        confirmPassword: ''
+      });
+    },
+    onError: async (error) => {
+      const { handleApiError } = await import('@/utils/errorHandler');
+      await handleApiError(error, { operation: 'change_password' });
+    }
+  });
+
   const handleCpfCnpjChange = (value) => {
     // Remove non-digits
     const digits = value.replace(/\D/g, '');
@@ -114,6 +143,33 @@ export default function Settings() {
       return;
     }
     await updateProfileMutation.mutateAsync({ cpf_cnpj: digits });
+  };
+
+  const handleChangePassword = async () => {
+    if (!passwordData.currentPassword || !passwordData.newPassword || !passwordData.confirmPassword) {
+      toast.error('Por favor, preencha todos os campos');
+      return;
+    }
+
+    if (passwordData.newPassword.length < 6) {
+      toast.error('A nova senha deve ter pelo menos 6 caracteres');
+      return;
+    }
+
+    if (passwordData.newPassword !== passwordData.confirmPassword) {
+      toast.error('As senhas não coincidem');
+      return;
+    }
+
+    if (passwordData.currentPassword === passwordData.newPassword) {
+      toast.error('A nova senha deve ser diferente da senha atual');
+      return;
+    }
+
+    await changePasswordMutation.mutateAsync({
+      currentPassword: passwordData.currentPassword,
+      newPassword: passwordData.newPassword
+    });
   };
 
   const handleThemeChange = async (theme) => {
@@ -324,11 +380,117 @@ export default function Settings() {
         </div>
       </motion.div>
 
+      {/* Change Password */}
+      {user && !user.googleId && (
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.3 }}
+          className="glass-card rounded-2xl p-6"
+        >
+          <div className="flex items-center gap-3 mb-6">
+            <div className="w-10 h-10 rounded-xl bg-red-500/20 flex items-center justify-center">
+              <Lock className="w-5 h-5 text-red-400" />
+            </div>
+            <div>
+              <h2 className="text-lg font-semibold text-white">Alterar Senha</h2>
+              <p className="text-sm text-gray-500">Atualize sua senha de acesso</p>
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-2">
+                Senha Atual
+              </label>
+              <div className="relative">
+                <Input
+                  type={showPasswords.current ? "text" : "password"}
+                  value={passwordData.currentPassword}
+                  onChange={(e) => setPasswordData(prev => ({ ...prev, currentPassword: e.target.value }))}
+                  placeholder="Digite sua senha atual"
+                  className="w-full bg-white/5 border-white/10 text-white placeholder:text-gray-500 pr-10"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPasswords(prev => ({ ...prev, current: !prev.current }))}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white transition-colors"
+                >
+                  {showPasswords.current ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-2">
+                Nova Senha
+              </label>
+              <div className="relative">
+                <Input
+                  type={showPasswords.new ? "text" : "password"}
+                  value={passwordData.newPassword}
+                  onChange={(e) => setPasswordData(prev => ({ ...prev, newPassword: e.target.value }))}
+                  placeholder="Mínimo 6 caracteres"
+                  className="w-full bg-white/5 border-white/10 text-white placeholder:text-gray-500 pr-10"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPasswords(prev => ({ ...prev, new: !prev.new }))}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white transition-colors"
+                >
+                  {showPasswords.new ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-2">
+                Confirmar Nova Senha
+              </label>
+              <div className="relative">
+                <Input
+                  type={showPasswords.confirm ? "text" : "password"}
+                  value={passwordData.confirmPassword}
+                  onChange={(e) => setPasswordData(prev => ({ ...prev, confirmPassword: e.target.value }))}
+                  placeholder="Digite a nova senha novamente"
+                  className="w-full bg-white/5 border-white/10 text-white placeholder:text-gray-500 pr-10"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPasswords(prev => ({ ...prev, confirm: !prev.confirm }))}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white transition-colors"
+                >
+                  {showPasswords.confirm ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+            </div>
+
+            <Button
+              onClick={handleChangePassword}
+              disabled={changePasswordMutation.isPending || !passwordData.currentPassword || !passwordData.newPassword || !passwordData.confirmPassword}
+              className="w-full bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white"
+            >
+              {changePasswordMutation.isPending ? (
+                <span className="flex items-center justify-center gap-2">
+                  <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  Alterando senha...
+                </span>
+              ) : (
+                <span className="flex items-center justify-center gap-2">
+                  <Lock className="w-4 h-4" />
+                  Alterar Senha
+                </span>
+              )}
+            </Button>
+          </div>
+        </motion.div>
+      )}
+
       {/* FAQ */}
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.3 }}
+        transition={{ delay: user && !user.googleId ? 0.35 : 0.3 }}
         className="glass-card rounded-2xl p-6"
       >
         <div className="flex items-center gap-3 mb-6">

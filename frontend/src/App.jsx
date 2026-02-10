@@ -19,6 +19,11 @@ import SubscriptionPending from '@/pages/SubscriptionPending';
 import PaymentDelinquent from '@/pages/PaymentDelinquent';
 import CheckoutSubscription from '@/pages/CheckoutSubscription';
 import GoogleCallback from '@/pages/GoogleCallback';
+import ResetPassword from '@/pages/ResetPassword';
+import VerifyEmail from '@/pages/VerifyEmail';
+import Terms from '@/pages/Terms';
+import Privacy from '@/pages/Privacy';
+import Support from '@/pages/Support';
 
 const { Pages, Layout, mainPage } = pagesConfig;
 const mainPageKey = mainPage ?? Object.keys(Pages)[0];
@@ -137,6 +142,11 @@ const AppRoutes = () => {
       <Route path="/payment-success" element={<PaymentSuccess />} />
       <Route path="/payment-failed" element={<PaymentFailed />} />
       <Route path="/auth/google/callback" element={<GoogleCallback />} />
+      <Route path="/reset-password" element={<ResetPassword />} />
+      <Route path="/verify-email" element={<VerifyEmail />} />
+      <Route path="/termos" element={<Terms />} />
+      <Route path="/privacidade" element={<Privacy />} />
+      <Route path="/suporte" element={<Support />} />
       
       {/* Subscription status routes (semi-protected) */}
       <Route path="/subscription-blocked" element={<SubscriptionBlocked />} />

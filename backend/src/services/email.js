@@ -6,9 +6,13 @@
  * - Payment confirmation
  * - Invoice issued/rejected
  * - Subscription status changes
+ * - Password reset
+ * 
+ * Supports both Resend API (preferred) and SMTP via Nodemailer
  */
 
 import nodemailer from 'nodemailer';
+import { Resend } from 'resend';
 
 // Email configuration from environment variables
 const EMAIL_HOST = process.env.EMAIL_HOST || 'smtp.gmail.com';
@@ -18,21 +22,37 @@ const EMAIL_PASS = process.env.EMAIL_PASS;
 const EMAIL_FROM = process.env.EMAIL_FROM || 'MAY <noreply@may.com.br>';
 const EMAIL_ENABLED = process.env.EMAIL_ENABLED === 'true';
 
-// Create transporter (reusable)
+// Resend API configuration (preferred)
+const RESEND_API_KEY = process.env.RESEND_API_KEY;
+const USE_RESEND_API = !!RESEND_API_KEY;
+
+// Initialize Resend if API key is provided
+let resend = null;
+if (USE_RESEND_API) {
+  resend = new Resend(RESEND_API_KEY);
+  console.log('[Email] Using Resend API for email delivery');
+}
+
+// Create SMTP transporter (reusable, fallback)
 let transporter = null;
 
 /**
  * Check if email service is configured
  */
 export function isEmailConfigured() {
+  // Resend API takes priority
+  if (USE_RESEND_API) {
+    return EMAIL_ENABLED && !!RESEND_API_KEY;
+  }
+  // Fallback to SMTP
   return EMAIL_ENABLED && EMAIL_USER && EMAIL_PASS;
 }
 
 /**
- * Get or create email transporter
+ * Get or create SMTP email transporter (fallback)
  */
 function getTransporter() {
-  if (!transporter && isEmailConfigured()) {
+  if (!transporter && !USE_RESEND_API && EMAIL_USER && EMAIL_PASS) {
     transporter = nodemailer.createTransport({
       host: EMAIL_HOST,
       port: EMAIL_PORT,
@@ -60,17 +80,44 @@ export async function sendEmail({ to, subject, html, text }) {
     return { success: false, reason: 'Email service not configured' };
   }
 
+  const plainText = text || html.replace(/<[^>]*>/g, ''); // Strip HTML for plain text
+
   try {
+    // Use Resend API if configured (preferred)
+    if (USE_RESEND_API && resend) {
+      const { data, error } = await resend.emails.send({
+        from: EMAIL_FROM,
+        to: Array.isArray(to) ? to : [to],
+        subject,
+        html,
+        text: plainText
+      });
+
+      if (error) {
+        console.error('[Email] Resend API error:', { to, subject, error: error.message });
+        return { success: false, error: error.message };
+      }
+
+      console.log('[Email] Sent successfully via Resend:', { to, subject, id: data?.id });
+      return { success: true, messageId: data?.id };
+    }
+
+    // Fallback to SMTP (nodemailer)
     const transport = getTransporter();
+    if (!transport) {
+      console.error('[Email] SMTP transporter not available');
+      return { success: false, reason: 'SMTP transporter not configured' };
+    }
+
     const result = await transport.sendMail({
       from: EMAIL_FROM,
       to,
       subject,
       html,
-      text: text || html.replace(/<[^>]*>/g, '') // Strip HTML for plain text
+      text: plainText
     });
 
-    console.log('[Email] Sent successfully:', { to, subject, messageId: result.messageId });
+    console.log('[Email] Sent successfully via SMTP:', { to, subject, messageId: result.messageId });
     return { success: true, messageId: result.messageId };
   } catch (error) {
     console.error('[Email] Failed to send:', { to, subject, error: error.message });
@@ -357,6 +404,95 @@ export async function sendSubscriptionStatusEmail(user, status, details = {}) {
   });
 }
 
+/**
+ * Send password reset email
+ */
+export async function sendPasswordResetEmail(user, resetUrl) {
+  const content = `
+    <h2>Recuperação de Senha 🔐</h2>
+    <p>Olá <strong>${user.name || 'Usuário'}</strong>,</p>
+    <p>Recebemos uma solicitação para redefinir a senha da sua conta MAY.</p>
+    
+    <div class="highlight">
+      <strong>Clique no botão abaixo para criar uma nova senha:</strong>
+      <p style="margin: 5px 0 0 0; color: #888;">Este link expira em <strong>1 hora</strong>.</p>
+    </div>
+    
+    <a href="${resetUrl}" class="button">Redefinir Minha Senha</a>
+    
+    <p style="color: #888; font-size: 14px; margin-top: 30px;">
+      Se você não solicitou a recuperação de senha, ignore este email. 
+      Sua conta permanece segura.
+    </p>
+    
+    <div class="details" style="margin-top: 20px;">
+      <p style="margin: 0; font-size: 12px; color: #666;">
+        <strong>Por questões de segurança:</strong>
+      </p>
+      <ul style="margin: 10px 0; padding-left: 20px; font-size: 12px; color: #666;">
+        <li>Nunca compartilhe este link com ninguém</li>
+        <li>A MAY nunca solicita sua senha por email</li>
+        <li>Este link é de uso único</li>
+      </ul>
+    </div>
+    
+    <p style="color: #666; font-size: 12px; margin-top: 20px;">
+      Caso o botão não funcione, copie e cole o link abaixo no seu navegador:<br>
+      <span style="color: #f97316; word-break: break-all;">${resetUrl}</span>
+    </p>
+  `;
+
+  return sendEmail({
+    to: user.email,
+    subject: '🔐 Recuperação de Senha - MAY',
+    html: emailTemplate(content, 'Recuperação de Senha')
+  });
+}
+
+/**
+ * Send email verification email
+ */
+export async function sendEmailVerificationEmail(user, verificationUrl) {
+  const content = `
+    <h2>Verifique seu Email 📧</h2>
+    <p>Olá <strong>${user.name || 'Usuário'}</strong>,</p>
+    <p>Obrigado por se cadastrar na MAY! Para completar seu cadastro e garantir a segurança da sua conta, precisamos verificar seu endereço de email.</p>
+    
+    <div class="highlight">
+      <strong>Clique no botão abaixo para verificar seu email:</strong>
+      <p style="margin: 5px 0 0 0; color: #888;">Este link expira em <strong>24 horas</strong>.</p>
+    </div>
+    
+    <a href="${verificationUrl}" class="button">Verificar Meu Email</a>
+    
+    <p style="color: #888; font-size: 14px; margin-top: 30px;">
+      Se você não criou uma conta na MAY, ignore este email.
+    </p>
+    
+    <div class="details" style="margin-top: 20px;">
+      <p style="margin: 0; font-size: 12px; color: #666;">
+        <strong>Por que verificar seu email?</strong>
+      </p>
+      <ul style="margin: 10px 0; padding-left: 20px; font-size: 12px; color: #666;">
+        <li>Protege sua conta contra acessos não autorizados</li>
+        <li>Permite recuperação de senha segura</li>
+        <li>Garante que você receba notificações importantes</li>
+      </ul>
+    </div>
+    
+    <p style="color: #666; font-size: 12px; margin-top: 20px;">
+      Caso o botão não funcione, copie e cole o link abaixo no seu navegador:<br>
+      <span style="color: #f97316; word-break: break-all;">${verificationUrl}</span>
+    </p>
+  `;
+
+  return sendEmail({
+    to: user.email,
+    subject: '📧 Verifique seu Email - MAY',
+    html: emailTemplate(content, 'Verificação de Email')
+  });
+}
+
 export default {
   isEmailConfigured,
   sendEmail,
@@ -364,5 +500,7 @@ export default {
   sendPaymentConfirmationEmail,
   sendInvoiceIssuedEmail,
   sendInvoiceRejectedEmail,
-  sendSubscriptionStatusEmail
+  sendSubscriptionStatusEmail,
+  sendPasswordResetEmail,
+  sendEmailVerificationEmail
 };

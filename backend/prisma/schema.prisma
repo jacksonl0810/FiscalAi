@@ -45,15 +45,17 @@ model User {
   updatedAt DateTime @updatedAt @map("updated_at")
 
   // Relations
-  companies            Company[]
-  notifications        Notification[]
-  settings             UserSettings?
-  refreshTokens        RefreshToken[]
-  subscription         Subscription?
-  conversationMessages ConversationMessage[]
-  invoiceUsages        InvoiceUsage[]
-  accountantReviews    AccountantReview[]
-  clients              Client[]
+  companies                 Company[]
+  notifications             Notification[]
+  settings                  UserSettings?
+  refreshTokens             RefreshToken[]
+  passwordResetTokens       PasswordResetToken[]
+  emailVerificationTokens   EmailVerificationToken[]
+  subscription              Subscription?
+  conversationMessages      ConversationMessage[]
+  invoiceUsages             InvoiceUsage[]
+  accountantReviews         AccountantReview[]
+  clients                   Client[]
 
   @@map("users")
 }
@@ -68,6 +70,36 @@ model RefreshToken {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("refresh_tokens")
+}
+
+model PasswordResetToken {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  userId    String   @map("user_id")
+  expiresAt DateTime @map("expires_at")
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([token])
+  @@index([userId])
+  @@map("password_reset_tokens")
+}
+
+model EmailVerificationToken {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  userId    String   @map("user_id")
+  expiresAt DateTime @map("expires_at")
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([token])
+  @@index([userId])
+  @@map("email_verification_tokens")
 }
 
 model Company {
