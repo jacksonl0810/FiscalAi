@@ -12,11 +12,83 @@
  * Error knowledge base - maps common errors to user-friendly messages
  */
 const ERROR_KNOWLEDGE_BASE = {
-  // Authentication errors
-  '401': {
-    category: 'authentication',
+  // ==========================================
+  // USER AUTHENTICATION ERRORS (Login/Registration)
+  // ==========================================
+  'INVALID_CREDENTIALS': {
+    category: 'user_auth',
+    message: 'Email ou senha incorretos',
+    explanation: 'As credenciais informadas não correspondem a nenhuma conta cadastrada.',
+    action: 'Verifique se digitou o email e senha corretamente. Se esqueceu sua senha, use "Esqueceu a senha?" para recuperar.'
+  },
+  'invalid email or password': {
+    category: 'user_auth',
+    message: 'Email ou senha incorretos',
+    explanation: 'As credenciais informadas não correspondem a nenhuma conta cadastrada.',
+    action: 'Verifique se digitou o email e senha corretamente. Se esqueceu sua senha, use a opção de recuperação.'
+  },
+  'USE_GOOGLE_LOGIN': {
+    category: 'user_auth',
+    message: 'Esta conta usa login do Google',
+    explanation: 'Esta conta foi criada usando o Google e não possui senha definida.',
+    action: 'Use o botão "Continuar com Google" para fazer login.'
+  },
+  'EMAIL_NOT_VERIFIED': {
+    category: 'user_auth',
+    message: 'Email ainda não verificado',
+    explanation: 'Você precisa verificar seu email antes de fazer login.',
+    action: 'Verifique sua caixa de entrada e clique no link de verificação. Se não recebeu, clique em "Reenviar email".'
+  },
+  'AUTH_RATE_LIMIT_EXCEEDED': {
+    category: 'user_auth',
+    message: 'Muitas tentativas de login',
+    explanation: 'Você excedeu o limite de tentativas de login.',
+    action: 'Aguarde alguns minutos antes de tentar novamente.'
+  },
+  'NO_TOKEN': {
+    category: 'user_auth',
+    message: 'Sessão expirada',
+    explanation: 'Sua sessão expirou ou você não está logado.',
+    action: 'Faça login novamente para continuar.'
+  },
+  'TOKEN_EXPIRED': {
+    category: 'user_auth',
+    message: 'Sessão expirada',
+    explanation: 'Sua sessão expirou por inatividade.',
+    action: 'Faça login novamente para continuar usando o sistema.'
+  },
+  'INVALID_TOKEN': {
+    category: 'user_auth',
+    message: 'Token inválido',
+    explanation: 'O link utilizado é inválido ou já foi usado.',
+    action: 'Solicite um novo link de verificação ou recuperação de senha.'
+  },
+  'USER_NOT_FOUND': {
+    category: 'user_auth',
+    message: 'Usuário não encontrado',
+    explanation: 'Não existe uma conta com este email cadastrado.',
+    action: 'Verifique o email digitado ou crie uma nova conta.'
+  },
+  'EMAIL_ALREADY_EXISTS': {
+    category: 'user_auth',
+    message: 'Email já cadastrado',
+    explanation: 'Já existe uma conta com este email.',
+    action: 'Use outro email ou faça login com a conta existente. Se esqueceu a senha, use a recuperação.'
+  },
+  'ALREADY_VERIFIED': {
+    category: 'user_auth',
+    message: 'Email já verificado',
+    explanation: 'Este email já foi verificado anteriormente.',
+    action: 'Você já pode fazer login normalmente.'
+  },
+  
+  // ==========================================
+  // FISCAL/PREFEITURA AUTHENTICATION ERRORS
+  // ==========================================
+  'MUNICIPALITY_AUTH_401': {
+    category: 'fiscal_auth',
     message: 'Erro de autenticação com a prefeitura',
-    explanation: 'As credenciais de acesso não foram aceitas.',
+    explanation: 'As credenciais de acesso não foram aceitas pelo sistema da prefeitura.',
     action: 'Verifique suas credenciais (certificado digital ou usuário/senha municipal) e tente novamente.'
   },
   '403': {
@@ -228,16 +300,80 @@ export function translateError(error, context = {}) {
   // Try to match against knowledge base
   let translation = null;
 
-  // Check status code first
-  if (statusCode && ERROR_KNOWLEDGE_BASE[statusCode.toString()]) {
-    translation = ERROR_KNOWLEDGE_BASE[statusCode.toString()];
+  // PRIORITY 1: Check specific error codes FIRST (most specific)
+  if (errorCode) {
+    // Check exact code match (case insensitive)
+    const upperCode = errorCode.toUpperCase();
+    if (ERROR_KNOWLEDGE_BASE[upperCode]) {
+      translation = ERROR_KNOWLEDGE_BASE[upperCode];
+    }
+    // Check normalized code
+    if (!translation) {
+      const codeKey = errorCode.toLowerCase().replace(/[^a-z0-9_]/g, '_');
+      if (ERROR_KNOWLEDGE_BASE[codeKey]) {
+        translation = ERROR_KNOWLEDGE_BASE[codeKey];
+      }
+    }
   }
 
-  // Check error codes
-  if (!translation && errorCode) {
-    const codeKey = errorCode.toLowerCase().replace(/[^a-z0-9_]/g, '_');
-    if (ERROR_KNOWLEDGE_BASE[codeKey]) {
-      translation = ERROR_KNOWLEDGE_BASE[codeKey];
+  // PRIORITY 2: Check error message exact match
+  if (!translation && errorMessage) {
+    // Check if message directly matches a key
+    const msgKey = errorMessage.toLowerCase();
+    if (ERROR_KNOWLEDGE_BASE[msgKey]) {
+      translation = ERROR_KNOWLEDGE_BASE[msgKey];
+    }
+  }
+
+  // PRIORITY 3: Check for user authentication patterns in message
+  if (!translation) {
+    if (normalizedMessage.includes('invalid email or password') || 
+        normalizedMessage.includes('email ou senha') ||
+        normalizedMessage.includes('credenciais inválidas')) {
+      translation = ERROR_KNOWLEDGE_BASE['invalid email or password'];
+    } else if (normalizedMessage.includes('email not verified') || 
+               normalizedMessage.includes('verifique seu email') ||
+               normalizedMessage.includes('verificar seu email')) {
+      translation = ERROR_KNOWLEDGE_BASE['EMAIL_NOT_VERIFIED'];
+    } else if (normalizedMessage.includes('google login') || 
+               normalizedMessage.includes('sign in with google') ||
+               normalizedMessage.includes('continuar com google')) {
+      translation = ERROR_KNOWLEDGE_BASE['USE_GOOGLE_LOGIN'];
+    } else if (normalizedMessage.includes('too many') || 
+               normalizedMessage.includes('rate limit') ||
+               normalizedMessage.includes('muitas tentativas')) {
+      translation = ERROR_KNOWLEDGE_BASE['AUTH_RATE_LIMIT_EXCEEDED'];
+    } else if (normalizedMessage.includes('token') && normalizedMessage.includes('expired')) {
+      translation = ERROR_KNOWLEDGE_BASE['TOKEN_EXPIRED'];
+    } else if (normalizedMessage.includes('no token') || normalizedMessage.includes('token required')) {
+      translation = ERROR_KNOWLEDGE_BASE['NO_TOKEN'];
+    } else if (normalizedMessage.includes('email already') || normalizedMessage.includes('já existe')) {
+      translation = ERROR_KNOWLEDGE_BASE['EMAIL_ALREADY_EXISTS'];
+    } else if (normalizedMessage.includes('user not found') || normalizedMessage.includes('usuário não encontrado')) {
+      translation = ERROR_KNOWLEDGE_BASE['USER_NOT_FOUND'];
+    }
+  }
+
+  // PRIORITY 4: Check if context indicates this is a fiscal/API error (not user auth)
+  const isFiscalContext = context.isFiscalOperation || 
+                          context.nuvemFiscal || 
+                          context.municipality ||
+                          normalizedMessage.includes('prefeitura') ||
+                          normalizedMessage.includes('nuvem fiscal') ||
+                          normalizedMessage.includes('nfse') ||
+                          normalizedMessage.includes('nota fiscal');
+
+  // PRIORITY 5: Status code - but only use fiscal messages if it's a fiscal context
+  if (!translation && statusCode) {
+    if (statusCode === 401) {
+      // 401 could be user auth OR fiscal auth - use context to decide
+      if (isFiscalContext) {
+        translation = ERROR_KNOWLEDGE_BASE['MUNICIPALITY_AUTH_401'];
+      } else {
+        translation = ERROR_KNOWLEDGE_BASE['INVALID_CREDENTIALS'];
+      }
+    } else if (ERROR_KNOWLEDGE_BASE[statusCode.toString()]) {
+      translation = ERROR_KNOWLEDGE_BASE[statusCode.toString()];
     }
   }
 

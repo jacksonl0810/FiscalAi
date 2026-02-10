@@ -27,21 +27,22 @@ export const apiLimiter = rateLimit({
 });
 
 /**
- * Strict rate limiter for authentication endpoints
- * 5 requests per 15 minutes per IP (prevents brute force)
+ * Rate limiter for authentication endpoints
+ * 20 requests per 15 minutes per IP (prevents brute force while allowing reasonable usage)
  */
 export const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 5, // Limit each IP to 5 login attempts per windowMs
+  max: 20, // Limit each IP to 20 auth attempts per windowMs
   message: {
     status: 'error',
-    message: 'Muitas tentativas de login. Por favor, tente novamente em 15 minutos.',
+    message: 'Muitas tentativas de login. Por favor, tente novamente em alguns minutos.',
     code: 'AUTH_RATE_LIMIT_EXCEEDED'
   },
   standardHeaders: true,
   legacyHeaders: false,
   skip: (req) => {
-    return process.env.NODE_ENV === 'test';
+    // Skip rate limiting in test or development environment
+    return process.env.NODE_ENV === 'test' || process.env.NODE_ENV === 'development';
   }
 });
 

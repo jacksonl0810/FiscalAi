@@ -62,6 +62,11 @@ apiClient.interceptors.request.use(
       '/auth/refresh',
       '/auth/google/check',
       '/auth/google',
+      '/auth/verify-email',
+      '/auth/resend-verification',
+      '/auth/forgot-password',
+      '/auth/reset-password',
+      '/assistant/translate-error',
     ];
     
     const isPublicEndpoint = publicEndpoints.some(endpoint => 
@@ -104,6 +109,11 @@ apiClient.interceptors.response.use(
         '/auth/register',
         '/auth/login',
         '/auth/refresh',
+        '/auth/verify-email',
+        '/auth/resend-verification',
+        '/auth/forgot-password',
+        '/auth/reset-password',
+        '/assistant/translate-error',
       ];
       
       const isPublicEndpoint = publicEndpoints.some(endpoint => 
@@ -112,10 +122,11 @@ apiClient.interceptors.response.use(
       
       // For public endpoints, don't try to refresh - just reject
       if (isPublicEndpoint) {
+        const errorData = error.response?.data as { message?: string; code?: string } | undefined;
         return Promise.reject({
-          message: error.response?.data?.message || 'Not authenticated',
+          message: errorData?.message || 'Not authenticated',
           status: 401,
-          code: error.response?.data?.code || 'NOT_AUTHENTICATED',
+          code: errorData?.code || 'NOT_AUTHENTICATED',
         });
       }
       

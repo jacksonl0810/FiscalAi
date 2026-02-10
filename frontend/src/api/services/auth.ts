@@ -111,6 +111,31 @@ export const authService = {
     const response = await apiClient.get<{ configured: boolean }>('/auth/google/check');
     return response.data;
   },
+
+  /**
+   * Verify email with token
+   */
+  async verifyEmail(token: string): Promise<AuthResponse> {
+    const response = await apiClient.post<AuthResponse>('/auth/verify-email', { token });
+    const { token: accessToken, refreshToken } = response.data;
+    
+    if (accessToken) {
+      setToken(accessToken);
+    }
+    if (refreshToken) {
+      setRefreshToken(refreshToken);
+    }
+    
+    return response.data;
+  },
+
+  /**
+   * Resend email verification
+   */
+  async resendVerification(email: string): Promise<{ message: string; alreadyVerified?: boolean }> {
+    const response = await apiClient.post<{ message: string; alreadyVerified?: boolean }>('/auth/resend-verification', { email });
+    return response.data;
+  },
 };
 
 export default authService;

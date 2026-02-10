@@ -55,6 +55,37 @@ const upload = multer({
 
 const router = express.Router();
 
+/**
+ * POST /api/assistant/translate-error
+ * Translate technical errors to user-friendly Portuguese messages
+ * Used by AI to explain errors in a conversational way
+ * 
+ * PUBLIC ENDPOINT - No authentication required (needed for error translation during login/registration)
+ */
+router.post('/translate-error', [
+  body('error').notEmpty().withMessage('Error message or object is required')
+], asyncHandler(async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({ status: 'error', message: 'Validation failed', errors: errors.array() });
+  }
+
+  const { error, context = {} } = req.body;
+  
+  const { translateError, translateErrorForAI } = await import('../services/errorTranslationService.js');
+  
+  const translation = translateError(error, context);
+  const aiExplanation = translateErrorForAI(error, context);
+  
+  sendSuccess(res, 'Erro traduzido com sucesso', {
+    message: translation.message,
+    explanation: translation.explanation,
+    action: translation.action,
+    category: translation.category,
+    ai_explanation: aiExplanation
+  });
+}));
+
 // All routes require authentication and active subscription
 router.use(authenticate);
 router.use(asyncHandler(requireActiveSubscription));
@@ -1674,34 +1705,6 @@ router.delete('/history', asyncHandler(async (req, res) => {
   sendSuccess(res, 'Histórico de conversa limpo com sucesso');
 }));
 
-/**
- * POST /api/assistant/translate-error
- * Translate technical errors to user-friendly Portuguese messages
- * Used by AI to explain errors in a conversational way
- */
-router.post('/translate-error', [
-  body('error').notEmpty().withMessage('Error message or object is required')
-], asyncHandler(async (req, res) => {
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    return res.status(400).json({ status: 'error', message: 'Validation failed', errors: errors.array() });
-  }
-
-  const { error, context = {} } = req.body;
-  
-  const { translateError, translateErrorForAI } = await import('../services/errorTranslationService.js');
-  
-  const translation = translateError(error, context);
-  const aiExplanation = translateErrorForAI(error, context);
-  
-  sendSuccess(res, 'Erro traduzido com sucesso', {
-    message: translation.message,
-    explanation: translation.explanation,
-    action: translation.action,
-    category: translation.category,
-    ai_explanation: aiExplanation
-  });
-}));
 
 /**
  * POST /api/assistant/validate-issuance
