@@ -1,7 +1,7 @@
 // @ts-nocheck
 import React, { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import { createPageUrl } from "../utils";
 import { companiesService, notificationsService, settingsService, subscriptionsService } from "@/api/services";
 // Animation handled with CSS classes
@@ -71,10 +71,12 @@ export default function CompanySetup() {
   const fileInputRef = React.useRef(null);
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const location = useLocation();
 
   // Check if creating new company
-  const urlParams = new URLSearchParams(window.location.search);
+  const urlParams = new URLSearchParams(location.search);
   const isNewCompany = urlParams.get('new') === 'true';
+  const isEditMode = urlParams.get('edit') === 'true';
 
   // Get user settings to find active company
   const { data: settings } = useQuery({
@@ -96,7 +98,22 @@ export default function CompanySetup() {
   });
 
   // State to toggle between list view and edit form
-  const [showListView, setShowListView] = useState(!isNewCompany && !urlParams.get('edit'));
+  // Show list view by default, unless explicitly creating new company or editing
+  const [showListView, setShowListView] = useState(!isNewCompany && !isEditMode);
+
+  // Sync showListView with URL params when they change
+  useEffect(() => {
+    const currentUrlParams = new URLSearchParams(location.search);
+    const currentIsNew = currentUrlParams.get('new') === 'true';
+    const currentIsEdit = currentUrlParams.get('edit') === 'true';
+    
+    // Show list view if not in new or edit mode
+    if (!currentIsNew && !currentIsEdit) {
+      setShowListView(true);
+    } else {
+      setShowListView(false);
+    }
+  }, [location.search]);
 
   const { data: company, isLoading } = useQuery({
     queryKey: ['company', isNewCompany, settings?.active_company_id || 'default'],
@@ -365,7 +382,9 @@ export default function CompanySetup() {
           },
         });
         setTimeout(() => {
-          navigate(createPageUrl('CompanySetup'));
+          // Navigate to list view (remove ?new=true from URL)
+          setShowListView(true);
+          navigate(createPageUrl('CompanySetup'), { replace: true });
         }, 1500);
       }
     },
