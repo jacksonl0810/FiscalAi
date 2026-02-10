@@ -150,16 +150,12 @@ router.post('/register', authLimiter, [
   });
 
   // Send email verification email (async, don't block registration)
+  // Note: Welcome email is NOT sent here - user will receive welcome content after verification
   const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
   const verificationUrl = `${frontendUrl}/verify-email?token=${verificationToken}`;
   
   sendEmailVerificationEmail(user, verificationUrl).catch(err => {
     console.error('[Auth] Failed to send email verification:', err);
-  });
-
-  // Send welcome email (async, don't block registration)
-  sendWelcomeEmail(user).catch(err => {
-    console.error('[Auth] Failed to send welcome email:', err);
   });
 
   res.status(201).json({

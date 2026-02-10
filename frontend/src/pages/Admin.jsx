@@ -607,6 +607,7 @@ const UsersTab = () => {
   const { data, isLoading, isFetching, refetch } = useQuery({
     queryKey: ['admin-users', page, search],
     queryFn: () => adminService.getUsers({ page, limit: 10, search }),
+    staleTime: 0, // Always refetch on demand
   });
 
   const { data: userData } = useQuery({
@@ -753,7 +754,11 @@ const UsersTab = () => {
             </DropdownMenu>
           )}
         <motion.button
-          onClick={() => refetch()}
+          onClick={() => {
+            refetch();
+            toast.success('Lista de usuários atualizada!');
+          }}
+          disabled={isFetching}
           whileHover={{ scale: 1.05 }}
           whileTap={{ scale: 0.95 }}
           className="group relative overflow-hidden px-5 py-2.5 h-11 rounded-xl font-medium text-sm
@@ -762,6 +767,7 @@ const UsersTab = () => {
             hover:border-orange-500/60 hover:text-white
             hover:bg-gradient-to-br hover:from-orange-500/20 hover:via-orange-600/10 hover:to-[#0f0f1a]/80
             hover:shadow-xl hover:shadow-orange-500/25
+            disabled:opacity-70 disabled:cursor-not-allowed
             transition-all duration-500 ease-out"
         >
           {/* Animated gradient shimmer effect */}
@@ -951,6 +957,7 @@ const SubscriptionsTab = () => {
   const { data, isLoading, isFetching, refetch } = useQuery({
     queryKey: ['admin-subscriptions', page, statusFilter],
     queryFn: () => adminService.getSubscriptions({ page, limit: 10, status: statusFilter }),
+    staleTime: 0, // Always refetch on demand
   });
 
   const updateMutation = useMutation({
@@ -1079,7 +1086,10 @@ const SubscriptionsTab = () => {
             </DropdownMenu>
           )}
           <motion.button
-            onClick={() => refetch()}
+            onClick={() => {
+              refetch();
+              toast.success('Lista de assinaturas atualizada!');
+            }}
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
             disabled={isFetching}
@@ -1272,6 +1282,7 @@ const CompaniesTab = () => {
   const { data, isLoading, isFetching, refetch } = useQuery({
     queryKey: ['admin-companies', page, search],
     queryFn: () => adminService.getCompanies({ page, limit: 10, search }),
+    staleTime: 0, // Always refetch on demand
   });
 
   const companies = data?.companies || [];
@@ -1290,7 +1301,10 @@ const CompaniesTab = () => {
           />
         </div>
         <motion.button
-          onClick={() => refetch()}
+          onClick={() => {
+            refetch();
+            toast.success('Lista de empresas atualizada!');
+          }}
           whileHover={{ scale: 1.05 }}
           whileTap={{ scale: 0.95 }}
           disabled={isFetching}
@@ -1418,6 +1432,7 @@ const InvoicesTab = () => {
   const { data, isLoading, isFetching, refetch } = useQuery({
     queryKey: ['admin-invoices', page, statusFilter],
     queryFn: () => adminService.getInvoices({ page, limit: 10, status: statusFilter }),
+    staleTime: 0, // Always refetch on demand
   });
 
   const invoices = data?.invoices || [];
@@ -1482,7 +1497,10 @@ const InvoicesTab = () => {
           })}
         </div>
         <motion.button
-          onClick={() => refetch()}
+          onClick={() => {
+            refetch();
+            toast.success('Lista de notas fiscais atualizada!');
+          }}
           whileHover={{ scale: 1.05 }}
           whileTap={{ scale: 0.95 }}
           disabled={isFetching}
@@ -1597,15 +1615,17 @@ const InvoicesTab = () => {
 // ==========================================
 
 const SettingsTab = () => {
-  const { data: settings, isLoading: settingsLoading, refetch: refetchSettings } = useQuery({
+  const { data: settings, isLoading: settingsLoading, isFetching: settingsFetching, refetch: refetchSettings } = useQuery({
     queryKey: ['admin-settings'],
     queryFn: adminService.getSettings,
+    staleTime: 0, // Always refetch on demand
   });
 
-  const { data: health, isLoading: healthLoading, refetch: refetchHealth } = useQuery({
+  const { data: health, isLoading: healthLoading, isFetching: healthFetching, refetch: refetchHealth } = useQuery({
     queryKey: ['admin-health'],
     queryFn: adminService.getHealth,
     refetchInterval: 30000, // Refresh every 30 seconds
+    staleTime: 0, // Always refetch on demand
   });
 
   const handleExport = async (type) => {
@@ -1699,14 +1719,17 @@ const SettingsTab = () => {
             </div>
           </div>
           <motion.button
-            onClick={() => refetchHealth()}
-            disabled={healthLoading}
+            onClick={() => {
+              refetchHealth();
+              toast.success('Status do sistema atualizado!');
+            }}
+            disabled={healthFetching}
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
             className="relative group overflow-hidden p-2.5 rounded-xl bg-gradient-to-r from-orange-500/10 via-orange-500/5 to-transparent border border-orange-500/20 hover:border-orange-500/40 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <div className="absolute inset-0 bg-gradient-to-r from-orange-500/0 via-orange-500/10 to-orange-500/0 opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
-            <RefreshCw className={`relative w-4 h-4 text-orange-400 group-hover:text-orange-300 transition-colors duration-300 ${healthLoading ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`relative w-4 h-4 text-orange-400 group-hover:text-orange-300 transition-colors duration-300 ${healthFetching ? 'animate-spin' : ''}`} />
           </motion.button>
         </div>
 
@@ -1777,14 +1800,17 @@ const SettingsTab = () => {
             </div>
           </div>
           <motion.button
-            onClick={() => refetchSettings()}
-            disabled={settingsLoading}
+            onClick={() => {
+              refetchSettings();
+              toast.success('Informações do sistema atualizadas!');
+            }}
+            disabled={settingsFetching}
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
             className="relative group overflow-hidden p-2.5 rounded-xl bg-gradient-to-r from-orange-500/10 via-orange-500/5 to-transparent border border-orange-500/20 hover:border-orange-500/40 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <div className="absolute inset-0 bg-gradient-to-r from-orange-500/0 via-orange-500/10 to-orange-500/0 opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
-            <RefreshCw className={`relative w-4 h-4 text-orange-400 group-hover:text-orange-300 transition-colors duration-300 ${settingsLoading ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`relative w-4 h-4 text-orange-400 group-hover:text-orange-300 transition-colors duration-300 ${settingsFetching ? 'animate-spin' : ''}`} />
           </motion.button>
         </div>
 
@@ -2036,12 +2062,14 @@ export default function Admin() {
     queryKey: ['admin-stats'],
     queryFn: adminService.getStats,
     enabled: hasValidAdminSession && !!user?.isAdmin,
+    staleTime: 0, // Always refetch on demand
   });
 
-  const { data: activity } = useQuery({
+  const { data: activity, refetch: refetchActivity } = useQuery({
     queryKey: ['admin-activity'],
     queryFn: () => adminService.getActivity({ limit: 10 }),
     enabled: hasValidAdminSession && !!user?.isAdmin,
+    staleTime: 0, // Always refetch on demand
   });
 
   // Show loading state while checking session
@@ -2099,7 +2127,11 @@ export default function Admin() {
           <span className="text-emerald-400 text-sm font-medium">Sistema Online</span>
         </div>
           <motion.button
-            onClick={() => refetchStats()}
+            onClick={() => {
+              refetchStats();
+              refetchActivity();
+              toast.success('Dados atualizados com sucesso!');
+            }}
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
             disabled={statsFetching}

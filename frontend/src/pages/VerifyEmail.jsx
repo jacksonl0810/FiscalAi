@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { useAuth } from "@/lib/AuthContext";
 import { cn } from "@/lib/utils";
+import { authService } from "@/api/services";
 
 export default function VerifyEmail() {
   const navigate = useNavigate();
@@ -38,44 +39,34 @@ export default function VerifyEmail() {
     try {
       setStatus("loading");
       
-      const response = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/auth/verify-email`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ token }),
-      });
+      const data = await authService.verifyEmail(token);
 
-      const data = await response.json();
-
-      if (response.ok) {
-        setStatus("success");
-        setMessage(data.message);
+      setStatus("success");
+      setMessage("Email verificado com sucesso!");
+      
+      // Auto-login the user
+      if (data.token && data.refreshToken && data.user) {
+        login(data.token, data.refreshToken, data.user);
         
-        // Auto-login the user
-        if (data.token && data.refreshToken) {
-          login(data.token, data.refreshToken, data.user);
-          
-          // Redirect to dashboard after 3 seconds
-          setTimeout(() => {
-            navigate("/");
-          }, 3000);
-        }
-      } else {
-        if (data.code === "TOKEN_EXPIRED") {
-          setStatus("expired");
-        } else if (data.code === "ALREADY_VERIFIED") {
-          setStatus("success");
-          setMessage("Este email já foi verificado. Você pode fazer login.");
-        } else {
-          setStatus("error");
-        }
-        setMessage(data.message || "Erro ao verificar email");
+        // Redirect to dashboard after 3 seconds
+        setTimeout(() => {
+          navigate("/");
+        }, 3000);
       }
     } catch (error) {
       console.error("Verification error:", error);
-      setStatus("error");
-      setMessage("Erro de conexão. Tente novamente.");
+      
+      const errorData = error?.response?.data || error;
+      
+      if (errorData?.code === "TOKEN_EXPIRED") {
+        setStatus("expired");
+      } else if (errorData?.code === "ALREADY_VERIFIED") {
+        setStatus("success");
+        setMessage("Este email já foi verificado. Você pode fazer login.");
+      } else {
+        setStatus("error");
+      }
+      setMessage(errorData?.message || "Erro ao verificar email");
     }
   };
 
@@ -90,30 +81,19 @@ export default function VerifyEmail() {
     try {
       setIsResending(true);
       
-      const response = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/auth/resend-verification`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ email }),
-      });
+      const data = await authService.resendVerification(email);
 
-      const data = await response.json();
-
-      if (response.ok) {
-        if (data.alreadyVerified) {
-          toast.success("Email já verificado! Redirecionando para login...");
-          setTimeout(() => navigate("/login"), 2000);
-        } else {
-          toast.success("Email de verificação enviado! Verifique sua caixa de entrada.");
-          setStatus("sent");
-        }
+      if (data.alreadyVerified) {
+        toast.success("Email já verificado! Redirecionando para login...");
+        setTimeout(() => navigate("/login"), 2000);
       } else {
-        toast.error(data.message || "Erro ao reenviar verificação");
+        toast.success("Email de verificação enviado! Verifique sua caixa de entrada.");
+        setStatus("sent");
       }
     } catch (error) {
       console.error("Resend error:", error);
-      toast.error("Erro de conexão. Tente novamente.");
+      const errorData = error?.response?.data || error;
+      toast.error(errorData?.message || "Erro ao reenviar verificação");
     } finally {
       setIsResending(false);
     }

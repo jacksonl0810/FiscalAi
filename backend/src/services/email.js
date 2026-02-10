@@ -172,37 +172,38 @@ function emailTemplate(content, title = 'MAY') {
 }
 
 /**
- * Send welcome email after registration
+ * Send welcome email after successful email verification
+ * Note: This is NOT called on registration. Only call this after email verification is complete.
  */
 export async function sendWelcomeEmail(user) {
   const content = `
-    <h2>Bem-vindo à MAY! 🎉</h2>
+    <h2>Email Verificado com Sucesso! 🎉</h2>
     <p>Olá <strong>${user.name || 'Usuário'}</strong>,</p>
-    <p>Sua conta foi criada com sucesso! Estamos muito felizes em tê-lo conosco.</p>
+    <p>Sua conta foi ativada com sucesso! Estamos muito felizes em tê-lo conosco.</p>
     
     <div class="highlight success">
-      <strong>Seu período de teste gratuito de 7 dias começou!</strong>
-      <p style="margin: 5px 0 0 0;">Durante o teste, você tem acesso completo a todas as funcionalidades.</p>
+      <strong>Sua conta está pronta para uso!</strong>
+      <p style="margin: 5px 0 0 0;">Você já pode começar a usar todas as funcionalidades da MAY.</p>
     </div>
     
     <p>Com a MAY você pode:</p>
     <ul>
       <li>✅ Emitir notas fiscais por comando de voz ou texto</li>
       <li>✅ Consultar seu faturamento em tempo real</li>
-      <li>✅ Acompanhar impostos e guias DAS</li>
+      <li>✅ Acompanhar impostos e obrigações fiscais</li>
       <li>✅ Gerenciar múltiplas empresas</li>
     </ul>
     
     <p>Para começar, acesse o sistema e cadastre sua primeira empresa:</p>
     <a href="${process.env.FRONTEND_URL || 'http://localhost:5173'}" class="button">Acessar MAY</a>
     
-    <p>Precisa de ajuda? Eu estou sempre disponível para ajudá-lo.</p>
+    <p>Precisa de ajuda? Nossa equipe está sempre disponível para ajudá-lo.</p>
   `;
 
   return sendEmail({
     to: user.email,
-    subject: '🎉 Bem-vindo à MAY - Sua conta foi criada!',
-    html: emailTemplate(content, 'Bem-vindo à MAY')
+    subject: '🎉 Conta Ativada - MAY',
+    html: emailTemplate(content, 'Conta Ativada')
   });
 }
 
@@ -450,35 +451,34 @@ export async function sendPasswordResetEmail(user, resetUrl) {
 }
 
 /**
- * Send email verification email
+ * Send email verification email (combined with welcome message)
+ * This is the ONLY email sent on registration - no separate welcome email
  */
 export async function sendEmailVerificationEmail(user, verificationUrl) {
   const content = `
-    <h2>Verifique seu Email 📧</h2>
+    <h2>Bem-vindo à MAY! 🚀</h2>
     <p>Olá <strong>${user.name || 'Usuário'}</strong>,</p>
-    <p>Obrigado por se cadastrar na MAY! Para completar seu cadastro e garantir a segurança da sua conta, precisamos verificar seu endereço de email.</p>
+    <p>Obrigado por se cadastrar na MAY - sua plataforma de gestão fiscal inteligente!</p>
+    <p>Para completar seu cadastro e começar a usar, precisamos verificar seu email:</p>
     
-    <div class="highlight">
-      <strong>Clique no botão abaixo para verificar seu email:</strong>
-      <p style="margin: 5px 0 0 0; color: #888;">Este link expira em <strong>24 horas</strong>.</p>
+    <div class="highlight success">
+      <strong>Verifique seu email para começar:</strong>
+      <p style="margin: 5px 0 0 0; color: #888;">Clique no botão abaixo para ativar sua conta. Este link expira em <strong>24 horas</strong>.</p>
     </div>
     
-    <a href="${verificationUrl}" class="button">Verificar Meu Email</a>
+    <a href="${verificationUrl}" class="button">Verificar Email e Começar</a>
+    
+    <p style="margin-top: 30px;">Após verificar, você poderá:</p>
+    <ul>
+      <li>✅ Emitir notas fiscais por comando de voz ou texto</li>
+      <li>✅ Consultar seu faturamento em tempo real</li>
+      <li>✅ Acompanhar impostos e obrigações</li>
+      <li>✅ Gerenciar múltiplas empresas</li>
+    </ul>
     
     <p style="color: #888; font-size: 14px; margin-top: 30px;">
       Se você não criou uma conta na MAY, ignore este email.
     </p>
-    
-    <div class="details" style="margin-top: 20px;">
-      <p style="margin: 0; font-size: 12px; color: #666;">
-        <strong>Por que verificar seu email?</strong>
-      </p>
-      <ul style="margin: 10px 0; padding-left: 20px; font-size: 12px; color: #666;">
-        <li>Protege sua conta contra acessos não autorizados</li>
-        <li>Permite recuperação de senha segura</li>
-        <li>Garante que você receba notificações importantes</li>
-      </ul>
-    </div>
     
     <p style="color: #666; font-size: 12px; margin-top: 20px;">
       Caso o botão não funcione, copie e cole o link abaixo no seu navegador:<br>
@@ -488,8 +488,8 @@ export async function sendEmailVerificationEmail(user, verificationUrl) {
 
   return sendEmail({
     to: user.email,
-    subject: '📧 Verifique seu Email - MAY',
-    html: emailTemplate(content, 'Verificação de Email')
+    subject: '🚀 Bem-vindo à MAY - Verifique seu Email',
+    html: emailTemplate(content, 'Bem-vindo à MAY')
   });
 }
 
