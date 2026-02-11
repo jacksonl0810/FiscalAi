@@ -13,6 +13,7 @@ import ChatMessage from "@/components/chat/ChatMessage";
 import InvoicePreview from "@/components/chat/InvoicePreview";
 import RecentFiles from "@/components/chat/RecentFiles";
 import VoiceButton from "@/components/ui/VoiceButton";
+import PaymentConfirmationModal from "@/components/chat/PaymentConfirmationModal";
 
 export default function Assistant() {
   const [inputValue, setInputValue] = useState("");
@@ -20,6 +21,7 @@ export default function Assistant() {
   const [pendingInvoice, setPendingInvoice] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
   const messagesEndRef = useRef(null);
   const queryClient = useQueryClient();
   const navigate = useNavigate();
@@ -248,6 +250,12 @@ export default function Assistant() {
     if (planLimits) {
       const { invoiceLimit } = planLimits;
       
+      // For Pay Per Use plan, show payment modal instead of blocking
+      if (planLimits.planId === 'pay_per_use' || planLimits.planName?.toLowerCase().includes('pay per use')) {
+        setShowPaymentModal(true);
+        return;
+      }
+      
       if (!invoiceLimit.allowed) {
         toast.error("Limite de notas fiscais atingido", {
           description: `Seu plano ${planLimits.planName} permite até ${invoiceLimit.max} ${invoiceLimit.max === 1 ? 'nota fiscal' : 'notas fiscais'} por mês. Faça upgrade para emitir mais notas.`,
@@ -311,6 +319,17 @@ export default function Assistant() {
         throw new Error(result.message || 'Erro ao emitir nota fiscal');
       }
     } catch (error) {
+      // Check if it's a payment-related error (402 status)
+      const errorStatus = error.response?.status || error.status;
+      const errorCode = error.response?.data?.code || error.code;
+      
+      if (errorStatus === 402 || errorCode === 'PAYMENT_METHOD_REQUIRED' || errorCode === 'PAYMENT_FAILED') {
+        // Show payment modal for Pay Per Use users
+        setShowPaymentModal(true);
+        setIsProcessing(false);
+        return;
+      }
+      
       // Translate error using error translation service
       const { handleError } = await import('@/services/errorTranslationService');
       const translation = await handleError(error, { 
@@ -354,6 +373,45 @@ export default function Assistant() {
     }
     
     setIsProcessing(false);
+  };
+
+  // Handle successful payment from PaymentConfirmationModal
+  const handlePaymentSuccess = async (result) => {
+    setShowPaymentModal(false);
+    
+    if (result.status === 'success' && result.data?.invoice) {
+      const notaFiscal = result.data.invoice;
+
+      // Create success notification
+      await notificationsService.create({
+        titulo: "Nota fiscal emitida via IA",
+        mensagem: `NFS-e #${notaFiscal?.numero || '---'} emitida com sucesso. Valor: R$ ${pendingInvoice.valor.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`,
+        tipo: "sucesso",
+        invoice_id: notaFiscal?.id
+      });
+
+      const aiResponse = {
+        id: Date.now(),
+        isAI: true,
+        content: `✅ Pagamento confirmado e nota fiscal ${notaFiscal?.status === 'autorizada' ? 'autorizada' : 'emitida'} com sucesso!\n\n💳 Taxa de emissão: R$ 9,00\n📄 Número: ${notaFiscal?.numero || '---'}\n👤 Cliente: ${pendingInvoice.cliente_nome}\n💰 Valor: R$ ${pendingInvoice.valor.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}\n${notaFiscal?.codigo_verificacao ? `🔐 Código de Verificação: ${notaFiscal.codigo_verificacao}\n` : ''}\n✨ A nota foi enviada para a prefeitura através da Nuvem Fiscal.`,
+        time: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+      };
+      setMessages(prev => [...prev, aiResponse]);
+      setPendingInvoice(null);
+      queryClient.invalidateQueries({ queryKey: ['invoices'] });
+      queryClient.invalidateQueries({ queryKey: ['plan-limits'] });
+    }
+  };
+
+  const handlePaymentCancel = () => {
+    setShowPaymentModal(false);
+    const aiResponse = {
+      id: Date.now(),
+      isAI: true,
+      content: "Ok, o pagamento foi cancelado. A nota fiscal não foi emitida.\n\nQuando estiver pronto, clique em \"Confirmar\" novamente para processar o pagamento e emitir a nota.",
+      time: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+    };
+    setMessages(prev => [...prev, aiResponse]);
   };
 
   const handleEditInvoice = () => {
@@ -648,6 +706,16 @@ export default function Assistant() {
         {/* Recent Files */}
         <RecentFiles invoices={invoices} />
       </div>
+
+      {/* Payment Confirmation Modal for Pay Per Use */}
+      <PaymentConfirmationModal
+        isOpen={showPaymentModal}
+        onClose={() => setShowPaymentModal(false)}
+        invoice={pendingInvoice}
+        company={activeCompany}
+        onSuccess={handlePaymentSuccess}
+        onCancel={handlePaymentCancel}
+      />
     </div>
   );
 }

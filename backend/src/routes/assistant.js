@@ -447,17 +447,38 @@ function messageMatchesPriorityIntent(message) {
   const lower = message.toLowerCase();
   const trimmedMessage = message.trim();
   
-  // Emitir nota / emitir uma nota / nova nota
-  if (/emitir\s+(?:uma\s+)?nota|nova\s+nota/i.test(message)) return true;
-  // Criar cliente
-  if (/criar\s+cliente\s+.+\s+(?:cpf|cnpj)/i.test(message)) return true;
+  // Invoice emission - ALL variations
+  // Basic patterns
+  if (/emitir\s+(?:uma\s+)?nota|nova\s+nota|gerar\s+nota|criar\s+nota|fazer\s+(?:uma\s+)?nota|lançar\s+nota/i.test(message)) return true;
+  // Conversational patterns
+  if (/(?:preciso|quero|gostaria|pode|poderia|vou|vamos)\s+(?:de\s+)?emitir/i.test(message)) return true;
+  // Help patterns
+  if (/(?:me\s+)?(?:ajud[ae]|auxili[ae])\s+(?:a\s+)?emitir/i.test(message)) return true;
+  // Value with "nota" context
+  if (/nota.*(?:r\$|reais|\d+\s*k\b)/i.test(message) || /(?:r\$|reais|\d+\s*k\b).*nota/i.test(message)) return true;
+  // "nota de R$ X para Y" pattern
+  if (/nota\s+(?:de\s+)?(?:r\$|\d+)/i.test(message) && /para\s+/i.test(message)) return true;
+  // "nota para [cliente]"
+  if (/nota\s+(?:fiscal\s+)?para\s+/i.test(message)) return true;
+  
+  // Criar cliente - ALL variations
+  // Explicit: "criar/cadastrar/registrar/adicionar cliente"
+  if (/(?:criar|cadastrar|cadastre|registrar|registre|adicionar|adicione|incluir|novo|nova)\s+(?:um\s+|uma\s+|o\s+|a\s+)?(?:novo\s+|nova\s+)?cliente/i.test(message)) return true;
+  // Reversed: "cliente novo"
+  if (/cliente\s+(?:novo|nova)/i.test(message)) return true;
+  // Conversational: "preciso/quero cadastrar um cliente"
+  if (/(?:preciso|quero|gostaria|pode|poderia|necessito|desejo|vou)\s+(?:de\s+)?(?:criar|cadastrar|registrar|adicionar|incluir)\s+(?:um\s+|uma\s+)?(?:novo\s+|nova\s+)?cliente/i.test(message)) return true;
+  // "me ajuda a criar/cadastrar cliente"
+  if (/(?:me\s+)?(?:ajud[ae]|auxili[ae])\s+(?:a\s+)?(?:criar|cadastrar|registrar|adicionar)\s+(?:um\s+|uma\s+)?(?:novo\s+|nova\s+)?cliente/i.test(message)) return true;
+  // "cliente" + document pattern
+  if (/cliente/i.test(message) && /(?:\d{3}\.?\d{3}\.?\d{3}[-.]?\d{2}|\d{2}\.?\d{3}\.?\d{3}[\/]?\d{4}[-.]?\d{2}|\b\d{11}\b|\b\d{14}\b)/i.test(message)) return true;
+  // Standalone: "Name CPF/CNPJ/documento [number]"
+  if (/^(.+?)\s+(?:cpf|cnpj|documento)\s*:?\s*(\d{3}\.?\d{3}\.?\d{3}[-.]?\d{2}|\d{2}\.?\d{3}\.?\d{3}[\/]?\d{4}[-.]?\d{2}|\d{11}|\d{14})$/i.test(trimmedMessage)) return true;
+  // "Nome: X" with document somewhere
+  if (/nome\s*[:=]\s*.+/i.test(message) && /(?:cpf|cnpj|documento)\s*:?\s*\d/i.test(message)) return true;
+  
   // Criar empresa / cadastrar empresa / nova empresa
   if (/(?:criar|cadastrar|registrar|nova)\s+empresa/i.test(message)) return true;
-  
-  // Standalone CPF/CNPJ input (e.g., "Erina Silva CPF 123.234.789-00")
-  // This handles responses to client creation requests without "criar cliente" prefix
-  const standaloneClientPattern = /^(.+?)\s+(?:cpf|cnpj)\s*:?\s*(\d{3}\.?\d{3}\.?\d{3}-?\d{2}|\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2}|\d{11}|\d{14})$/i;
-  if (standaloneClientPattern.test(trimmedMessage)) return true;
   
   // Listar clientes
   if (/listar\s+cliente|meus\s+clientes|ver\s+clientes|clientes\s+cadastrados/i.test(lower)) return true;
@@ -875,141 +896,127 @@ async function processWithPatternMatching(message, userId, companyId, res, inten
   }
 
   // ========================================
-  // PATTERN: Create client inline
+  // PATTERN: Create client - UNIVERSAL HANDLER
+  // Handles ALL variations of client creation messages:
+  //   - "Criar cliente João Silva CPF 123.456.789-00"
+  //   - "Cadastrar cliente: Pedro, CPF: 555.666.777-88, email pedro@email.com"
+  //   - "Preciso cadastrar um novo cliente. O nome é Maria e o CPF é 987.654.321-00"
+  //   - "Quero adicionar um cliente novo. Nome: Fernanda, CPF: 444.555.666-77"
+  //   - "Oi MAY, preciso adicionar um cliente novo chamado João com CPF 123.456.789-00"
+  //   - "João Silva CPF 123.456.789-00" (standalone)
+  //   - "Novo cliente: Empresa ABC LTDA, CNPJ 12.345.678/0001-90"
+  //   - "Cadastre o cliente Roberto Alves, documento 12345678900"
   // ========================================
-  const createClientPattern = /criar\s+cliente\s+(.+?)\s+(?:cpf|cnpj)\s*:?\s*(\d{3}\.?\d{3}\.?\d{3}-?\d{2}|\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2}|\d{11}|\d{14})/i;
-  const createClientMatch = message.match(createClientPattern);
+  const clientCreationDetected = detectClientCreationIntent(message, lowerMessage, intent);
   
-  if (createClientMatch) {
-    const clienteNome = createClientMatch[1].trim();
-    const documento = createClientMatch[2].replace(/\D/g, '');
-    const tipoPessoa = documento.length === 11 ? 'pf' : 'pj';
+  if (clientCreationDetected) {
+    const extracted = extractClientDataFromMessage(message);
     
-    // Check if client already exists
-    const existingClient = await prisma.client.findFirst({
-      where: {
-        userId,
-        documento
+    // If we have both name and document, create the client
+    if (extracted.name && extracted.document) {
+      const documento = extracted.document.replace(/\D/g, '');
+      
+      // Validate document length
+      if (documento.length !== 11 && documento.length !== 14) {
+        const responseData = {
+          success: false,
+          action: null,
+          explanation: `O documento informado é inválido. CPF deve ter 11 dígitos e CNPJ deve ter 14 dígitos.\n\nPor favor, tente novamente com o formato correto:\n• CPF: 123.456.789-00\n• CNPJ: 12.345.678/0001-00`,
+          requiresConfirmation: false
+        };
+        res.json(responseData);
+        return responseData;
       }
-    });
-    
-    if (existingClient) {
-      const responseData = {
-        success: true,
-        action: { type: 'cliente_existente', data: { id: existingClient.id, nome: existingClient.nome } },
-        explanation: `Já existe um cliente cadastrado com este ${tipoPessoa === 'pf' ? 'CPF' : 'CNPJ'}: **${existingClient.nome}**. Você pode usá-lo para emitir notas.`,
-        requiresConfirmation: false
-      };
-      res.json(responseData);
-      return responseData;
-    }
-    
-    // Create the client
-    try {
-      const newClient = await prisma.client.create({
-        data: {
-          userId,
-          nome: clienteNome,
-          documento,
-          tipoPessoa
-        }
+      
+      const tipoPessoa = documento.length === 11 ? 'pf' : 'pj';
+      
+      // Check if client already exists
+      const existingClient = await prisma.client.findFirst({
+        where: { userId, documento }
       });
       
-      const responseData = {
-        success: true,
-        action: { type: 'cliente_criado', data: { id: newClient.id, nome: newClient.nome, documento: newClient.documento } },
-        explanation: `✅ Cliente **${newClient.nome}** cadastrado com sucesso!\n\n${tipoPessoa === 'pf' ? 'CPF' : 'CNPJ'}: ${formatDocumentForDisplay(documento, tipoPessoa)}\n\nAgora você pode emitir notas para este cliente. Diga "Emitir nota de R$ [valor] para ${newClient.nome}".`,
-        requiresConfirmation: false
-      };
-      res.json(responseData);
-      return responseData;
-    } catch (error) {
-      const responseData = {
-        success: false,
-        action: null,
-        explanation: `Erro ao cadastrar cliente: ${error.message}`,
-        requiresConfirmation: false
-      };
-      res.json(responseData);
-      return responseData;
-    }
-  }
-
-  // ========================================
-  // PATTERN: Standalone CPF/CNPJ input (response to client creation request)
-  // Handles: "Nome CPF XXX" or "Nome CNPJ XXX" without "criar cliente" prefix
-  // This pattern catches user responses like "Erina Silva CPF 123.234.789-00"
-  // ========================================
-  const standaloneClientPattern = /^(.+?)\s+(?:cpf|cnpj)\s*:?\s*(\d{3}\.?\d{3}\.?\d{3}-?\d{2}|\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2}|\d{11}|\d{14})$/i;
-  const standaloneClientMatch = message.trim().match(standaloneClientPattern);
-  
-  // Only process if it looks like a client registration (not "criar cliente" which is handled above)
-  if (standaloneClientMatch && !lowerMessage.includes('criar cliente')) {
-    const clienteNome = standaloneClientMatch[1].trim();
-    const documento = standaloneClientMatch[2].replace(/\D/g, '');
-    
-    // Validate document length
-    if (documento.length !== 11 && documento.length !== 14) {
-      const responseData = {
-        success: false,
-        action: null,
-        explanation: `O documento informado é inválido. CPF deve ter 11 dígitos e CNPJ deve ter 14 dígitos.\n\nPor favor, tente novamente com o formato correto:\n• CPF: 123.456.789-00\n• CNPJ: 12.345.678/0001-00`,
-        requiresConfirmation: false
-      };
-      res.json(responseData);
-      return responseData;
-    }
-    
-    const tipoPessoa = documento.length === 11 ? 'pf' : 'pj';
-    
-    // Check if client already exists
-    const existingClient = await prisma.client.findFirst({
-      where: {
-        userId,
-        documento
+      if (existingClient) {
+        const responseData = {
+          success: true,
+          action: { type: 'cliente_existente', data: { id: existingClient.id, nome: existingClient.nome, documento: existingClient.documento } },
+          explanation: `Já existe um cliente cadastrado com este ${tipoPessoa === 'pf' ? 'CPF' : 'CNPJ'}: **${existingClient.nome}**.\n\nVocê pode usá-lo para emitir notas. Diga "Emitir nota de R$ [valor] para ${existingClient.nome}".`,
+          requiresConfirmation: false
+        };
+        res.json(responseData);
+        return responseData;
       }
-    });
-    
-    if (existingClient) {
-      const responseData = {
-        success: true,
-        action: { type: 'cliente_existente', data: { id: existingClient.id, nome: existingClient.nome, documento: existingClient.documento } },
-        explanation: `Já existe um cliente cadastrado com este ${tipoPessoa === 'pf' ? 'CPF' : 'CNPJ'}: **${existingClient.nome}**.\n\nVocê pode usá-lo para emitir notas. Diga "Emitir nota de R$ [valor] para ${existingClient.nome}".`,
-        requiresConfirmation: false
-      };
-      res.json(responseData);
-      return responseData;
-    }
-    
-    // Create the client
-    try {
-      const newClient = await prisma.client.create({
-        data: {
-          userId,
-          nome: clienteNome,
-          documento,
-          tipoPessoa
-        }
-      });
       
+      // Build client data with optional fields
+      const clientData = {
+        userId,
+        nome: extracted.name,
+        documento,
+        tipoPessoa
+      };
+      if (extracted.email) clientData.email = extracted.email;
+      if (extracted.phone) clientData.telefone = extracted.phone;
+      
+      // Create the client
+      try {
+        const newClient = await prisma.client.create({ data: clientData });
+        
+        let successMsg = `✅ Cliente **${newClient.nome}** cadastrado com sucesso!\n\n${tipoPessoa === 'pf' ? 'CPF' : 'CNPJ'}: ${formatDocumentForDisplay(documento, tipoPessoa)}`;
+        if (extracted.email) successMsg += `\nEmail: ${extracted.email}`;
+        if (extracted.phone) successMsg += `\nTelefone: ${extracted.phone}`;
+        successMsg += `\n\nAgora você pode emitir notas para este cliente. Diga "Emitir nota de R$ [valor] para ${newClient.nome}".`;
+        
+        const responseData = {
+          success: true,
+          action: { type: 'cliente_criado', data: { id: newClient.id, nome: newClient.nome, documento: newClient.documento } },
+          explanation: successMsg,
+          requiresConfirmation: false
+        };
+        res.json(responseData);
+        return responseData;
+      } catch (error) {
+        const responseData = {
+          success: false,
+          action: null,
+          explanation: `Erro ao cadastrar cliente: ${error.message}`,
+          requiresConfirmation: false
+        };
+        res.json(responseData);
+        return responseData;
+      }
+    }
+    
+    // We detected client creation intent but missing data - ask for it
+    if (extracted.name && !extracted.document) {
       const responseData = {
         success: true,
-        action: { type: 'cliente_criado', data: { id: newClient.id, nome: newClient.nome, documento: newClient.documento } },
-        explanation: `✅ Cliente **${newClient.nome}** cadastrado com sucesso!\n\n${tipoPessoa === 'pf' ? 'CPF' : 'CNPJ'}: ${formatDocumentForDisplay(documento, tipoPessoa)}\n\nAgora você pode emitir notas para este cliente. Diga "Emitir nota de R$ [valor] para ${newClient.nome}".`,
-        requiresConfirmation: false
-      };
-      res.json(responseData);
-      return responseData;
-    } catch (error) {
-      const responseData = {
-        success: false,
-        action: null,
-        explanation: `Erro ao cadastrar cliente: ${error.message}`,
+        action: { type: 'aguardando_documento', data: { nome: extracted.name } },
+        explanation: `👤 Entendi! Vou cadastrar o cliente **${extracted.name}**.\n\nPor favor, informe o CPF ou CNPJ:\n• Exemplo: CPF 123.456.789-00\n• Exemplo: CNPJ 12.345.678/0001-90`,
         requiresConfirmation: false
       };
       res.json(responseData);
       return responseData;
     }
+    
+    if (!extracted.name && extracted.document) {
+      const responseData = {
+        success: true,
+        action: { type: 'aguardando_nome', data: { documento: extracted.document } },
+        explanation: `👤 Recebi o documento! Agora preciso do nome completo ou razão social do cliente para finalizar o cadastro.`,
+        requiresConfirmation: false
+      };
+      res.json(responseData);
+      return responseData;
+    }
+    
+    // No name and no document - ask for both
+    const responseData = {
+      success: true,
+      action: { type: 'aguardando_dados_cliente', data: null },
+      explanation: `👤 Vou te ajudar a cadastrar um novo cliente!\n\nPreciso das seguintes informações:\n• **Nome** completo ou razão social\n• **CPF** (pessoa física) ou **CNPJ** (pessoa jurídica)\n\nVocê pode me dizer tudo de uma vez, por exemplo:\n• "João Silva, CPF 123.456.789-00"\n• "Empresa ABC LTDA, CNPJ 12.345.678/0001-90"\n\nOu se preferir, me diga o nome primeiro.`,
+      requiresConfirmation: false
+    };
+    res.json(responseData);
+    return responseData;
   }
 
   // ========================================
@@ -1121,18 +1128,137 @@ async function processWithPatternMatching(message, userId, companyId, res, inten
   }
 
   // ========================================
-  // PATTERN: Issue invoice (existing) - Now with client lookup
+  // PATTERN: Issue invoice - UNIVERSAL HANDLER
+  // Handles ALL variations of invoice emission messages:
+  //   - "Emitir nota de R$ 1.500 para João Silva"
+  //   - "Emitir uma nota de R$ 2.000 para Maria Santos"
+  //   - "Nova nota de R$ 3.500 para Pedro Oliveira"
+  //   - "Emitir nota de R$ 2.500 para Ana Costa por consultoria em TI"
+  //   - "Emitir nota de R$ 1.800 para Roberto Alves CPF 123.456.789-00"
+  //   - "Preciso emitir uma nota de R$ 1.200 para o cliente Fernando Lima"
+  //   - "Emitir nota de 1500 reais para Carlos Mendes"
+  //   - "Emitir nota de 2k para Rafael Souza"
+  //   - "Oi MAY, quero emitir uma nota de R$ 2.500 para Fernanda Costa"
+  //   - "Me ajuda a emitir uma nota de R$ 1.800 para Maria"
+  //   - "Emitir nota para João Silva" (asks for value)
+  //   - "Emitir nota de R$ 2.000" (asks for client)
   // ========================================
-  // Match "emitir nota" or "emitir uma nota" + value + "para" + client (optional extra text after client)
-  const invoicePattern = /emitir\s+(?:uma\s+)?nota\s+(?:de\s+)?r?\$?\s*(\d+(?:[.,]\d+)?)\s+(?:para|para\s+o?\s*)(.+?)(?:,|$)/i;
-  const invoicePatternAlt = /emitir\s+(?:uma\s+)?nota\s+(?:de\s+)?r?\$?\s*(\d+(?:[.,]\d+)?)\s+(?:para|para\s+o?\s*)(.+)/i;
-  const invoiceMatch = message.match(invoicePattern) || message.match(invoicePatternAlt);
+  
+  // Detect if this is an invoice emission intent
+  const invoiceKeywords = [
+    'emitir nota', 'emitir uma nota', 'nova nota', 'gerar nota', 'criar nota', 
+    'fazer nota', 'fazer uma nota', 'lançar nota', 'emitir nf', 'nota fiscal',
+    'preciso emitir', 'quero emitir', 'gostaria de emitir', 'pode emitir',
+    'me ajuda a emitir', 'me ajude a emitir', 'vou emitir', 'vamos emitir'
+  ];
+  
+  const isInvoiceIntent = invoiceKeywords.some(kw => lowerMessage.includes(kw)) ||
+    (lowerMessage.includes('nota') && (lowerMessage.includes('r$') || lowerMessage.includes('reais') || /\d+\s*k\b/.test(lowerMessage)));
+  
+  if (isInvoiceIntent) {
+    // Extract value using the improved function from aiIntentService
+    const { extractMonetaryValue, extractClientName: extractClientNameFromService, extractDocument: extractDocumentFromService } = await import('../services/aiIntentService.js');
+    
+    let valor = extractMonetaryValue(message);
+    
+    // Extract client name - use multiple patterns
+    let clienteNome = null;
+    
+    // Pattern 1: "para [client]" or "para o cliente [name]"
+    const paraMatch = message.match(/para\s+(?:o\s+)?(?:cliente\s+)?([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.]+?)(?:\s+(?:cpf|cnpj|pela\s+empresa|por\s+|referente|,|$))/i);
+    if (paraMatch) {
+      clienteNome = paraMatch[1].trim();
+    }
+    
+    // Pattern 2: "para [client] CPF/CNPJ [document]"
+    if (!clienteNome) {
+      const paraDocMatch = message.match(/para\s+(?:o\s+)?(?:cliente\s+)?([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.]+?)\s+(?:cpf|cnpj)\s/i);
+      if (paraDocMatch) {
+        clienteNome = paraDocMatch[1].trim();
+      }
+    }
+    
+    // Pattern 3: Fallback - text after "para" until end or special markers
+    if (!clienteNome) {
+      const paraFallback = message.match(/para\s+(?:o\s+)?(?:cliente\s+)?([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.]+?)$/i);
+      if (paraFallback) {
+        clienteNome = paraFallback[1].trim();
+      }
+    }
+    
+    // Clean up client name - remove common suffixes
+    if (clienteNome) {
+      clienteNome = clienteNome
+        .replace(/\s+(?:por|referente|,).*/i, '')
+        .replace(/\s+\d+.*$/i, '') // Remove trailing numbers (like document fragments)
+        .trim();
+      
+      // Split by comma and take first part
+      clienteNome = clienteNome.split(/\s*,\s*/)[0].trim();
+    }
+    
+    // Extract service description if present
+    let descricaoServico = 'Serviço prestado';
+    const servicePatterns = [
+      /(?:por|referente\s+a|referente)\s+(.+?)(?:\s+(?:cpf|cnpj|pela\s+empresa)|,|$)/i,
+      /(?:serviço(?:s)?|serviço de|serviços de)\s*:?\s*(.+?)(?:\s+(?:cpf|cnpj|pela\s+empresa)|,|$)/i
+    ];
+    
+    for (const pattern of servicePatterns) {
+      const serviceMatch = message.match(pattern);
+      if (serviceMatch && serviceMatch[1]?.trim()) {
+        descricaoServico = serviceMatch[1].trim();
+        // Don't use value/client text as service description
+        if (!/^\d|^r\$|^para\s/i.test(descricaoServico)) {
+          break;
+        }
+        descricaoServico = 'Serviço prestado';
+      }
+    }
 
-  if (invoiceMatch || lowerMessage.includes('emitir nota') || lowerMessage.includes('emitir uma nota') || lowerMessage.includes('nova nota')) {
-    let valor = invoiceMatch ? parseFloat(invoiceMatch[1].replace(',', '.')) : null;
-    // Client name may be followed by ", referente a X, pela empresa Y" - take only the name part
-    let clienteNome = invoiceMatch ? invoiceMatch[2].trim().split(/\s*,\s*/)[0].trim() : null;
-
+    // Handle cases where value or client is missing
+    if (!valor && !clienteNome) {
+      // Neither value nor client - provide helpful guidance
+      const responseDataBoth = {
+        success: true,
+        action: null,
+        explanation: '📝 Para emitir uma nota fiscal, preciso de algumas informações:\n\n' +
+          '• **Valor:** Quanto você deseja cobrar?\n' +
+          '• **Cliente:** Para quem é a nota?\n\n' +
+          'Exemplo: "Emitir nota de R$ 1.500 para João Silva"\n\n' +
+          'Ou me diga uma informação de cada vez.',
+        requiresConfirmation: false
+      };
+      res.json(responseDataBoth);
+      return responseDataBoth;
+    }
+    
+    if (!valor && clienteNome) {
+      // Has client but no value - ask for value
+      const responseDataNoValue = {
+        success: true,
+        action: { type: 'aguardando_valor', data: { cliente_nome: clienteNome } },
+        explanation: `💰 Qual o valor da nota fiscal para **${clienteNome}**?\n\nExemplo: "R$ 1.500" ou "1500 reais"`,
+        requiresConfirmation: false
+      };
+      res.json(responseDataNoValue);
+      return responseDataNoValue;
+    }
+    
+    if (valor && !clienteNome) {
+      // Has value but no client - ask for client
+      const valorFormatado = valor.toLocaleString('pt-BR', { minimumFractionDigits: 2 });
+      const responseDataNoClient = {
+        success: true,
+        action: { type: 'aguardando_cliente', data: { valor: valor } },
+        explanation: `👤 Para quem é a nota fiscal de **R$ ${valorFormatado}**?\n\nMe diga o nome do cliente.`,
+        requiresConfirmation: false
+      };
+      res.json(responseDataNoClient);
+      return responseDataNoClient;
+    }
+    
+    // Both value and client present - proceed with invoice creation
     if (valor && clienteNome) {
       // Extract CNPJ/CPF from the full message if mentioned
       // Patterns: "pela empresa 34.172.396/0001-76", "CNPJ 34.172.396/0001-76", "CPF 123.456.789-00"
@@ -1175,7 +1301,7 @@ async function processWithPatternMatching(message, userId, companyId, res, inten
               data: {
                 cliente_nome: clientByDocument.nome,
                 cliente_documento: clientByDocument.documento,
-                descricao_servico: 'Serviço prestado',
+                descricao_servico: descricaoServico,
                 valor: valor,
                 aliquota_iss: 5,
                 client_id: clientByDocument.id
@@ -1185,7 +1311,7 @@ async function processWithPatternMatching(message, userId, companyId, res, inten
               `• **Valor:** R$ ${valorFormatado}\n` +
               `• **Cliente:** ${clientByDocument.nome}\n` +
               `• **${docLabel}:** ${docFormatado}\n` +
-              `• **Serviço:** Serviço prestado\n` +
+              `• **Serviço:** ${descricaoServico}\n` +
               `• **ISS:** 5%\n\n` +
               `✅ Deseja confirmar a emissão desta nota?`,
             requiresConfirmation: true
@@ -1203,7 +1329,7 @@ async function processWithPatternMatching(message, userId, companyId, res, inten
               data: {
                 cliente_nome: clienteNome,
                 cliente_documento: mentionedDocument,
-                descricao_servico: 'Serviço prestado',
+                descricao_servico: descricaoServico,
                 valor: valor,
                 aliquota_iss: 5,
                 tipo_pessoa: mentionedDocumentType
@@ -1246,7 +1372,7 @@ async function processWithPatternMatching(message, userId, companyId, res, inten
             data: {
               cliente_nome: client.nome,
               cliente_documento: client.documento,
-              descricao_servico: 'Serviço prestado',
+              descricao_servico: descricaoServico,
               valor: valor,
               aliquota_iss: 5,
               client_id: client.id
@@ -1256,7 +1382,7 @@ async function processWithPatternMatching(message, userId, companyId, res, inten
             `• **Valor:** R$ ${valorFormatado}\n` +
             `• **Cliente:** ${client.nome}\n` +
             `• **${docLabel}:** ${docFormatado}\n` +
-            `• **Serviço:** Serviço prestado\n` +
+            `• **Serviço:** ${descricaoServico}\n` +
             `• **ISS:** 5%\n\n` +
             `✅ Deseja confirmar a emissão desta nota?`,
           requiresConfirmation: true
@@ -1294,7 +1420,7 @@ async function processWithPatternMatching(message, userId, companyId, res, inten
           data: {
             cliente_nome: clienteNome,
             cliente_documento: '',
-            descricao_servico: 'Serviço prestado',
+            descricao_servico: descricaoServico,
             valor: valor,
             aliquota_iss: 5
           }
@@ -1304,15 +1430,6 @@ async function processWithPatternMatching(message, userId, companyId, res, inten
       };
       res.json(responseDataNoMatch);
       return responseDataNoMatch;
-    } else {
-      const responseDataEmitirHint = {
-        success: true,
-        action: null,
-        explanation: 'Para emitir uma nota fiscal, me diga o valor e o nome do cliente. Por exemplo: "Emitir nota de R$ 1.500 para João Silva"',
-        requiresConfirmation: false
-      };
-      res.json(responseDataEmitirHint);
-      return responseDataEmitirHint;
     }
   }
 
@@ -1492,6 +1609,234 @@ function formatStatus(status) {
 /**
  * Format document (CPF/CNPJ) for display
  */
+/**
+ * Detect if a message is about creating a client.
+ * Checks multiple signals: explicit keywords, standalone name+document patterns,
+ * and intent classification results.
+ * 
+ * @param {string} message - Original message
+ * @param {string} lowerMessage - Lowercased message
+ * @param {object} intent - Intent classification result
+ * @returns {boolean} True if the message is about creating a client
+ */
+function detectClientCreationIntent(message, lowerMessage, intent) {
+  // 1. Intent classification says it's client creation
+  if (intent?.intent === 'criar_cliente' && intent.confidence >= 0.4) return true;
+  
+  // 2. Explicit action keywords + "cliente" keyword
+  const clientKeywords = /(?:criar|cadastrar|cadastre|cadastra|registrar|registre|adicionar|adicione|novo|nova|incluir|salvar|inserir)\s+(?:um\s+|uma\s+|o\s+|a\s+)?(?:novo\s+|nova\s+)?cliente/i;
+  if (clientKeywords.test(message)) return true;
+  
+  // 3. "cliente" keyword + action keywords (reversed order)
+  const reversedPattern = /cliente\s+(?:novo|nova)|novo\s+cliente|nova?\s+cliente/i;
+  if (reversedPattern.test(message)) return true;
+  
+  // 4. "preciso/quero/gostaria + cadastrar/criar/adicionar + cliente"
+  const conversationalPattern = /(?:preciso|quero|gostaria|pode|poderia|necessito|desejo|vou)\s+(?:de\s+)?(?:criar|cadastrar|registrar|adicionar|incluir)\s+(?:um\s+|uma\s+)?(?:novo\s+|nova\s+)?cliente/i;
+  if (conversationalPattern.test(message)) return true;
+  
+  // 5. "me ajuda/ajude a cadastrar/criar cliente"
+  const helpPattern = /(?:me\s+)?(?:ajud[ae]|auxili[ae])\s+(?:a\s+)?(?:criar|cadastrar|registrar|adicionar)\s+(?:um\s+|uma\s+)?(?:novo\s+|nova\s+)?cliente/i;
+  if (helpPattern.test(message)) return true;
+  
+  // 6. Message contains "cliente" AND has a document (CPF/CNPJ)
+  if (lowerMessage.includes('cliente') && hasDocumentInMessage(message)) return true;
+  
+  // 7. Message contains creation keywords AND has both a name-like string and a document
+  const hasCreationWord = /(?:criar|cadastrar|cadastre|registrar|adicionar|novo|nova|incluir)/i.test(message);
+  if (hasCreationWord && hasDocumentInMessage(message) && /(?:nome|chamad[oa])/i.test(message)) return true;
+  
+  // 8. Standalone pattern: "[Name] CPF/CNPJ [document]" or "[Name], CPF: [document]"
+  const standalonePattern = /^(.+?)\s+(?:cpf|cnpj|documento)\s*:?\s*(\d{3}\.?\d{3}\.?\d{3}[-.]?\d{2}|\d{2}\.?\d{3}\.?\d{3}[\/]?\d{4}[-.]?\d{2}|\d{11}|\d{14})$/i;
+  if (standalonePattern.test(message.trim())) return true;
+  
+  // 9. "Nome: [name]" pattern with document somewhere in the message
+  if (/nome\s*[:=]\s*.+/i.test(message) && hasDocumentInMessage(message)) return true;
+  
+  return false;
+}
+
+/**
+ * Check if a message contains a CPF or CNPJ document
+ * @param {string} message 
+ * @returns {boolean}
+ */
+function hasDocumentInMessage(message) {
+  // Formatted CPF: 123.456.789-00
+  if (/\d{3}\.?\d{3}\.?\d{3}[-.]?\d{2}/.test(message)) return true;
+  // Formatted CNPJ: 12.345.678/0001-90
+  if (/\d{2}\.?\d{3}\.?\d{3}[\/]?\d{4}[-.]?\d{2}/.test(message)) return true;
+  // Plain 11 or 14 digit number
+  if (/\b\d{11}\b|\b\d{14}\b/.test(message)) return true;
+  // "CPF" or "CNPJ" or "documento" keyword followed by numbers
+  if (/(?:cpf|cnpj|documento)\s*:?\s*\d/i.test(message)) return true;
+  return false;
+}
+
+/**
+ * Extract client data (name, document, email, phone) from ANY message format.
+ * Tries multiple extraction strategies to handle diverse message styles.
+ * 
+ * @param {string} message - The user message
+ * @returns {{ name: string|null, document: string|null, email: string|null, phone: string|null }}
+ */
+function extractClientDataFromMessage(message) {
+  let name = null;
+  let document = null;
+  let email = null;
+  let phone = null;
+  
+  // ---- Extract DOCUMENT (CPF or CNPJ) ----
+  // Try CNPJ first (14 digits, formatted or not)
+  const cnpjMatch = message.match(/(\d{2}\.?\d{3}\.?\d{3}[\/]?\d{4}[-.]?\d{2})/);
+  if (cnpjMatch) {
+    const clean = cnpjMatch[1].replace(/\D/g, '');
+    if (clean.length === 14) document = clean;
+  }
+  
+  // Try CPF (11 digits, formatted or not)
+  if (!document) {
+    const cpfMatch = message.match(/(\d{3}\.?\d{3}\.?\d{3}[-.]?\d{2})/);
+    if (cpfMatch) {
+      const clean = cpfMatch[1].replace(/\D/g, '');
+      if (clean.length === 11) document = clean;
+    }
+  }
+  
+  // Try plain 11 or 14 digit number (not part of a longer number)
+  if (!document) {
+    const plainMatch = message.match(/(?:^|\s|:)(\d{11}|\d{14})(?:\s|$|,|;|\.|!|\?)/);
+    if (plainMatch) document = plainMatch[1];
+  }
+  
+  // ---- Extract EMAIL ----
+  const emailMatch = message.match(/[\w.+-]+@[\w-]+\.[\w.-]+/);
+  if (emailMatch) email = emailMatch[0];
+  
+  // ---- Extract PHONE ----
+  // Brazilian phone: (XX) XXXXX-XXXX or (XX) XXXX-XXXX or just digits
+  const phoneMatch = message.match(/(?:telefone|tel|fone|celular|whatsapp)\s*:?\s*(\(?\d{2}\)?\s*\d{4,5}[-.]?\d{4})/i);
+  if (phoneMatch) phone = phoneMatch[1];
+  if (!phone) {
+    const phoneMatch2 = message.match(/(\(\d{2}\)\s*\d{4,5}[-.]?\d{4})/);
+    if (phoneMatch2) phone = phoneMatch2[1];
+  }
+  
+  // ---- Extract NAME ----
+  // Remove document, email, phone from the message to help isolate the name
+  let cleanMsg = message
+    .replace(/\d{2}\.?\d{3}\.?\d{3}[\/]?\d{4}[-.]?\d{2}/g, '')   // CNPJ
+    .replace(/\d{3}\.?\d{3}\.?\d{3}[-.]?\d{2}/g, '')               // CPF
+    .replace(/\b\d{11}\b|\b\d{14}\b/g, '')                          // Plain doc numbers
+    .replace(/[\w.+-]+@[\w-]+\.[\w.-]+/g, '')                       // Email
+    .replace(/\(?\d{2}\)?\s*\d{4,5}[-.]?\d{4}/g, '')               // Phone
+    .trim();
+  
+  // Strategy 1: "criar/cadastrar cliente [NAME]" - name after action+cliente
+  const afterClienteMatch = cleanMsg.match(/(?:criar|cadastrar|cadastre|registrar|adicionar|incluir|novo|nova)\s+(?:um\s+|uma\s+|o\s+|a\s+)?(?:novo\s+|nova\s+)?cliente\s*:?\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.]+?)(?:\s*[,;]|\s+(?:cpf|cnpj|documento|email|telefone|tel|fone|com\s|de\s|no\s)|$)/i);
+  if (afterClienteMatch && afterClienteMatch[1]?.trim().length > 1) {
+    name = afterClienteMatch[1].trim();
+  }
+  
+  // Strategy 2: "Nome: [NAME]" or "nome = [NAME]" or "nome é [NAME]"
+  if (!name) {
+    const nomeMatch = cleanMsg.match(/nome\s*(?:[:=é]|é)\s*([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.]+?)(?:\s*[,;]|\s+(?:cpf|cnpj|documento|email|telefone|tel|fone|e\s+o|com\s)|$)/i);
+    if (nomeMatch && nomeMatch[1]?.trim().length > 1) {
+      name = nomeMatch[1].trim();
+    }
+  }
+  
+  // Strategy 3: "nome/razão social [NAME]" (without colon)
+  if (!name) {
+    const razaoMatch = cleanMsg.match(/(?:razão\s*social|razao\s*social)\s*:?\s*([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.]+?)(?:\s*[,;]|\s+(?:cpf|cnpj|documento|email|telefone)|$)/i);
+    if (razaoMatch && razaoMatch[1]?.trim().length > 1) {
+      name = razaoMatch[1].trim();
+    }
+  }
+  
+  // Strategy 4: "o nome é/dele é/dela é [NAME]"
+  if (!name) {
+    const nameIsMatch = cleanMsg.match(/(?:o\s+nome|nome\s+(?:dele|dela)?)\s+(?:é|e)\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.]+?)(?:\s*[,;.]|\s+(?:cpf|cnpj|documento|email|telefone|e\s+o|com\s)|$)/i);
+    if (nameIsMatch && nameIsMatch[1]?.trim().length > 1) {
+      name = nameIsMatch[1].trim();
+    }
+  }
+  
+  // Strategy 5: "chamado/chamada [NAME]" or "de nome [NAME]"
+  if (!name) {
+    const chamadoMatch = cleanMsg.match(/(?:chamad[oa]|de\s+nome)\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.]+?)(?:\s*[,;.]|\s+(?:cpf|cnpj|documento|email|telefone|com\s)|$)/i);
+    if (chamadoMatch && chamadoMatch[1]?.trim().length > 1) {
+      name = chamadoMatch[1].trim();
+    }
+  }
+  
+  // Strategy 6: "para [NAME]" in client creation context
+  if (!name) {
+    const paraMatch = cleanMsg.match(/(?:para|do|da)\s+(?:o\s+|a\s+)?(?:cliente\s+)?([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.]+?)(?:\s*[,;.]|\s+(?:cpf|cnpj|documento|email|telefone|com\s)|$)/i);
+    if (paraMatch && paraMatch[1]?.trim().length > 1) {
+      // Exclude common verbs/articles that aren't names
+      const candidate = paraMatch[1].trim();
+      if (!/^(?:mim|meu|minha|isso|ele|ela|nós|eles|elas|você|voce)$/i.test(candidate)) {
+        name = candidate;
+      }
+    }
+  }
+  
+  // Strategy 7: Standalone "[NAME] CPF/CNPJ [doc]" - name is everything before CPF/CNPJ keyword
+  if (!name) {
+    const standaloneMatch = cleanMsg.match(/^(.+?)(?:\s*[,;]\s*|\s+)(?:cpf|cnpj|documento)\s*:?\s*/i);
+    if (standaloneMatch && standaloneMatch[1]?.trim().length > 1) {
+      let candidate = standaloneMatch[1].trim();
+      // Remove leading action words
+      candidate = candidate.replace(/^(?:criar|cadastrar|cadastre|registrar|adicionar|incluir|novo|nova)\s+(?:um\s+|uma\s+|o\s+|a\s+)?(?:novo\s+|nova\s+)?(?:cliente\s*:?\s*)?/i, '').trim();
+      // Remove conversational prefixes
+      candidate = candidate.replace(/^(?:oi\s+may\s*[,;]?\s*|oi\s*[,;]?\s*|olá\s*[,;]?\s*|hey\s*[,;]?\s*|bom\s+dia\s*[,;]?\s*|boa\s+tarde\s*[,;]?\s*|boa\s+noite\s*[,;]?\s*)/i, '').trim();
+      candidate = candidate.replace(/^(?:preciso|quero|gostaria\s+de|pode|poderia|vou|desejo)\s+(?:de\s+)?(?:criar|cadastrar|registrar|adicionar)\s+(?:um\s+|uma\s+)?(?:novo\s+|nova\s+)?(?:cliente\s*:?\s*)?/i, '').trim();
+      // Clean up trailing punctuation/words
+      candidate = candidate.replace(/\s*[,;.]\s*$/, '').trim();
+      if (candidate.length > 1 && /[A-Za-zÀ-ÿ]/.test(candidate)) {
+        name = candidate;
+      }
+    }
+  }
+  
+  // Strategy 8: If intent was "criar_cliente" and we have a document, try extracting name
+  // from the cleaned message by removing all known tokens
+  if (!name && document) {
+    let remnant = cleanMsg
+      .replace(/(?:oi\s+may|oi|olá|hey|bom\s+dia|boa\s+tarde|boa\s+noite)\s*[,;.]?\s*/gi, '')
+      .replace(/(?:preciso|quero|gostaria|pode|poderia|necessito|desejo|vou)\s+(?:de\s+)?/gi, '')
+      .replace(/(?:criar|cadastrar|cadastre|registrar|registre|adicionar|adicione|incluir|salvar|inserir)\s+/gi, '')
+      .replace(/(?:um|uma|o|a|novo|nova|meu|minha)\s+/gi, '')
+      .replace(/\bcliente\s*:?\s*/gi, '')
+      .replace(/\b(?:cpf|cnpj|documento)\s*:?\s*/gi, '')
+      .replace(/\b(?:nome|razão\s*social|razao\s*social)\s*:?\s*/gi, '')
+      .replace(/\b(?:email|telefone|tel|fone|celular|whatsapp)\s*:?\s*/gi, '')
+      .replace(/\b(?:me\s+ajud[ae]|por\s+favor|com|de|do|da|para|no|na|é|e\s+o|e\s+a)\b/gi, '')
+      .replace(/\s*[,;.:!?]+\s*/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    
+    if (remnant.length > 1 && /^[A-Za-zÀ-ÿ]/.test(remnant)) {
+      name = remnant;
+    }
+  }
+  
+  // Clean up the name - remove trailing common words
+  if (name) {
+    name = name
+      .replace(/\s+(?:com|de|do|da|no|na|e|ou|por|seu|sua)\s*$/i, '')
+      .replace(/\s*[,;.:]+\s*$/, '')
+      .trim();
+    // If name ended up too short or is a common word, discard it
+    if (name.length < 2 || /^(?:o|a|um|uma|de|do|da|no|na|com|por|para|que|se|os|as|em|ao)$/i.test(name)) {
+      name = null;
+    }
+  }
+  
+  return { name, document, email, phone };
+}
+
 function formatDocumentForDisplay(doc, tipo) {
   if (!doc) return '';
   const cleaned = doc.replace(/\D/g, '');
