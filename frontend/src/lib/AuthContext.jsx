@@ -13,17 +13,17 @@ export const AuthProvider = ({ children }) => {
   const MIN_CHECK_INTERVAL = 5000;
   const MIN_FORCE_INTERVAL = 1000;
 
-  const checkAuth = useCallback(async (force = false) => {
+  const checkAuth = useCallback(async (skipLoading = false) => {
     if (isCheckingRef.current) return;
     
     const now = Date.now();
     const timeSinceLastCheck = now - lastCheckRef.current;
     
-    if (!force && timeSinceLastCheck < MIN_CHECK_INTERVAL) {
+    if (!skipLoading && timeSinceLastCheck < MIN_CHECK_INTERVAL) {
       return;
     }
     
-    if (force && timeSinceLastCheck < MIN_FORCE_INTERVAL) {
+    if (skipLoading && timeSinceLastCheck < MIN_FORCE_INTERVAL) {
       return;
     }
     
@@ -31,7 +31,11 @@ export const AuthProvider = ({ children }) => {
     lastCheckRef.current = now;
 
     try {
-      setIsLoadingAuth(true);
+      // CRITICAL FIX: Only show loading spinner on initial auth check, NOT on background refresh
+      // Setting isLoadingAuth causes ProtectedRoute to unmount children, destroying form state!
+      if (!skipLoading) {
+        setIsLoadingAuth(true);
+      }
       setAuthError(null);
 
       // Check if we have a token
@@ -75,7 +79,7 @@ export const AuthProvider = ({ children }) => {
   useEffect(() => {
     const onVisibilityChange = () => {
       if (document.visibilityState === 'visible' && isAuthenticated) {
-        checkAuth(true);
+        checkAuth(true); // skipLoading=true to avoid unmounting children
       }
     };
     document.addEventListener('visibilitychange', onVisibilityChange);

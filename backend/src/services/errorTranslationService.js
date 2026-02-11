@@ -306,12 +306,12 @@ export function translateError(error, context = {}) {
     const upperCode = errorCode.toUpperCase();
     if (ERROR_KNOWLEDGE_BASE[upperCode]) {
       translation = ERROR_KNOWLEDGE_BASE[upperCode];
-    }
+  }
     // Check normalized code
     if (!translation) {
-      const codeKey = errorCode.toLowerCase().replace(/[^a-z0-9_]/g, '_');
-      if (ERROR_KNOWLEDGE_BASE[codeKey]) {
-        translation = ERROR_KNOWLEDGE_BASE[codeKey];
+    const codeKey = errorCode.toLowerCase().replace(/[^a-z0-9_]/g, '_');
+    if (ERROR_KNOWLEDGE_BASE[codeKey]) {
+      translation = ERROR_KNOWLEDGE_BASE[codeKey];
       }
     }
   }

@@ -158,9 +158,9 @@ export default function Login() {
           });
           navigate(`/verify-email?email=${encodeURIComponent(formData.email)}`);
         } else {
-          toast.success("Conta criada com sucesso!");
-          // New users always go to pricing to select a plan
-          navigate("/pricing");
+        toast.success("Conta criada com sucesso!");
+        // New users always go to pricing to select a plan
+        navigate("/pricing");
         }
       } catch (error) {
         const { handleApiError } = await import('@/utils/errorHandler');
@@ -464,8 +464,8 @@ export default function Login() {
                   <div className="space-y-2">
                     <div className="flex items-center justify-between mb-2">
                       <label className="block text-sm font-medium text-slate-400">
-                        Senha
-                      </label>
+                      Senha
+                    </label>
                       {!isRegister && (
                         <button
                           type="button"

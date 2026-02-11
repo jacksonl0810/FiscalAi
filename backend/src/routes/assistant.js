@@ -243,6 +243,53 @@ router.post('/process', assistantLimiter, [
       const actionType = mapFunctionToAction(functionName);
       const needsConfirm = requiresConfirmation(actionType);
       
+      // Check if action requires a company but user has none
+      const actionsRequiringCompany = [
+        'emitir_nfse', 'cancelar_nfse', 'listar_notas', 'ultima_nota', 
+        'notas_rejeitadas', 'consultar_status', 'consultar_faturamento', 
+        'ver_impostos', 'verificar_conexao'
+      ];
+      
+      if (actionsRequiringCompany.includes(actionType)) {
+        const userCompanies = await prisma.company.findMany({
+          where: { userId: req.user.id },
+          select: { id: true }
+        });
+        
+        if (userCompanies.length === 0) {
+          responseData = {
+            success: true,
+            action: { type: 'empresa_necessaria', data: null },
+            explanation: `🏢 **Você ainda não tem uma empresa cadastrada!**\n\n` +
+              `Para emitir notas fiscais e acessar as funcionalidades de gestão fiscal, você precisa primeiro cadastrar sua empresa.\n\n` +
+              `**Como cadastrar:**\n` +
+              `1. Clique em **"+ Adicionar empresa"** no menu lateral, ou\n` +
+              `2. Acesse **"Minhas Empresas"** e clique em **"Nova Empresa"**\n\n` +
+              `Você precisará informar:\n` +
+              `• CNPJ da empresa\n` +
+              `• Razão Social\n` +
+              `• Cidade e Estado\n` +
+              `• Regime Tributário (MEI ou Simples Nacional)\n` +
+              `• Inscrição Municipal\n` +
+              `• Certificado Digital (para integração com a prefeitura)\n\n` +
+              `💡 **Dica:** Se você é MEI, seu CNPJ está no Certificado MEI (CCMEI) que você recebeu ao se formalizar.`,
+            requiresConfirmation: false
+          };
+          
+          // Save response to conversation history
+          await prisma.conversationMessage.create({
+            data: {
+              userId: req.user.id,
+              role: 'assistant',
+              content: responseData.explanation,
+              metadata: { action: responseData.action }
+            }
+          });
+          
+          return res.json(responseData);
+        }
+      }
+      
       // Build response data with extracted action
       responseData = {
         success: true,
@@ -365,6 +412,9 @@ function generateExplanationForAction(actionType, args) {
     case 'criar_cliente':
       return `👤 Vou cadastrar o cliente ${args.name || 'informado'}. ${args.document ? `Documento: ${args.document}` : 'Preciso do CPF ou CNPJ para continuar.'}`;
     
+    case 'criar_empresa':
+      return `🏢 Vou cadastrar a empresa ${args.razao_social || 'informada'}. ${args.cnpj ? `CNPJ: ${args.cnpj}` : 'Preciso do CNPJ para continuar.'}`;
+    
     case 'listar_clientes':
       return '👥 Vou listar seus clientes cadastrados';
     
@@ -378,7 +428,10 @@ function generateExplanationForAction(actionType, args) {
       return '🔌 Vou verificar o status da conexão com a prefeitura';
     
     case 'ajuda':
-      return '❓ Como posso ajudar? Posso:\n\n• Emitir notas fiscais\n• Consultar faturamento\n• Ver impostos pendentes\n• Gerenciar clientes\n\nO que você precisa?';
+      return '❓ Como posso ajudar? Posso:\n\n• 📝 Emitir notas fiscais\n• 👥 Cadastrar clientes\n• 🏢 Cadastrar empresas\n• 💰 Consultar faturamento\n• 📊 Ver impostos pendentes\n• 🔌 Verificar conexão fiscal\n\nO que você precisa?';
+    
+    case 'fora_de_escopo':
+      return `Desculpe, não posso ajudar com isso. Sou a MAY, sua assistente fiscal especializada. 😊\n\nPosso ajudar você com:\n📝 Emitir notas fiscais\n👥 Cadastrar clientes e empresas\n💰 Consultar faturamento\n📊 Ver impostos e guias DAS\n🔌 Verificar conexão fiscal\n\nComo posso ajudar com sua gestão fiscal?`;
     
     default:
       return 'Processando sua solicitação...';
@@ -398,6 +451,8 @@ function messageMatchesPriorityIntent(message) {
   if (/emitir\s+(?:uma\s+)?nota|nova\s+nota/i.test(message)) return true;
   // Criar cliente
   if (/criar\s+cliente\s+.+\s+(?:cpf|cnpj)/i.test(message)) return true;
+  // Criar empresa / cadastrar empresa / nova empresa
+  if (/(?:criar|cadastrar|registrar|nova)\s+empresa/i.test(message)) return true;
   
   // Standalone CPF/CNPJ input (e.g., "Erina Silva CPF 123.234.789-00")
   // This handles responses to client creation requests without "criar cliente" prefix
@@ -461,9 +516,56 @@ async function processWithPatternMatching(message, userId, companyId, res, inten
   // Get user's companies for queries
   const companies = await prisma.company.findMany({
     where: { userId },
-    select: { id: true, razaoSocial: true, cidade: true }
+    select: { id: true, razaoSocial: true, cidade: true, regimeTributario: true }
   });
   const companyIds = companies.map(c => c.id);
+  
+  // ========================================
+  // CHECK: User has no company registered
+  // ========================================
+  const requiresCompanyPatterns = [
+    /emitir\s+(?:uma\s+)?nota/i,
+    /nova\s+nota/i,
+    /gerar\s+nota/i,
+    /criar\s+nota/i,
+    /faturamento/i,
+    /quanto\s+faturei/i,
+    /minhas?\s+notas?/i,
+    /última\s+nota/i,
+    /ultima\s+nota/i,
+    /notas?\s+(?:fiscais?|rejeitadas?|pendentes?)/i,
+    /(?:ver|consultar|listar)\s+notas?/i,
+    /impostos?/i,
+    /(?:guias?|das)\s+(?:pendentes?|pagos?|vencidos?)/i,
+    /(?:ver|consultar)\s+das/i,
+    /cancelar\s+nota/i,
+    /status\s+(?:da\s+)?nota/i
+  ];
+  
+  const messageRequiresCompany = requiresCompanyPatterns.some(pattern => pattern.test(message));
+  
+  if (messageRequiresCompany && companies.length === 0) {
+    const responseData = {
+      success: true,
+      action: { type: 'empresa_necessaria', data: null },
+      explanation: `🏢 **Você ainda não tem uma empresa cadastrada!**\n\n` +
+        `Para emitir notas fiscais e acessar as funcionalidades de gestão fiscal, você precisa primeiro cadastrar sua empresa.\n\n` +
+        `**Como cadastrar:**\n` +
+        `1. Clique em **"+ Adicionar empresa"** no menu lateral, ou\n` +
+        `2. Acesse **"Minhas Empresas"** e clique em **"Nova Empresa"**\n\n` +
+        `Você precisará informar:\n` +
+        `• CNPJ da empresa\n` +
+        `• Razão Social\n` +
+        `• Cidade e Estado\n` +
+        `• Regime Tributário (MEI ou Simples Nacional)\n` +
+        `• Inscrição Municipal\n` +
+        `• Certificado Digital (para integração com a prefeitura)\n\n` +
+        `💡 **Dica:** Se você é MEI, seu CNPJ está no Certificado MEI (CCMEI) que você recebeu ao se formalizar.`,
+      requiresConfirmation: false
+    };
+    res.json(responseData);
+    return responseData;
+  }
 
   // ========================================
   // QUERY: Last invoice / Última nota
@@ -903,6 +1005,77 @@ async function processWithPatternMatching(message, userId, companyId, res, inten
         success: false,
         action: null,
         explanation: `Erro ao cadastrar cliente: ${error.message}`,
+        requiresConfirmation: false
+      };
+      res.json(responseData);
+      return responseData;
+    }
+  }
+
+  // ========================================
+  // PATTERN: Create company
+  // ========================================
+  if (/(?:criar|cadastrar|registrar|nova)\s+empresa/i.test(message)) {
+    // Try to extract company data from the message
+    const cnpjExtract = message.match(/(?:cnpj)\s*:?\s*(\d{2}\.?\d{3}\.?\d{3}[\/\-]?\d{4}-?\d{2}|\d{14})/i);
+    
+    if (cnpjExtract) {
+      const cnpj = cnpjExtract[1].replace(/\D/g, '');
+      
+      if (cnpj.length !== 14) {
+        const responseData = {
+          success: false,
+          action: null,
+          explanation: 'O CNPJ informado é inválido. O CNPJ deve ter 14 dígitos.\n\nPor favor, informe no formato correto:\n• 12.345.678/0001-99 ou\n• 12345678000199',
+          requiresConfirmation: false
+        };
+        res.json(responseData);
+        return responseData;
+      }
+
+      // Check if company with this CNPJ already exists
+      const existingCompany = await prisma.company.findFirst({
+        where: { cnpj }
+      });
+
+      if (existingCompany) {
+        const responseData = {
+          success: true,
+          action: { type: 'empresa_existente', data: { id: existingCompany.id, nome: existingCompany.razaoSocial } },
+          explanation: `Já existe uma empresa cadastrada com este CNPJ: **${existingCompany.razaoSocial}**.\n\nSe quiser editar os dados desta empresa, acesse "Minhas Empresas" no menu lateral.`,
+          requiresConfirmation: false
+        };
+        res.json(responseData);
+        return responseData;
+      }
+
+      // Extract other fields from message
+      const razaoMatch = message.match(/(?:raz[aã]o\s+social|nome)\s*:?\s*"?([^"]+?)"?\s*(?:,|cnpj|cidade|uf|regime|email|telefone|$)/i);
+      const cidadeMatch = message.match(/(?:cidade)\s*:?\s*"?([^",]+)"?/i);
+      const ufMatch = message.match(/(?:uf|estado)\s*:?\s*([A-Za-z]{2})/i);
+
+      const responseData = {
+        success: true,
+        action: { 
+          type: 'criar_empresa', 
+          data: { 
+            cnpj,
+            razao_social: razaoMatch ? razaoMatch[1].trim() : null,
+            cidade: cidadeMatch ? cidadeMatch[1].trim() : null,
+            uf: ufMatch ? ufMatch[1].toUpperCase() : null
+          } 
+        },
+        explanation: `🏢 Para cadastrar a empresa com CNPJ **${cnpj.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, '$1.$2.$3/$4-$5')}**, preciso de mais informações:\n\n• **Razão Social** (obrigatório)\n• **Cidade e UF** (obrigatório)\n• **Regime Tributário** (MEI ou Simples Nacional)\n• **Email e Telefone**\n• **Inscrição Municipal**\n\nVocê pode fornecer essas informações ou cadastrar diretamente em **"Minhas Empresas"** no menu lateral, onde há um formulário completo com todos os campos necessários.\n\n💡 **Recomendo usar o formulário completo** para garantir que todos os dados fiscais estejam corretos para emissão de notas.`,
+        requiresConfirmation: false
+      };
+      res.json(responseData);
+      return responseData;
+    } else {
+      // No CNPJ provided - ask for it
+      const responseData = {
+        success: true,
+        action: { type: 'criar_empresa', data: null },
+        explanation: `🏢 Para cadastrar uma nova empresa, posso ajudar! Preciso do CNPJ para começar.\n\nDiga o CNPJ da empresa, por exemplo:\n• "criar empresa CNPJ 12.345.678/0001-99"\n\nOu, para um cadastro mais completo, acesse **"Minhas Empresas"** no menu lateral e clique em **"Nova Empresa"**. Lá você pode preencher todos os campos necessários como:\n- CNPJ e Razão Social\n- Cidade e Estado\n- Regime Tributário\n- Inscrição Municipal\n- Certificado Digital`,
         requiresConfirmation: false
       };
       res.json(responseData);
@@ -2026,6 +2199,134 @@ async function executeEmitNfse(actionData, company, userId, res) {
     console.warn('[Invoice] Plan limit warnings:', limitsValidation.warnings);
   }
 
+  // ========================================
+  // PAY PER USE: Charge user for invoice emission
+  // ========================================
+  let invoiceUsageRecord = null;
+  
+  if (limitsValidation.isPayPerUse) {
+    console.log('[Invoice] Pay Per Use plan detected, processing payment...');
+    
+    // Get user's Stripe customer ID
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, email: true, name: true, stripeCustomerId: true }
+    });
+    
+    if (!user.stripeCustomerId) {
+      throw new AppError(
+        'Método de pagamento não configurado.\n\n' +
+        'Para emitir notas no plano Pay per Use, você precisa cadastrar um cartão de crédito.\n\n' +
+        '💳 Acesse **Configurações** > **Assinatura** para adicionar seu cartão.',
+        402,
+        'PAYMENT_METHOD_REQUIRED'
+      );
+    }
+    
+    // Import Stripe SDK
+    const { chargeOneTimePayment, getCustomerPaymentMethods } = await import('../services/stripeSDK.js');
+    
+    // Check if customer has a payment method
+    const paymentMethods = await getCustomerPaymentMethods(user.stripeCustomerId);
+    if (paymentMethods.length === 0) {
+      throw new AppError(
+        'Nenhum cartão cadastrado.\n\n' +
+        'Para emitir notas no plano Pay per Use (R$ 9,00 por nota), você precisa cadastrar um cartão de crédito.\n\n' +
+        '💳 Acesse **Configurações** > **Assinatura** para adicionar seu cartão.',
+        402,
+        'PAYMENT_METHOD_REQUIRED'
+      );
+    }
+    
+    const invoiceValue = parseFloat(actionData.valor);
+    const perInvoicePrice = limitsValidation.perInvoicePrice || 900; // R$9.00 in cents
+    
+    try {
+      // Charge the user
+      const paymentResult = await chargeOneTimePayment({
+        customerId: user.stripeCustomerId,
+        amount: perInvoicePrice,
+        currency: 'brl',
+        description: `MAY - Nota Fiscal: ${actionData.cliente_nome} - R$ ${invoiceValue.toFixed(2)}`,
+        metadata: {
+          userId: userId,
+          companyId: company.id,
+          invoiceValue: invoiceValue.toString(),
+          clienteName: actionData.cliente_nome,
+          type: 'pay_per_use_invoice'
+        }
+      });
+      
+      if (!paymentResult.success) {
+        if (paymentResult.requiresAction) {
+          throw new AppError(
+            'Seu cartão requer autenticação adicional (3D Secure).\n\n' +
+            'Por favor, acesse **Configurações** > **Assinatura** para completar a verificação do cartão.',
+            402,
+            'PAYMENT_REQUIRES_ACTION',
+            { clientSecret: paymentResult.clientSecret }
+          );
+        }
+        throw new AppError('Falha no pagamento. Verifique seu cartão.', 402, 'PAYMENT_FAILED');
+      }
+      
+      console.log('[Invoice] ✅ Pay Per Use payment successful:', paymentResult.paymentIntentId);
+      
+      // Create InvoiceUsage record
+      const now = new Date();
+      invoiceUsageRecord = await prisma.invoiceUsage.create({
+        data: {
+          userId: userId,
+          companyId: company.id,
+          planId: 'pay_per_use',
+          periodYear: now.getFullYear(),
+          periodMonth: now.getMonth() + 1,
+          amount: perInvoicePrice,
+          status: 'paid',
+          paymentOrderId: paymentResult.paymentIntentId
+        }
+      });
+      
+      console.log('[Invoice] InvoiceUsage record created:', invoiceUsageRecord.id);
+      
+    } catch (paymentError) {
+      console.error('[Invoice] Pay Per Use payment failed:', paymentError.message);
+      
+      // Translate common Stripe errors
+      let errorMessage = 'Não foi possível processar o pagamento.';
+      
+      if (paymentError.message.includes('CARD_ERROR')) {
+        errorMessage = 'Cartão recusado. Por favor, verifique os dados do cartão ou tente outro cartão.';
+      } else if (paymentError.message.includes('PAYMENT_METHOD_REQUIRED')) {
+        errorMessage = 'Método de pagamento não encontrado. Cadastre um cartão em Configurações > Assinatura.';
+      } else if (paymentError.code === 'PAYMENT_REQUIRES_ACTION') {
+        throw paymentError; // Re-throw to preserve the error details
+      }
+      
+      // Create failed InvoiceUsage record for tracking
+      await prisma.invoiceUsage.create({
+        data: {
+          userId: userId,
+          companyId: company.id,
+          planId: 'pay_per_use',
+          periodYear: new Date().getFullYear(),
+          periodMonth: new Date().getMonth() + 1,
+          amount: perInvoicePrice,
+          status: 'failed',
+          paymentOrderId: null
+        }
+      });
+      
+      throw new AppError(
+        `💳 **Pagamento não autorizado**\n\n${errorMessage}\n\n` +
+        `O plano Pay per Use cobra R$ 9,00 por nota fiscal emitida.\n\n` +
+        `Acesse **Configurações** > **Assinatura** para atualizar seu cartão.`,
+        402,
+        'PAYMENT_FAILED'
+      );
+    }
+  }
+
   // Check if Nuvem Fiscal is configured
   if (!isNuvemFiscalConfigured()) {
     throw new AppError(
@@ -2169,9 +2470,20 @@ async function executeEmitNfse(actionData, company, userId, res) {
         codigoServico: invoiceData.codigo_servico,
         pdfUrl: nfseResult.nfse.pdf_url,
         xmlUrl: nfseResult.nfse.xml_url,
-        nuvemFiscalId: nfseResult.nfse.nuvem_fiscal_id
+        nuvemFiscalId: nfseResult.nfse.nuvem_fiscal_id,
+        // Link to InvoiceUsage record for Pay Per Use tracking
+        invoiceUsageId: invoiceUsageRecord?.id || null
       }
     });
+    
+    // Update InvoiceUsage with invoice ID (for Pay Per Use tracking)
+    if (invoiceUsageRecord) {
+      await prisma.invoiceUsage.update({
+        where: { id: invoiceUsageRecord.id },
+        data: { invoiceId: invoice.id }
+      });
+      console.log('[Invoice] InvoiceUsage linked to invoice:', invoice.id);
+    }
 
     // Create initial status history entry
     await prisma.invoiceStatusHistory.create({
