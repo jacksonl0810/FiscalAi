@@ -306,15 +306,35 @@ export default function Assistant() {
           invoice_id: notaFiscal?.id
         });
 
+        const successContent = `✅ Nota fiscal ${notaFiscal?.status === 'autorizada' ? 'autorizada' : 'emitida'} com sucesso!\n\n📄 Número: ${notaFiscal?.numero || '---'}\n👤 Cliente: ${pendingInvoice.cliente_nome}\n💰 Valor: R$ ${pendingInvoice.valor.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}\n${notaFiscal?.codigo_verificacao ? `🔐 Código de Verificação: ${notaFiscal.codigo_verificacao}\n` : ''}\n✨ A nota foi enviada para a prefeitura através da Nuvem Fiscal.`;
+
+        // Save success message to conversation history (persists after reload)
+        try {
+          await assistantService.saveMessage({
+            role: 'assistant',
+            content: successContent,
+            metadata: { 
+              type: 'invoice_success', 
+              invoiceId: notaFiscal?.id,
+              invoiceNumber: notaFiscal?.numero,
+              clientName: pendingInvoice.cliente_nome,
+              value: pendingInvoice.valor
+            }
+          });
+        } catch (saveError) {
+          console.error('Error saving success message:', saveError);
+        }
+
         const aiResponse = {
           id: Date.now(),
           isAI: true,
-          content: `✅ Nota fiscal ${notaFiscal?.status === 'autorizada' ? 'autorizada' : 'emitida'} com sucesso via IA!\n\n📄 Número: ${notaFiscal?.numero || '---'}\n👤 Cliente: ${pendingInvoice.cliente_nome}\n💰 Valor: R$ ${pendingInvoice.valor.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}\n${notaFiscal?.codigo_verificacao ? `🔐 Código de Verificação: ${notaFiscal.codigo_verificacao}\n` : ''}\n✨ A nota foi enviada para a prefeitura através da Nuvem Fiscal. ${notaFiscal?.pdf_url ? 'O PDF e XML estão disponíveis na seção "Notas Fiscais".' : ''}`,
+          content: successContent,
           time: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
         };
         setMessages(prev => [...prev, aiResponse]);
         setPendingInvoice(null);
         queryClient.invalidateQueries({ queryKey: ['invoices'] });
+        queryClient.invalidateQueries({ queryKey: ['conversation-history'] });
       } else {
         throw new Error(result.message || 'Erro ao emitir nota fiscal');
       }
@@ -390,16 +410,37 @@ export default function Assistant() {
         invoice_id: notaFiscal?.id
       });
 
+      const successContent = `✅ Pagamento confirmado e nota fiscal ${notaFiscal?.status === 'autorizada' ? 'autorizada' : 'emitida'} com sucesso!\n\n💳 Taxa de emissão: R$ 9,00\n📄 Número: ${notaFiscal?.numero || '---'}\n👤 Cliente: ${pendingInvoice.cliente_nome}\n💰 Valor: R$ ${pendingInvoice.valor.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}\n${notaFiscal?.codigo_verificacao ? `🔐 Código de Verificação: ${notaFiscal.codigo_verificacao}\n` : ''}\n✨ A nota foi enviada para a prefeitura através da Nuvem Fiscal.`;
+
+      // Save success message to conversation history (persists after reload)
+      try {
+        await assistantService.saveMessage({
+          role: 'assistant',
+          content: successContent,
+          metadata: { 
+            type: 'invoice_success_paid', 
+            invoiceId: notaFiscal?.id,
+            invoiceNumber: notaFiscal?.numero,
+            clientName: pendingInvoice.cliente_nome,
+            value: pendingInvoice.valor,
+            paymentFee: 9.00
+          }
+        });
+      } catch (saveError) {
+        console.error('Error saving success message:', saveError);
+      }
+
       const aiResponse = {
         id: Date.now(),
         isAI: true,
-        content: `✅ Pagamento confirmado e nota fiscal ${notaFiscal?.status === 'autorizada' ? 'autorizada' : 'emitida'} com sucesso!\n\n💳 Taxa de emissão: R$ 9,00\n📄 Número: ${notaFiscal?.numero || '---'}\n👤 Cliente: ${pendingInvoice.cliente_nome}\n💰 Valor: R$ ${pendingInvoice.valor.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}\n${notaFiscal?.codigo_verificacao ? `🔐 Código de Verificação: ${notaFiscal.codigo_verificacao}\n` : ''}\n✨ A nota foi enviada para a prefeitura através da Nuvem Fiscal.`,
+        content: successContent,
         time: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
       };
       setMessages(prev => [...prev, aiResponse]);
       setPendingInvoice(null);
       queryClient.invalidateQueries({ queryKey: ['invoices'] });
       queryClient.invalidateQueries({ queryKey: ['plan-limits'] });
+      queryClient.invalidateQueries({ queryKey: ['conversation-history'] });
     }
   };
 
@@ -419,17 +460,123 @@ export default function Assistant() {
     // Keep pendingInvoice to allow inline editing
   };
 
-  const handleUpdateInvoice = (updatedInvoice) => {
+  const handleUpdateInvoice = async (updatedInvoice) => {
     // Called when user saves edits in the InvoicePreview component
-    setPendingInvoice(updatedInvoice);
+    setIsProcessing(true);
     
-    const aiResponse = {
-      id: Date.now(),
-      isAI: true,
-      content: `✏️ Dados atualizados!\n\n👤 Cliente: ${updatedInvoice.cliente_nome}\n💰 Valor: R$ ${updatedInvoice.valor?.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}\n📝 Serviço: ${updatedInvoice.descricao_servico || 'Serviço prestado'}\n\nConfira a prévia atualizada e confirme a emissão quando estiver correto.`,
-      time: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+    // Helper to format document for display
+    const formatDocument = (doc, tipo) => {
+      if (!doc) return '';
+      const clean = doc.replace(/\D/g, '');
+      if (tipo === 'pf' || clean.length === 11) {
+        return clean.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4');
+      }
+      return clean.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, '$1.$2.$3/$4-$5');
     };
-    setMessages(prev => [...prev, aiResponse]);
+
+    // Helper to update the last invoice-related AI message instead of adding new
+    const updateInvoiceMessage = (invoice, status = 'ready', extra = '') => {
+      const docLabel = invoice.cliente_documento?.length === 11 ? 'CPF' : 'CNPJ';
+      const formattedDoc = formatDocument(invoice.cliente_documento, docLabel === 'CPF' ? 'pf' : 'pj');
+      
+      const content = `📄 **Nota fiscal preparada:**\n\n• **Valor:** R$ ${invoice.valor?.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}\n• **Cliente:** ${invoice.cliente_nome}${formattedDoc ? `\n• **${docLabel}:** ${formattedDoc}` : ''}\n• **Serviço:** ${invoice.descricao_servico || 'Serviço prestado'}\n• **ISS:** ${invoice.aliquota_iss || 5}%\n\n${extra}☑️ Deseja confirmar a emissão desta nota?`;
+      
+      setMessages(prev => {
+        // Find and update the last invoice-prepared message or add new
+        const invoicePatterns = ['Nota fiscal preparada', 'Dados atualizados'];
+        const lastInvoiceMsgIndex = prev.map((m, i) => ({ m, i }))
+          .reverse()
+          .find(({ m }) => m.isAI && invoicePatterns.some(p => m.content?.includes(p)))?.i;
+        
+        if (lastInvoiceMsgIndex !== undefined) {
+          // Update existing message
+          const updated = [...prev];
+          updated[lastInvoiceMsgIndex] = {
+            ...updated[lastInvoiceMsgIndex],
+            content,
+            time: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+          };
+          return updated;
+        }
+        
+        // Add new message
+        return [...prev, {
+          id: Date.now(),
+          isAI: true,
+          content,
+          time: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+        }];
+      });
+    };
+    
+    try {
+      // If client info changed, validate against registered clients
+      const clientChanged = pendingInvoice?.cliente_nome !== updatedInvoice.cliente_nome ||
+                           pendingInvoice?.cliente_documento !== updatedInvoice.cliente_documento;
+      
+      if (clientChanged && (updatedInvoice.cliente_nome || updatedInvoice.cliente_documento)) {
+        // Use dedicated client validation endpoint
+        const validationResult = await assistantService.validateClient({
+          cliente_nome: updatedInvoice.cliente_nome,
+          cliente_documento: updatedInvoice.cliente_documento
+        });
+        
+        if (validationResult.found && validationResult.client) {
+          // Client exists - update invoice with correct info from database
+          const updatedWithClient = {
+            ...updatedInvoice,
+            cliente_nome: validationResult.client.nome,
+            cliente_documento: validationResult.client.documento,
+            client_id: validationResult.client.id
+          };
+          setPendingInvoice(updatedWithClient);
+          updateInvoiceMessage(updatedWithClient, 'ready', '✅ Cliente validado. ');
+        } else if (validationResult.canAutoCreate && validationResult.suggestedData) {
+          // Client not found but document is valid - will be auto-created
+          const updatedWithNewClient = {
+            ...updatedInvoice,
+            cliente_nome: validationResult.suggestedData.nome,
+            cliente_documento: validationResult.suggestedData.documento
+          };
+          setPendingInvoice(updatedWithNewClient);
+          updateInvoiceMessage(updatedWithNewClient, 'new_client', '⚠️ Cliente será cadastrado ao confirmar. ');
+        } else if (validationResult.similarClients && validationResult.similarClients.length > 0) {
+          // Found similar clients - suggest them
+          setPendingInvoice(updatedInvoice);
+          
+          const similarList = validationResult.similarClients.map(c => `• ${c.nome} (${c.documento})`).join('\n');
+          const aiResponse = {
+            id: Date.now(),
+            isAI: true,
+            content: `⚠️ Cliente "${updatedInvoice.cliente_nome}" não encontrado.\n\n📋 **Clientes semelhantes:**\n${similarList}\n\n💡 Selecione um ou informe o CPF/CNPJ.`,
+            time: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+          };
+          setMessages(prev => [...prev, aiResponse]);
+        } else {
+          // Client not found and no valid document
+          setPendingInvoice(updatedInvoice);
+          
+          const aiResponse = {
+            id: Date.now(),
+            isAI: true,
+            content: `⚠️ Cliente "${updatedInvoice.cliente_nome}" não encontrado.\n\n💡 Informe o CPF ou CNPJ no campo "Documento" para cadastrar.`,
+            time: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+          };
+          setMessages(prev => [...prev, aiResponse]);
+        }
+      } else {
+        // Only value/service changed - no client validation needed
+        setPendingInvoice(updatedInvoice);
+        updateInvoiceMessage(updatedInvoice);
+      }
+    } catch (error) {
+      console.error('Error validating client:', error);
+      // Fallback - just update without validation
+      setPendingInvoice(updatedInvoice);
+      updateInvoiceMessage(updatedInvoice);
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   const handleCancelInvoice = () => {
@@ -662,19 +809,15 @@ export default function Assistant() {
       </div>
 
       {/* Sidebar */}
-      <div className="w-80 hidden xl:flex flex-col gap-6">
+      <div className="w-72 hidden xl:flex flex-col gap-4">
         {/* Quick Actions */}
-        <div className={cn(
-          "relative rounded-2xl p-6 overflow-hidden",
-          "bg-gradient-to-br from-slate-900/80 via-slate-800/60 to-slate-900/80",
-          "backdrop-blur-xl border border-white/10",
-          "shadow-2xl shadow-black/50",
-          "before:absolute before:inset-0 before:bg-gradient-to-br before:from-orange-500/5 before:via-transparent before:to-transparent before:pointer-events-none"
-        )}>
-          <h3 className={cn(
-            "text-sm font-bold text-gray-300 mb-5 uppercase tracking-wider relative z-10"
-          )}>Ações Rápidas</h3>
-          <div className="space-y-3 relative z-10">
+        <div className="rounded-2xl bg-[#1a1d24] border border-white/5 overflow-hidden">
+          <div className="px-5 py-4 border-b border-white/5">
+            <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-widest">
+              Ações Rápidas
+            </h3>
+          </div>
+          <div className="p-2">
             {[
               { label: "Nova nota fiscal", action: "Emitir nova nota fiscal" },
               { label: "Consultar faturamento", action: "Qual meu faturamento?" },
@@ -685,15 +828,10 @@ export default function Assistant() {
                 onClick={() => processMessage(item.action)}
                 disabled={isProcessing}
                 className={cn(
-                  "w-full text-left px-5 py-3.5 rounded-xl",
-                  "bg-gradient-to-br from-white/5 via-white/3 to-white/5",
-                  "border border-white/10",
-                  "text-gray-200 text-sm font-medium",
-                  "hover:bg-gradient-to-br hover:from-white/10 hover:via-white/5 hover:to-white/10",
-                  "hover:border-orange-500/30 hover:text-white",
-                  "transition-all duration-200",
-                  "shadow-md hover:shadow-lg hover:shadow-orange-500/10",
-                  "backdrop-blur-sm",
+                  "w-full text-left px-4 py-3 rounded-lg",
+                  "text-gray-300 text-sm font-medium",
+                  "hover:bg-white/5 hover:text-white",
+                  "transition-colors duration-150",
                   "disabled:opacity-50 disabled:cursor-not-allowed"
                 )}
               >

@@ -507,7 +507,15 @@ router.get('/companies', [
         fiscalIntegrationStatus: {
           select: {
             status: true,
+            mensagem: true,
             ultimaVerificacao: true
+          }
+        },
+        fiscalCredential: {
+          select: {
+            id: true,
+            type: true,
+            expiresAt: true
           }
         },
         _count: {
@@ -520,8 +528,48 @@ router.get('/companies', [
     prisma.company.count({ where })
   ]);
 
+  // Enhance companies with computed fiscal status
+  const enhancedCompanies = companies.map(company => {
+    let fiscalStatus = 'pendente'; // Default
+    let fiscalStatusLabel = 'Pendente';
+    
+    // Check if has Nuvem Fiscal ID (registered in Nuvem Fiscal)
+    if (company.nuvemFiscalId) {
+      // Check fiscal integration status
+      if (company.fiscalIntegrationStatus?.status === 'conectado') {
+        fiscalStatus = 'conectado';
+        fiscalStatusLabel = 'Conectado';
+      } else if (company.fiscalIntegrationStatus?.status === 'falha') {
+        fiscalStatus = 'erro';
+        fiscalStatusLabel = 'Erro';
+      } else if (company.fiscalIntegrationStatus?.status === 'verificando') {
+        fiscalStatus = 'verificando';
+        fiscalStatusLabel = 'Verificando';
+      } else {
+        // Has Nuvem Fiscal ID but no integration status - likely configured
+        fiscalStatus = 'configurado';
+        fiscalStatusLabel = 'Configurado';
+      }
+    } else {
+      // No Nuvem Fiscal ID
+      if (company.certificadoDigital && company.certificateUploadedToNuvemFiscal) {
+        fiscalStatus = 'certificado_ok';
+        fiscalStatusLabel = 'Certificado OK';
+      } else if (company.certificadoDigital) {
+        fiscalStatus = 'certificado_pendente';
+        fiscalStatusLabel = 'Certificado Pendente';
+      }
+    }
+    
+    return {
+      ...company,
+      computedFiscalStatus: fiscalStatus,
+      computedFiscalStatusLabel: fiscalStatusLabel
+    };
+  });
+
   sendSuccess(res, 'Companies retrieved', {
-    companies,
+    companies: enhancedCompanies,
     pagination: {
       page,
       limit,

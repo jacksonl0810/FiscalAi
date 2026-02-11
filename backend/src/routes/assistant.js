@@ -290,6 +290,83 @@ router.post('/process', assistantLimiter, [
         }
       }
       
+      // For criar_cliente with complete data, auto-execute instead of requiring confirmation
+      if (actionType === 'criar_cliente' && functionArgs.name && functionArgs.document) {
+        const cleanDocument = functionArgs.document.replace(/\D/g, '');
+        if (cleanDocument.length === 11 || cleanDocument.length === 14) {
+          console.log('[Assistant] Auto-executing criar_cliente with complete data:', functionArgs);
+          
+          const tipoPessoa = cleanDocument.length === 11 ? 'pf' : 'pj';
+          const docLabel = tipoPessoa === 'pf' ? 'CPF' : 'CNPJ';
+          
+          // Check if client already exists
+          const existingClient = await prisma.client.findFirst({
+            where: {
+              userId: req.user.id,
+              documento: cleanDocument
+            }
+          });
+          
+          if (existingClient) {
+            const docFormatado = formatDocumentForDisplay(existingClient.documento, existingClient.tipoPessoa);
+            responseData = {
+              success: true,
+              action: { type: 'cliente_existente', data: { id: existingClient.id, nome: existingClient.nome, documento: existingClient.documento } },
+              explanation: `Já existe um cliente cadastrado com este ${docLabel}: **${existingClient.nome}** (${docFormatado}).\n\n` +
+                `Você pode emitir notas para ele. Diga:\n` +
+                `"Emitir nota de R$ [valor] para ${existingClient.nome}"`,
+              requiresConfirmation: false
+            };
+          } else {
+            // Create new client
+            try {
+              const newClient = await prisma.client.create({
+                data: {
+                  userId: req.user.id,
+                  nome: functionArgs.name.trim(),
+                  documento: cleanDocument,
+                  tipoPessoa,
+                  email: functionArgs.email || null,
+                  telefone: functionArgs.phone || null,
+                  ativo: true
+                }
+              });
+              
+              const docFormatado = formatDocumentForDisplay(cleanDocument, tipoPessoa);
+              responseData = {
+                success: true,
+                action: { type: 'cliente_criado', data: { id: newClient.id, nome: newClient.nome, documento: newClient.documento } },
+                explanation: `✅ Cliente **${newClient.nome}** cadastrado com sucesso!\n\n` +
+                  `${docLabel}: ${docFormatado}\n\n` +
+                  `Agora você pode emitir notas para este cliente. Diga:\n` +
+                  `"Emitir nota de R$ [valor] para ${newClient.nome}"`,
+                requiresConfirmation: false
+              };
+            } catch (createError) {
+              console.error('[Assistant] Error auto-creating client:', createError.message);
+              responseData = {
+                success: false,
+                action: null,
+                explanation: `❌ Não foi possível cadastrar o cliente.\n\nErro: ${createError.message}`,
+                requiresConfirmation: false
+              };
+            }
+          }
+          
+          // Save response and return
+          await prisma.conversationMessage.create({
+            data: {
+              userId: req.user.id,
+              role: 'assistant',
+              content: responseData.explanation,
+              metadata: responseData.action ? JSON.parse(JSON.stringify({ action: responseData.action })) : null
+            }
+          });
+          
+          return res.json(responseData);
+        }
+      }
+      
       // Build response data with extracted action
       responseData = {
         success: true,
@@ -446,6 +523,34 @@ function generateExplanationForAction(actionType, args) {
 function messageMatchesPriorityIntent(message) {
   const lower = message.toLowerCase();
   const trimmedMessage = message.trim();
+  const messageLines = message.split('\n').map(line => line.trim()).filter(line => line.length > 0);
+  
+  // Multi-line message detection (value + name + document on separate lines)
+  if (messageLines.length >= 2) {
+    let hasValue = false;
+    let hasName = false;
+    let hasDocument = false;
+    
+    for (const line of messageLines) {
+      // Check for value
+      if (/^\d+(?:[.,]\d+)?(?:\s*(?:reais|k))?$/i.test(line) || /^r\$\s*\d/i.test(line)) {
+        hasValue = true;
+      }
+      // Check for document (CPF/CNPJ)
+      if (/(?:cpf|cnpj|documento)\s*:?\s*\d/i.test(line) || /^\d{11}$|^\d{14}$/.test(line.replace(/\D/g, ''))) {
+        hasDocument = true;
+      }
+      // Check for name (text only line)
+      if (/^[A-Za-zÀ-ÿ\s.]+$/i.test(line) && line.length >= 2 && !/^(?:cpf|cnpj|documento|valor|r\$)$/i.test(line)) {
+        hasName = true;
+      }
+    }
+    
+    // If we have name + document (or name + value), it's a priority intent
+    if ((hasName && hasDocument) || (hasName && hasValue) || (hasValue && hasDocument)) {
+      return true;
+    }
+  }
   
   // Invoice emission - ALL variations
   // Basic patterns
@@ -586,6 +691,284 @@ async function processWithPatternMatching(message, userId, companyId, res, inten
     };
     res.json(responseData);
     return responseData;
+  }
+
+  // ========================================
+  // PATTERN: Multi-line message handler
+  // Handles messages where value, name, and document are on separate lines:
+  //   "10,00
+  //    LUCIANO BERNARDO
+  //    CPF 65325273949"
+  // This should be interpreted as an invoice emission request
+  // ========================================
+  const messageLines = message.split('\n').map(line => line.trim()).filter(line => line.length > 0);
+  
+  if (messageLines.length >= 2) {
+    const { extractMonetaryValue, extractDocument } = await import('../services/aiIntentService.js');
+    
+    // Try to extract value, name, and document from the multi-line message
+    let multiLineValue = null;
+    let multiLineName = null;
+    let multiLineDocument = null;
+    
+    for (const line of messageLines) {
+      // Check for value (numbers with comma/dot as decimal separator)
+      if (!multiLineValue) {
+        // Match patterns like "10,00", "1.500,00", "R$ 100", "100 reais", "2k"
+        const valueMatch = line.match(/^(\d+(?:[.,]\d+)?)\s*(?:reais)?$/i) ||
+                          line.match(/^r\$\s*(\d+(?:[.,]\d+)?)/i) ||
+                          line.match(/^(\d+(?:[.,]?\d+)?)\s*k$/i);
+        if (valueMatch) {
+          let val = valueMatch[1].replace(',', '.');
+          if (line.toLowerCase().includes('k')) {
+            val = parseFloat(val) * 1000;
+          }
+          multiLineValue = parseFloat(val);
+          continue;
+        }
+        // Also try extractMonetaryValue on the whole line
+        const extractedVal = extractMonetaryValue(line);
+        if (extractedVal) {
+          multiLineValue = extractedVal;
+          continue;
+        }
+      }
+      
+      // Check for document (CPF/CNPJ)
+      if (!multiLineDocument) {
+        const docMatch = line.match(/(?:cpf|cnpj|documento)\s*:?\s*(\d[\d.\-\/]*\d)/i) ||
+                        line.match(/^(\d{3}\.?\d{3}\.?\d{3}[-.]?\d{2})$/) || // CPF format
+                        line.match(/^(\d{2}\.?\d{3}\.?\d{3}[\/]?\d{4}[-.]?\d{2})$/) || // CNPJ format
+                        line.match(/^(\d{11}|\d{14})$/); // Plain digits
+        if (docMatch) {
+          const cleanDoc = docMatch[1].replace(/\D/g, '');
+          if (cleanDoc.length === 11 || cleanDoc.length === 14) {
+            multiLineDocument = cleanDoc;
+            continue;
+          }
+        }
+        const extractedDoc = extractDocument(line);
+        if (extractedDoc) {
+          multiLineDocument = extractedDoc.value;
+          continue;
+        }
+      }
+      
+      // Check for name (text line that's not value or document)
+      if (!multiLineName) {
+        // If line is mostly letters (with spaces) and not a keyword
+        const isNameLine = /^[A-Za-zÀ-ÿ\s.]+$/.test(line) && 
+                          line.length >= 2 && 
+                          !/^(?:cpf|cnpj|documento|valor|cliente|nota|emitir|r\$)$/i.test(line);
+        if (isNameLine) {
+          multiLineName = line.trim();
+          continue;
+        }
+      }
+    }
+    
+    // If we have value + name (with or without document), treat as invoice emission
+    if (multiLineValue && multiLineName && companies.length > 0) {
+      console.log('[MultiLine] Detected invoice emission:', { value: multiLineValue, name: multiLineName, document: multiLineDocument });
+      
+      // Check if client exists
+      const matchingClient = await prisma.client.findFirst({
+        where: {
+          userId,
+          ativo: true,
+          OR: [
+            { nome: { contains: multiLineName, mode: 'insensitive' } },
+            { apelido: { contains: multiLineName, mode: 'insensitive' } },
+            ...(multiLineDocument ? [{ documento: multiLineDocument }] : [])
+          ]
+        }
+      });
+      
+      if (matchingClient) {
+        // Found client - prepare invoice
+        const valorFormatado = multiLineValue.toLocaleString('pt-BR', { minimumFractionDigits: 2 });
+        const docLabel = matchingClient.tipoPessoa === 'pf' ? 'CPF' : 'CNPJ';
+        const docFormatado = formatDocumentForDisplay(matchingClient.documento, matchingClient.tipoPessoa);
+        
+        const responseData = {
+          success: true,
+          action: {
+            type: 'emitir_nfse',
+            data: {
+              cliente_nome: matchingClient.nome,
+              cliente_documento: matchingClient.documento,
+              descricao_servico: 'Serviço prestado',
+              valor: multiLineValue,
+              aliquota_iss: 5,
+              client_id: matchingClient.id
+            }
+          },
+          explanation: `📝 **Nota fiscal preparada:**\n\n` +
+            `• **Valor:** R$ ${valorFormatado}\n` +
+            `• **Cliente:** ${matchingClient.nome}\n` +
+            `• **${docLabel}:** ${docFormatado}\n` +
+            `• **Serviço:** Serviço prestado\n` +
+            `• **ISS:** 5%\n\n` +
+            `✅ Deseja confirmar a emissão desta nota?`,
+          requiresConfirmation: true
+        };
+        res.json(responseData);
+        return responseData;
+      } else if (multiLineDocument) {
+        // Client not found but we have document - offer to create
+        const tipoPessoa = multiLineDocument.length === 11 ? 'pf' : 'pj';
+        const docLabel = tipoPessoa === 'pf' ? 'CPF' : 'CNPJ';
+        const docFormatado = formatDocumentForDisplay(multiLineDocument, tipoPessoa);
+        const valorFormatado = multiLineValue.toLocaleString('pt-BR', { minimumFractionDigits: 2 });
+        
+        // Auto-create the client and prepare invoice
+        try {
+          const newClient = await prisma.client.create({
+            data: {
+              userId,
+              nome: multiLineName,
+              documento: multiLineDocument,
+              tipoPessoa,
+              ativo: true
+            }
+          });
+          
+          const responseData = {
+            success: true,
+            action: {
+              type: 'emitir_nfse',
+              data: {
+                cliente_nome: newClient.nome,
+                cliente_documento: newClient.documento,
+                descricao_servico: 'Serviço prestado',
+                valor: multiLineValue,
+                aliquota_iss: 5,
+                client_id: newClient.id
+              }
+            },
+            explanation: `✅ Cliente **${newClient.nome}** cadastrado automaticamente!\n\n` +
+              `📝 **Nota fiscal preparada:**\n\n` +
+              `• **Valor:** R$ ${valorFormatado}\n` +
+              `• **Cliente:** ${newClient.nome}\n` +
+              `• **${docLabel}:** ${docFormatado}\n` +
+              `• **Serviço:** Serviço prestado\n` +
+              `• **ISS:** 5%\n\n` +
+              `✅ Deseja confirmar a emissão desta nota?`,
+            requiresConfirmation: true
+          };
+          res.json(responseData);
+          return responseData;
+        } catch (createError) {
+          console.error('[MultiLine] Error creating client:', createError.message);
+          // If client creation failed, ask user to provide document
+          const responseData = {
+            success: true,
+            action: {
+              type: 'criar_cliente_e_emitir',
+              data: {
+                cliente_nome: multiLineName,
+                cliente_documento: multiLineDocument,
+                valor: multiLineValue,
+                aliquota_iss: 5
+              }
+            },
+            explanation: `Não consegui cadastrar o cliente automaticamente.\n\n` +
+              `Para emitir a nota de R$ ${valorFormatado} para **${multiLineName}**, diga "criar cliente ${multiLineName} ${docLabel} ${docFormatado}" e depois tente novamente.`,
+            requiresConfirmation: false
+          };
+          res.json(responseData);
+          return responseData;
+        }
+      } else {
+        // Client not found and no document - ask for document
+        const valorFormatado = multiLineValue.toLocaleString('pt-BR', { minimumFractionDigits: 2 });
+        const responseData = {
+          success: true,
+          action: {
+            type: 'criar_cliente_e_emitir',
+            data: {
+              cliente_nome: multiLineName,
+              valor: multiLineValue,
+              aliquota_iss: 5
+            }
+          },
+          explanation: `Não encontrei **${multiLineName}** cadastrado.\n\n` +
+            `Para emitir a nota de R$ ${valorFormatado}, preciso do CPF ou CNPJ do cliente.\n\n` +
+            `Por favor, informe o documento ou diga:\n` +
+            `"criar cliente ${multiLineName} CPF 123.456.789-00"`,
+          requiresConfirmation: false
+        };
+        res.json(responseData);
+        return responseData;
+      }
+    }
+    
+    // If we only have name + document (no value), treat as client creation
+    if (!multiLineValue && multiLineName && multiLineDocument) {
+      console.log('[MultiLine] Detected client creation:', { name: multiLineName, document: multiLineDocument });
+      
+      const tipoPessoa = multiLineDocument.length === 11 ? 'pf' : 'pj';
+      
+      // Check if client already exists
+      const existingClient = await prisma.client.findFirst({
+        where: {
+          userId,
+          documento: multiLineDocument
+        }
+      });
+      
+      if (existingClient) {
+        const docLabel = existingClient.tipoPessoa === 'pf' ? 'CPF' : 'CNPJ';
+        const docFormatado = formatDocumentForDisplay(existingClient.documento, existingClient.tipoPessoa);
+        const responseData = {
+          success: true,
+          action: { type: 'cliente_existente', data: { id: existingClient.id, nome: existingClient.nome, documento: existingClient.documento } },
+          explanation: `Já existe um cliente cadastrado com este ${docLabel}: **${existingClient.nome}** (${docFormatado}).\n\n` +
+            `Você pode emitir notas para ele. Diga:\n` +
+            `"Emitir nota de R$ [valor] para ${existingClient.nome}"`,
+          requiresConfirmation: false
+        };
+        res.json(responseData);
+        return responseData;
+      }
+      
+      // Create new client
+      try {
+        const newClient = await prisma.client.create({
+          data: {
+            userId,
+            nome: multiLineName,
+            documento: multiLineDocument,
+            tipoPessoa,
+            ativo: true
+          }
+        });
+        
+        const docLabel = tipoPessoa === 'pf' ? 'CPF' : 'CNPJ';
+        const docFormatado = formatDocumentForDisplay(multiLineDocument, tipoPessoa);
+        const responseData = {
+          success: true,
+          action: { type: 'cliente_criado', data: { id: newClient.id, nome: newClient.nome, documento: newClient.documento } },
+          explanation: `✅ Cliente **${newClient.nome}** cadastrado com sucesso!\n\n` +
+            `${docLabel}: ${docFormatado}\n\n` +
+            `Agora você pode emitir notas para este cliente. Diga:\n` +
+            `"Emitir nota de R$ [valor] para ${newClient.nome}"`,
+          requiresConfirmation: false
+        };
+        res.json(responseData);
+        return responseData;
+      } catch (error) {
+        console.error('[MultiLine] Error creating client:', error.message);
+        const responseData = {
+          success: false,
+          action: null,
+          explanation: `❌ Não foi possível cadastrar o cliente.\n\nErro: ${error.message}`,
+          requiresConfirmation: false
+        };
+        res.json(responseData);
+        return responseData;
+      }
+    }
   }
 
   // ========================================
@@ -2212,6 +2595,49 @@ router.get('/history', assistantReadLimiter, asyncHandler(async (req, res) => {
 }));
 
 /**
+ * POST /api/assistant/history
+ * Save a message to conversation history
+ * Used to persist success/error messages that are generated client-side
+ */
+router.post('/history', asyncHandler(async (req, res) => {
+  const { role, content, metadata } = req.body;
+  
+  if (!role || !content) {
+    return res.status(400).json({
+      status: 'error',
+      message: 'Role and content are required'
+    });
+  }
+  
+  if (!['user', 'assistant'].includes(role)) {
+    return res.status(400).json({
+      status: 'error',
+      message: 'Role must be "user" or "assistant"'
+    });
+  }
+  
+  const message = await prisma.conversationMessage.create({
+    data: {
+      userId: req.user.id,
+      role,
+      content,
+      metadata: metadata || {}
+    }
+  });
+  
+  res.json({
+    status: 'success',
+    message: 'Message saved',
+    data: {
+      id: message.id,
+      role: message.role,
+      content: message.content,
+      createdAt: message.createdAt
+    }
+  });
+}));
+
+/**
  * DELETE /api/assistant/history
  * Clear conversation history for current user
  */
@@ -2354,6 +2780,164 @@ router.post('/validate-issuance', [
 }));
 
 /**
+ * POST /api/assistant/validate-client
+ * Validate client data against registered clients
+ * Used when editing invoice preview
+ */
+router.post('/validate-client', [
+  body('cliente_nome').optional().isString(),
+  body('cliente_documento').optional().isString()
+], asyncHandler(async (req, res) => {
+  const { cliente_nome, cliente_documento } = req.body;
+  
+  if (!cliente_nome && !cliente_documento) {
+    return res.status(400).json({
+      status: 'error',
+      message: 'Nome ou documento do cliente é obrigatório',
+      code: 'MISSING_CLIENT_DATA'
+    });
+  }
+  
+  const userId = req.user?.id;
+  if (!userId) {
+    return res.status(401).json({
+      status: 'error',
+      message: 'Usuário não autenticado',
+      code: 'UNAUTHORIZED'
+    });
+  }
+  
+  try {
+    // Clean document if provided
+    const cleanDoc = cliente_documento ? cliente_documento.replace(/\D/g, '') : '';
+    
+    // Try to find by document first (most reliable)
+    if (cleanDoc && (cleanDoc.length === 11 || cleanDoc.length === 14)) {
+      const existingByDoc = await prisma.client.findFirst({
+        where: {
+          userId,
+          documento: cleanDoc
+        }
+      });
+      
+      if (existingByDoc) {
+        return res.json({
+          status: 'success',
+          found: true,
+          client: {
+            id: existingByDoc.id,
+            nome: existingByDoc.nome,
+            documento: existingByDoc.documento,
+            tipoPessoa: existingByDoc.tipoPessoa,
+            email: existingByDoc.email,
+            telefone: existingByDoc.telefone
+          },
+          message: `Cliente encontrado: ${existingByDoc.nome}`
+        });
+      }
+      
+      // Document provided but client not found
+      return res.json({
+        status: 'success',
+        found: false,
+        canAutoCreate: true,
+        documentValid: true,
+        message: `Cliente não encontrado com ${cleanDoc.length === 11 ? 'CPF' : 'CNPJ'} informado. Será cadastrado automaticamente ao confirmar a emissão.`,
+        suggestedData: {
+          nome: cliente_nome,
+          documento: cleanDoc,
+          tipoPessoa: cleanDoc.length === 11 ? 'pf' : 'pj'
+        }
+      });
+    }
+    
+    // Try to find by name (exact or partial match)
+    if (cliente_nome) {
+      // First try exact match
+      let existingByName = await prisma.client.findFirst({
+        where: {
+          userId,
+          nome: cliente_nome
+        }
+      });
+      
+      // If not found, try case-insensitive partial match
+      if (!existingByName) {
+        existingByName = await prisma.client.findFirst({
+          where: {
+            userId,
+            nome: {
+              contains: cliente_nome,
+              mode: 'insensitive'
+            }
+          }
+        });
+      }
+      
+      if (existingByName) {
+        return res.json({
+          status: 'success',
+          found: true,
+          client: {
+            id: existingByName.id,
+            nome: existingByName.nome,
+            documento: existingByName.documento,
+            tipoPessoa: existingByName.tipoPessoa,
+            email: existingByName.email,
+            telefone: existingByName.telefone
+          },
+          message: `Cliente encontrado: ${existingByName.nome}`
+        });
+      }
+      
+      // Search for similar names
+      const similarClients = await prisma.client.findMany({
+        where: {
+          userId,
+          nome: {
+            contains: cliente_nome.split(' ')[0], // Match first name
+            mode: 'insensitive'
+          }
+        },
+        take: 5
+      });
+      
+      if (similarClients.length > 0) {
+        return res.json({
+          status: 'success',
+          found: false,
+          canAutoCreate: false,
+          documentValid: false,
+          similarClients: similarClients.map(c => ({
+            id: c.id,
+            nome: c.nome,
+            documento: c.documento
+          })),
+          message: `Cliente "${cliente_nome}" não encontrado. Encontrei clientes semelhantes - selecione um ou informe o CPF/CNPJ para cadastrar.`
+        });
+      }
+    }
+    
+    // No match found and no valid document
+    return res.json({
+      status: 'success',
+      found: false,
+      canAutoCreate: false,
+      documentValid: !cleanDoc || (cleanDoc.length !== 11 && cleanDoc.length !== 14),
+      message: `Cliente "${cliente_nome || 'não informado'}" não encontrado. Informe o CPF ou CNPJ para cadastrar automaticamente.`
+    });
+    
+  } catch (error) {
+    console.error('[ValidateClient] Error:', error);
+    return res.status(500).json({
+      status: 'error',
+      message: 'Erro ao validar cliente',
+      code: 'VALIDATION_ERROR'
+    });
+  }
+}));
+
+/**
  * POST /api/assistant/execute-action
  * Execute an AI action (e.g., emit invoice)
  * This endpoint is called when user confirms an AI action
@@ -2438,6 +3022,9 @@ async function executeActionHandler(req, res) {
 
       case 'notas_rejeitadas':
         return await executeGetRejectedInvoices(action_data, company, res);
+
+      case 'criar_cliente':
+        return await executeCreateClient(action_data, req.user.id, res);
 
     default:
         return res.status(400).json({
@@ -2762,14 +3349,89 @@ async function executeEmitNfse(actionData, company, userId, res) {
     );
   }
 
+  // ============================================
+  // Client Validation and Auto-Creation
+  // ============================================
+  let clientData = {
+    nome: actionData.cliente_nome,
+    documento: actionData.cliente_documento ? actionData.cliente_documento.replace(/\D/g, '') : ''
+  };
+  
+  // Try to find existing client by document first (most reliable)
+  if (clientData.documento) {
+    const existingByDoc = await prisma.client.findFirst({
+      where: {
+        userId: userId,
+        documento: clientData.documento
+      }
+    });
+    
+    if (existingByDoc) {
+      console.log(`[Invoice] Found client by document: ${existingByDoc.nome} (${existingByDoc.documento})`);
+      clientData.nome = existingByDoc.nome;
+      clientData.documento = existingByDoc.documento;
+      clientData.id = existingByDoc.id;
+    } else {
+      // Client with this document doesn't exist - auto-create
+      console.log(`[Invoice] Client not found by document, auto-creating...`);
+      const tipoPessoa = clientData.documento.length === 11 ? 'pf' : 'pj';
+      
+      const newClient = await prisma.client.create({
+        data: {
+          userId: userId,
+          nome: clientData.nome,
+          documento: clientData.documento,
+          tipoPessoa
+        }
+      });
+      
+      console.log(`[Invoice] Auto-created client: ${newClient.nome} (${newClient.documento})`);
+      clientData.id = newClient.id;
+    }
+  } else {
+    // No document provided - try to find by name
+    const existingByName = await prisma.client.findFirst({
+      where: {
+        userId: userId,
+        nome: {
+          contains: actionData.cliente_nome,
+          mode: 'insensitive'
+        }
+      }
+    });
+    
+    if (existingByName) {
+      console.log(`[Invoice] Found client by name: ${existingByName.nome} (${existingByName.documento})`);
+      clientData.nome = existingByName.nome;
+      clientData.documento = existingByName.documento;
+      clientData.id = existingByName.id;
+    } else {
+      // Client not found and no document - return error
+      throw new AppError(
+        `Cliente "${actionData.cliente_nome}" não encontrado no cadastro.\n\n` +
+        `Para emitir a nota, você precisa:\n` +
+        `1. Informar o CPF ou CNPJ do cliente, ou\n` +
+        `2. Cadastrar o cliente primeiro dizendo:\n   "Cadastrar cliente ${actionData.cliente_nome} CPF 123.456.789-00"`,
+        400,
+        'CLIENT_NOT_FOUND',
+        { 
+          clienteName: actionData.cliente_nome,
+          requiresDocument: true 
+        }
+      );
+    }
+  }
+  
+  console.log(`[Invoice] Using client data: ${clientData.nome} (${clientData.documento})`);
+
   // Get regime-specific defaults
   const regimeDefaults = getRegimeInvoiceDefaults(company.regimeTributario, company);
   const recommendedIssRate = getRecommendedIssRate(company.regimeTributario, company);
   
-  // Prepare invoice data with regime-specific defaults
+  // Prepare invoice data with regime-specific defaults and validated client data
   const invoiceData = {
-    cliente_nome: actionData.cliente_nome,
-    cliente_documento: actionData.cliente_documento || '',
+    cliente_nome: clientData.nome,
+    cliente_documento: clientData.documento,
     descricao_servico: actionData.descricao_servico || 'Serviço prestado',
     valor: parseFloat(actionData.valor),
     aliquota_iss: parseFloat(actionData.aliquota_iss || recommendedIssRate || regimeDefaults.aliquota_iss),
@@ -3306,6 +3968,99 @@ async function executeGetRejectedInvoices(actionData, company, res) {
     total: rejectedInvoices.length,
     periodo: periodo || 'todos'
   });
+}
+
+/**
+ * Execute criar_cliente action - Create a new client
+ */
+async function executeCreateClient(actionData, userId, res) {
+  const { name, document, email, phone } = actionData;
+  
+  // Validate required fields
+  if (!name) {
+    return res.status(400).json({
+      status: 'error',
+      message: 'Nome do cliente é obrigatório',
+      code: 'VALIDATION_ERROR'
+    });
+  }
+  
+  if (!document) {
+    return res.status(400).json({
+      status: 'error',
+      message: 'CPF ou CNPJ do cliente é obrigatório',
+      code: 'VALIDATION_ERROR'
+    });
+  }
+  
+  // Clean and validate document
+  const cleanDocument = document.replace(/\D/g, '');
+  if (cleanDocument.length !== 11 && cleanDocument.length !== 14) {
+    return res.status(400).json({
+      status: 'error',
+      message: 'Documento inválido. CPF deve ter 11 dígitos e CNPJ deve ter 14 dígitos.',
+      code: 'VALIDATION_ERROR'
+    });
+  }
+  
+  const tipoPessoa = cleanDocument.length === 11 ? 'pf' : 'pj';
+  
+  // Check if client already exists
+  const existingClient = await prisma.client.findFirst({
+    where: {
+      userId,
+      documento: cleanDocument
+    }
+  });
+  
+  if (existingClient) {
+    const docLabel = existingClient.tipoPessoa === 'pf' ? 'CPF' : 'CNPJ';
+    const docFormatado = formatDocumentForDisplay(existingClient.documento, existingClient.tipoPessoa);
+    return sendSuccess(res, 'Cliente já cadastrado', {
+      client: {
+        id: existingClient.id,
+        nome: existingClient.nome,
+        documento: existingClient.documento,
+        tipo_pessoa: existingClient.tipoPessoa
+      },
+      message: `Já existe um cliente com este ${docLabel}: **${existingClient.nome}** (${docFormatado}).`
+    });
+  }
+  
+  // Create new client
+  try {
+    const newClient = await prisma.client.create({
+      data: {
+        userId,
+        nome: name.trim(),
+        documento: cleanDocument,
+        tipoPessoa,
+        email: email || null,
+        telefone: phone || null,
+        ativo: true
+      }
+    });
+    
+    const docLabel = tipoPessoa === 'pf' ? 'CPF' : 'CNPJ';
+    const docFormatado = formatDocumentForDisplay(cleanDocument, tipoPessoa);
+    
+    return sendSuccess(res, 'Cliente cadastrado com sucesso', {
+      client: {
+        id: newClient.id,
+        nome: newClient.nome,
+        documento: newClient.documento,
+        tipo_pessoa: newClient.tipoPessoa
+      },
+      message: `✅ Cliente **${newClient.nome}** cadastrado com sucesso!\n\n${docLabel}: ${docFormatado}`
+    });
+  } catch (error) {
+    console.error('[executeCreateClient] Error creating client:', error.message);
+    return res.status(500).json({
+      status: 'error',
+      message: 'Erro ao cadastrar cliente. Tente novamente.',
+      code: 'CREATE_ERROR'
+    });
+  }
 }
 
 /**

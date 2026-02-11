@@ -215,13 +215,23 @@ const StatusBadge = ({ status }) => {
     // Pending
     pending: { bg: 'bg-amber-500/20', text: 'text-amber-400', border: 'border-amber-500/30', icon: Clock, label: 'Pendente' },
     PENDING: { bg: 'bg-amber-500/20', text: 'text-amber-400', border: 'border-amber-500/30', icon: Clock, label: 'Pendente' },
+    pendente: { bg: 'bg-amber-500/20', text: 'text-amber-400', border: 'border-amber-500/30', icon: Clock, label: 'Pendente' },
     // Expired
     expired: { bg: 'bg-gray-500/20', text: 'text-gray-400', border: 'border-gray-500/30', icon: XCircle, label: 'Expirado' },
     EXPIRED: { bg: 'bg-gray-500/20', text: 'text-gray-400', border: 'border-gray-500/30', icon: XCircle, label: 'Expirado' },
-    PENDING: { bg: 'bg-amber-500/20', text: 'text-amber-400', border: 'border-amber-500/30', icon: Clock, label: 'Pendente' },
+    // Invoice statuses
     autorizada: { bg: 'bg-emerald-500/20', text: 'text-emerald-400', border: 'border-emerald-500/30', icon: CheckCircle, label: 'Autorizada' },
     rejeitada: { bg: 'bg-red-500/20', text: 'text-red-400', border: 'border-red-500/30', icon: XCircle, label: 'Rejeitada' },
     processando: { bg: 'bg-amber-500/20', text: 'text-amber-400', border: 'border-amber-500/30', icon: RefreshCw, label: 'Processando' },
+    rascunho: { bg: 'bg-slate-500/20', text: 'text-slate-400', border: 'border-slate-500/30', icon: Clock, label: 'Rascunho' },
+    // Fiscal integration statuses
+    conectado: { bg: 'bg-emerald-500/20', text: 'text-emerald-400', border: 'border-emerald-500/30', icon: CheckCircle, label: 'Conectado' },
+    configurado: { bg: 'bg-blue-500/20', text: 'text-blue-400', border: 'border-blue-500/30', icon: CheckCircle, label: 'Configurado' },
+    verificando: { bg: 'bg-blue-500/20', text: 'text-blue-400', border: 'border-blue-500/30', icon: RefreshCw, label: 'Verificando' },
+    erro: { bg: 'bg-red-500/20', text: 'text-red-400', border: 'border-red-500/30', icon: AlertCircle, label: 'Erro' },
+    falha: { bg: 'bg-red-500/20', text: 'text-red-400', border: 'border-red-500/30', icon: AlertCircle, label: 'Falha' },
+    certificado_ok: { bg: 'bg-blue-500/20', text: 'text-blue-400', border: 'border-blue-500/30', icon: CheckCircle, label: 'Certificado OK' },
+    certificado_pendente: { bg: 'bg-amber-500/20', text: 'text-amber-400', border: 'border-amber-500/30', icon: Clock, label: 'Cert. Pendente' },
     no_subscription: { bg: 'bg-slate-500/20', text: 'text-slate-400', border: 'border-slate-500/30', icon: Clock, label: 'Sem Assinatura' },
   };
 
@@ -1283,6 +1293,7 @@ const CompaniesTab = () => {
     queryKey: ['admin-companies', page, search],
     queryFn: () => adminService.getCompanies({ page, limit: 10, search }),
     staleTime: 0, // Always refetch on demand
+    refetchInterval: 30000, // Auto-refresh every 30 seconds for real-time status
   });
 
   const companies = data?.companies || [];
@@ -1394,7 +1405,7 @@ const CompaniesTab = () => {
                     </span>
                   </td>
                   <td className="p-4">
-                    <StatusBadge status={company.fiscalIntegrationStatus?.status === 'conectado' ? 'ACTIVE' : 'PENDING'} />
+                    <StatusBadge status={company.computedFiscalStatus || 'pendente'} />
                   </td>
                   <td className="p-4 text-gray-400 text-sm">
                     {new Date(company.createdAt).toLocaleDateString('pt-BR')}
@@ -1433,6 +1444,7 @@ const InvoicesTab = () => {
     queryKey: ['admin-invoices', page, statusFilter],
     queryFn: () => adminService.getInvoices({ page, limit: 10, status: statusFilter }),
     staleTime: 0, // Always refetch on demand
+    refetchInterval: 30000, // Auto-refresh every 30 seconds for real-time status
   });
 
   const invoices = data?.invoices || [];
