@@ -49,9 +49,20 @@ export const INTENT_TYPES = {
 // Keywords and phrases for each intent (Portuguese + variations)
 const INTENT_PATTERNS = {
   [INTENT_TYPES.EMIT_INVOICE]: {
-    keywords: ['emitir', 'emissão', 'gerar', 'criar', 'nova', 'fazer'],
-    phrases: ['emitir nota', 'nova nota', 'gerar nota', 'criar nota', 'fazer nota', 'emitir nf', 'emissão nf'],
-    context: ['nota', 'nf', 'nfse', 'fiscal'],
+    keywords: ['emitir', 'emissão', 'gerar', 'criar', 'nova', 'fazer', 'lançar', 'registrar'],
+    phrases: [
+      // Basic patterns
+      'emitir nota', 'nova nota', 'gerar nota', 'criar nota', 'fazer nota', 'emitir nf', 'emissão nf',
+      'emitir uma nota', 'fazer uma nota', 'gerar uma nota', 'criar uma nota', 'lançar nota',
+      // Conversational patterns
+      'preciso emitir', 'quero emitir', 'gostaria de emitir', 'pode emitir', 'poderia emitir',
+      'me ajuda a emitir', 'me ajude a emitir', 'vou emitir', 'vamos emitir',
+      // Value-based patterns
+      'nota de r$', 'nota de', 'nota fiscal de',
+      // With client
+      'nota para', 'emitir para',
+    ],
+    context: ['nota', 'nf', 'nfse', 'fiscal', 'reais', 'r$', 'valor'],
     weight: 1.0,
   },
   [INTENT_TYPES.CANCEL_INVOICE]: {
@@ -91,9 +102,19 @@ const INTENT_PATTERNS = {
     weight: 0.9,
   },
   [INTENT_TYPES.CREATE_CLIENT]: {
-    keywords: ['cadastrar', 'criar', 'adicionar', 'novo', 'registrar'],
-    phrases: ['criar cliente', 'cadastrar cliente', 'novo cliente', 'adicionar cliente', 'registrar cliente'],
-    context: ['cliente', 'cpf', 'cnpj'],
+    keywords: ['cadastrar', 'criar', 'adicionar', 'novo', 'nova', 'registrar', 'incluir', 'salvar', 'inserir'],
+    phrases: [
+      'criar cliente', 'cadastrar cliente', 'novo cliente', 'adicionar cliente', 'registrar cliente',
+      'incluir cliente', 'salvar cliente', 'inserir cliente',
+      'cadastrar um cliente', 'criar um cliente', 'adicionar um cliente',
+      'cadastrar novo cliente', 'criar novo cliente', 'adicionar novo cliente',
+      'preciso cadastrar', 'quero cadastrar', 'quero criar',
+      'preciso criar um cliente', 'quero adicionar um cliente',
+      'me ajuda a cadastrar', 'me ajude a cadastrar',
+      'cadastre um cliente', 'cadastre o cliente',
+      'cliente novo', 'cliente nova',
+    ],
+    context: ['cliente', 'cpf', 'cnpj', 'documento', 'nome'],
     weight: 1.0,
   },
   [INTENT_TYPES.LIST_CLIENTS]: {
@@ -179,6 +200,16 @@ const TYPO_CORRECTIONS = {
   'imposto': 'imposto',
   'quantas': 'quantas',
   'qauntas': 'quantas',
+  
+  // Client-related typos
+  'cadastrr': 'cadastrar',
+  'cadstrar': 'cadastrar',
+  'cadasrar': 'cadastrar',
+  'registar': 'registrar',
+  'adcionar': 'adicionar',
+  'adiionar': 'adicionar',
+  'documeto': 'documento',
+  'docmento': 'documento',
   
   // Abbreviations
   'nf': 'nota fiscal',
@@ -303,9 +334,13 @@ export function normalizeInput(text) {
  * Extract monetary value from text
  * Handles various Brazilian formats:
  * - R$ 1.500,00
+ * - R$ 1500
+ * - R$ 1.250,50
  * - 1500 reais
+ * - 1.500 reais
  * - mil e quinhentos
  * - 2k
+ * - 2.5k
  * 
  * @param {string} text - Text containing monetary value
  * @returns {number|null} Extracted value or null
@@ -315,35 +350,59 @@ export function extractMonetaryValue(text) {
   
   const normalized = text.toLowerCase();
   
-  // Pattern 1: Currency format (R$ 1.500,00 or R$ 1500.00)
-  const currencyMatch = normalized.match(/r\$\s*([\d.,]+)/);
-  if (currencyMatch) {
-    let value = currencyMatch[1];
-    // Handle Brazilian format (1.500,00)
+  // Pattern 1: Currency format with R$ (R$ 1.500,00, R$ 1500, R$ 1.250,50)
+  // Match R$ followed by numbers with optional thousand separators and decimal
+  const currencyPatterns = [
+    /r\$\s*([\d]+(?:\.[\d]{3})*(?:,[\d]{1,2})?)/,  // R$ 1.500,00 or R$ 1.500
+    /r\$\s*([\d]+(?:,[\d]{1,2})?)/,                 // R$ 1500,50 or R$ 1500
+    /r\$\s*([\d.,]+)/                               // Fallback
+  ];
+  
+  for (const pattern of currencyPatterns) {
+    const match = normalized.match(pattern);
+    if (match) {
+      let value = match[1];
+      // Handle Brazilian format: dots are thousand separators, comma is decimal
+      if (value.includes(',')) {
+        // Check if it's Brazilian format (1.500,00) or simple comma decimal (1500,50)
+        const parts = value.split(',');
+        const beforeComma = parts[0].replace(/\./g, ''); // Remove thousand separators
+        const afterComma = parts[1] || '00';
+        value = `${beforeComma}.${afterComma}`;
+      } else {
+        // No comma - dots could be thousand separators (1.500) or just not present (1500)
+        value = value.replace(/\./g, ''); // Remove thousand separators
+      }
+      const parsed = parseFloat(value);
+      if (!isNaN(parsed) && parsed > 0) return parsed;
+    }
+  }
+  
+  // Pattern 2: Number with "reais" (1500 reais, 1.500 reais, 1.500,00 reais)
+  const reaisMatch = normalized.match(/([\d]+(?:\.[\d]{3})*(?:,[\d]{1,2})?)\s*reais/);
+  if (reaisMatch) {
+    let value = reaisMatch[1];
     if (value.includes(',')) {
-      value = value.replace(/\./g, '').replace(',', '.');
+      const parts = value.split(',');
+      const beforeComma = parts[0].replace(/\./g, '');
+      const afterComma = parts[1] || '00';
+      value = `${beforeComma}.${afterComma}`;
+    } else {
+      value = value.replace(/\./g, '');
     }
     const parsed = parseFloat(value);
-    if (!isNaN(parsed)) return parsed;
+    if (!isNaN(parsed) && parsed > 0) return parsed;
   }
   
-  // Pattern 2: Number with "reais" (1500 reais)
-  const reaisMatch = normalized.match(/([\d.,]+)\s*reais/);
-  if (reaisMatch) {
-    let value = reaisMatch[1].replace(/\./g, '').replace(',', '.');
-    const parsed = parseFloat(value);
-    if (!isNaN(parsed)) return parsed;
-  }
-  
-  // Pattern 3: K notation (2k, 2.5k)
-  const kMatch = normalized.match(/([\d.,]+)\s*k\b/);
+  // Pattern 3: K notation (2k, 2.5k, 2,5k)
+  const kMatch = normalized.match(/([\d]+(?:[.,][\d]+)?)\s*k\b/);
   if (kMatch) {
     let value = kMatch[1].replace(',', '.');
     const parsed = parseFloat(value) * 1000;
-    if (!isNaN(parsed)) return parsed;
+    if (!isNaN(parsed) && parsed > 0) return parsed;
   }
   
-  // Pattern 4: Word numbers (mil, mil e quinhentos)
+  // Pattern 4: Word numbers (mil, mil e quinhentos, dois mil)
   let totalValue = 0;
   let hasWordNumber = false;
   
@@ -352,9 +411,9 @@ export function extractMonetaryValue(text) {
     hasWordNumber = true;
     totalValue = 1000;
     
-    // Check for hundreds before "mil" (dois mil, três mil)
+    // Check for multipliers before "mil" (dois mil, três mil)
     for (const [word, value] of Object.entries(NUMBER_WORDS)) {
-      const milPattern = new RegExp(`${word}\\s+mil`, 'i');
+      const milPattern = new RegExp(`\\b${word}\\s+mil\\b`, 'i');
       if (milPattern.test(normalized)) {
         totalValue = value * 1000;
         break;
@@ -362,7 +421,7 @@ export function extractMonetaryValue(text) {
     }
   }
   
-  // Check for hundreds after "mil" (mil e quinhentos)
+  // Check for hundreds after "mil" (mil e quinhentos, mil e duzentos)
   const afterMilMatch = normalized.match(/mil\s+e?\s*(\w+)/);
   if (afterMilMatch && NUMBER_WORDS[afterMilMatch[1]]) {
     totalValue += NUMBER_WORDS[afterMilMatch[1]];
@@ -370,12 +429,32 @@ export function extractMonetaryValue(text) {
   
   if (hasWordNumber && totalValue > 0) return totalValue;
   
-  // Pattern 5: Plain number (1500, 1.500)
-  const plainMatch = normalized.match(/\b([\d.]+)\b/);
-  if (plainMatch) {
-    let value = plainMatch[1].replace(/\./g, '');
+  // Pattern 5: Plain number after "de" or "valor" (nota de 1500, valor 1500)
+  const contextualMatch = normalized.match(/(?:de|valor)\s+([\d]+(?:\.[\d]{3})*(?:,[\d]{1,2})?)/);
+  if (contextualMatch) {
+    let value = contextualMatch[1];
+    if (value.includes(',')) {
+      const parts = value.split(',');
+      const beforeComma = parts[0].replace(/\./g, '');
+      const afterComma = parts[1] || '00';
+      value = `${beforeComma}.${afterComma}`;
+    } else {
+      value = value.replace(/\./g, '');
+    }
     const parsed = parseFloat(value);
-    if (!isNaN(parsed) && parsed >= 1) return parsed;
+    if (!isNaN(parsed) && parsed > 0) return parsed;
+  }
+  
+  // Pattern 6: Plain number (1500, 1.500) - last resort
+  // Be careful to not match document numbers (11 or 14 digits)
+  const plainMatches = normalized.matchAll(/\b([\d]+(?:\.[\d]{3})*)\b/g);
+  for (const match of plainMatches) {
+    let value = match[1].replace(/\./g, '');
+    // Skip if it looks like a document number (11 or 14 digits)
+    if (value.length === 11 || value.length === 14) continue;
+    const parsed = parseFloat(value);
+    // Reasonable invoice values are typically between 1 and 10,000,000
+    if (!isNaN(parsed) && parsed >= 1 && parsed <= 10000000) return parsed;
   }
   
   return null;
@@ -418,6 +497,18 @@ export function extractDocument(text) {
     };
   }
   
+  // "documento" keyword followed by numbers
+  const docMatch = text.match(/documento\s*:?\s*(\d[\d.\-\/]*\d)/i);
+  if (docMatch) {
+    const clean = docMatch[1].replace(/\D/g, '');
+    if (clean.length === 11 || clean.length === 14) {
+      return {
+        type: clean.length === 11 ? 'cpf' : 'cnpj',
+        value: clean,
+      };
+    }
+  }
+  
   return null;
 }
 
@@ -441,24 +532,60 @@ export function extractClientName(text) {
     .replace(/\b\d{11,14}\b/g, '') // Plain numbers
     .replace(/r\$\s*[\d.,]+/gi, '') // Currency
     .replace(/\b\d+\s*(?:reais|mil|k)\b/gi, '') // Number words
+    .replace(/[\w.+-]+@[\w-]+\.[\w.-]+/g, '') // Email
+    .replace(/\(?\d{2}\)?\s*\d{4,5}[-.]?\d{4}/g, '') // Phone
     .trim();
   
-  // Pattern 1: "para [name]"
-  const paraMatch = cleanText.match(/para\s+(?:o\s+cliente\s+|a\s+empresa\s+)?([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s]+?)(?:\s+(?:cpf|cnpj|de|no\s+valor|por|referente)|$)/i);
-  if (paraMatch && paraMatch[1]?.trim()) {
+  // Pattern 1: "Nome: [name]" or "nome é [name]" or "nome = [name]"
+  const nomeMatch = cleanText.match(/nome\s*(?:[:=é]|é)\s*([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.]+?)(?:\s*[,;]|\s+(?:cpf|cnpj|documento|email|telefone|tel|fone|e\s+o|com\s)|$)/i);
+  if (nomeMatch && nomeMatch[1]?.trim().length > 1) {
+    return nomeMatch[1].trim();
+  }
+  
+  // Pattern 2: "o nome é/dele é/dela é [name]"
+  const nameIsMatch = cleanText.match(/(?:o\s+nome|nome\s+(?:dele|dela)?)\s+(?:é|e)\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.]+?)(?:\s*[,;.]|\s+(?:cpf|cnpj|documento|email|telefone|e\s+o|com\s)|$)/i);
+  if (nameIsMatch && nameIsMatch[1]?.trim().length > 1) {
+    return nameIsMatch[1].trim();
+  }
+  
+  // Pattern 3: "chamado/chamada [name]" or "de nome [name]"
+  const chamadoMatch = cleanText.match(/(?:chamad[oa]|de\s+nome)\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.]+?)(?:\s*[,;.]|\s+(?:cpf|cnpj|documento|email|telefone|com\s)|$)/i);
+  if (chamadoMatch && chamadoMatch[1]?.trim().length > 1) {
+    return chamadoMatch[1].trim();
+  }
+  
+  // Pattern 4: "criar/cadastrar cliente [name]"
+  const afterClienteMatch = cleanText.match(/(?:criar|cadastrar|cadastre|registrar|adicionar|incluir|novo|nova)\s+(?:um\s+|uma\s+|o\s+|a\s+)?(?:novo\s+|nova\s+)?cliente\s*:?\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.]+?)(?:\s*[,;]|\s+(?:cpf|cnpj|documento|email|telefone|tel|fone|com\s|de\s|no\s)|$)/i);
+  if (afterClienteMatch && afterClienteMatch[1]?.trim().length > 1) {
+    return afterClienteMatch[1].trim();
+  }
+  
+  // Pattern 5: "cliente [name]" (simple)
+  const clienteMatch = cleanText.match(/cliente\s*:?\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.]+?)(?:\s*[,;]|\s+(?:cpf|cnpj|documento|de|no|por|email|telefone)|$)/i);
+  if (clienteMatch && clienteMatch[1]?.trim().length > 1) {
+    const candidate = clienteMatch[1].trim();
+    // Exclude words that aren't names
+    if (!/^(?:novo|nova|um|uma|o|a|com|de|para|meu|minha)$/i.test(candidate)) {
+      return candidate;
+    }
+  }
+  
+  // Pattern 6: "para [name]"
+  const paraMatch = cleanText.match(/para\s+(?:o\s+cliente\s+|a\s+empresa\s+)?([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.]+?)(?:\s+(?:cpf|cnpj|documento|de|no\s+valor|por|referente)|$)/i);
+  if (paraMatch && paraMatch[1]?.trim().length > 1) {
     return paraMatch[1].trim();
   }
   
-  // Pattern 2: "cliente [name]"
-  const clienteMatch = cleanText.match(/cliente\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s]+?)(?:\s+(?:cpf|cnpj|de|no|por)|$)/i);
-  if (clienteMatch && clienteMatch[1]?.trim()) {
-    return clienteMatch[1].trim();
+  // Pattern 7: "do/da [name]"
+  const doMatch = cleanText.match(/(?:do|da)\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.]+?)(?:\s+(?:cpf|cnpj|documento|de|no|por)|$)/i);
+  if (doMatch && doMatch[1]?.trim().length > 1 && !doMatch[1].toLowerCase().includes('cliente')) {
+    return doMatch[1].trim();
   }
   
-  // Pattern 3: "do/da [name]"
-  const doMatch = cleanText.match(/(?:do|da)\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s]+?)(?:\s+(?:cpf|cnpj|de|no|por)|$)/i);
-  if (doMatch && doMatch[1]?.trim() && !doMatch[1].toLowerCase().includes('cliente')) {
-    return doMatch[1].trim();
+  // Pattern 8: "razão social [name]"
+  const razaoMatch = cleanText.match(/(?:razão\s*social|razao\s*social)\s*:?\s*([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.]+?)(?:\s*[,;]|\s+(?:cpf|cnpj|documento|email|telefone)|$)/i);
+  if (razaoMatch && razaoMatch[1]?.trim().length > 1) {
+    return razaoMatch[1].trim();
   }
   
   return null;
@@ -563,8 +690,10 @@ export function classifyIntent(message, context = {}) {
   const document = extractDocument(message);
   const clientName = extractClientName(message);
   
-  // Check if this is a client creation pattern (Name + CPF/CNPJ)
-  const clientCreationPattern = /^(.+?)\s+(?:cpf|cnpj)\s*:?\s*(\d{3}\.?\d{3}\.?\d{3}[-.]?\d{2}|\d{2}\.?\d{3}\.?\d{3}[\/]?\d{4}[-.]?\d{2}|\d{11}|\d{14})$/i;
+  // Check if this is a client creation pattern - multiple approaches
+  
+  // Pattern A: "[Name] CPF/CNPJ/documento [number]" (standalone)
+  const clientCreationPattern = /^(.+?)\s+(?:cpf|cnpj|documento)\s*:?\s*(\d{3}\.?\d{3}\.?\d{3}[-.]?\d{2}|\d{2}\.?\d{3}\.?\d{3}[\/]?\d{4}[-.]?\d{2}|\d{11}|\d{14})$/i;
   if (clientCreationPattern.test(message.trim())) {
     const match = message.trim().match(clientCreationPattern);
     return {
@@ -573,6 +702,69 @@ export function classifyIntent(message, context = {}) {
       data: {
         clientName: match[1].trim(),
         document: extractDocument(message),
+      },
+    };
+  }
+  
+  // Pattern B: Explicit "criar/cadastrar/registrar/adicionar cliente" with any format
+  const explicitClientCreation = /(?:criar|cadastrar|cadastre|registrar|registre|adicionar|adicione|incluir|salvar|inserir)\s+(?:um\s+|uma\s+|o\s+|a\s+)?(?:novo\s+|nova\s+)?cliente/i;
+  if (explicitClientCreation.test(message)) {
+    return {
+      intent: INTENT_TYPES.CREATE_CLIENT,
+      confidence: 0.9,
+      data: {
+        clientName: clientName,
+        document: document,
+      },
+    };
+  }
+  
+  // Pattern C: "cliente novo" (reversed)
+  if (/cliente\s+(?:novo|nova)/i.test(message)) {
+    return {
+      intent: INTENT_TYPES.CREATE_CLIENT,
+      confidence: 0.85,
+      data: {
+        clientName: clientName,
+        document: document,
+      },
+    };
+  }
+  
+  // Pattern D: Conversational "preciso/quero/gostaria cadastrar cliente"
+  const conversationalClient = /(?:preciso|quero|gostaria|pode|poderia|necessito|desejo|vou)\s+(?:de\s+)?(?:criar|cadastrar|registrar|adicionar|incluir)\s+(?:um\s+|uma\s+)?(?:novo\s+|nova\s+)?cliente/i;
+  if (conversationalClient.test(message)) {
+    return {
+      intent: INTENT_TYPES.CREATE_CLIENT,
+      confidence: 0.9,
+      data: {
+        clientName: clientName,
+        document: document,
+      },
+    };
+  }
+  
+  // Pattern E: "me ajuda/ajude a cadastrar cliente"
+  const helpClient = /(?:me\s+)?(?:ajud[ae]|auxili[ae])\s+(?:a\s+)?(?:criar|cadastrar|registrar|adicionar)\s+(?:um\s+|uma\s+)?(?:novo\s+|nova\s+)?cliente/i;
+  if (helpClient.test(message)) {
+    return {
+      intent: INTENT_TYPES.CREATE_CLIENT,
+      confidence: 0.85,
+      data: {
+        clientName: clientName,
+        document: document,
+      },
+    };
+  }
+  
+  // Pattern F: "Nome: [name]" with document in the same message
+  if (/nome\s*[:=]\s*.+/i.test(message) && document) {
+    return {
+      intent: INTENT_TYPES.CREATE_CLIENT,
+      confidence: 0.85,
+      data: {
+        clientName: clientName,
+        document: document,
       },
     };
   }

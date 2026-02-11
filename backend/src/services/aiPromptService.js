@@ -22,7 +22,18 @@ export const FUNCTION_DEFINITIONS = [
     type: 'function',
     function: {
       name: 'emit_invoice',
-      description: 'Emite uma nota fiscal de serviço (NFS-e). Use quando o usuário pedir para emitir, gerar ou criar uma nota fiscal.',
+      description: `Emite uma nota fiscal de serviço (NFS-e). Use quando o usuário pedir para emitir, gerar, criar ou fazer uma nota fiscal. Exemplos de mensagens:
+- "Emitir nota de R$ 1.500 para João Silva"
+- "Emitir uma nota de R$ 2.000 para Maria Santos"
+- "Nova nota de R$ 3.500 para Pedro Oliveira"
+- "Emitir nota de R$ 2.500 para Ana Costa por consultoria em TI"
+- "Emitir nota de R$ 1.800 para Roberto Alves CPF 123.456.789-00"
+- "Preciso emitir uma nota de R$ 1.200 para Fernando Lima"
+- "Emitir nota de 1500 reais para Carlos Mendes"
+- "Emitir nota de 2k para Rafael Souza"
+- "Me ajuda a emitir uma nota de R$ 1.800 para Maria"
+- "Emitir nota para João Silva" (perguntar valor)
+- "Emitir nota de R$ 2.000" (perguntar cliente)`,
       parameters: {
         type: 'object',
         properties: {
@@ -36,11 +47,11 @@ export const FUNCTION_DEFINITIONS = [
           },
           value: {
             type: 'number',
-            description: 'Valor da nota em reais. Ex: 1500.00, 2500.50',
+            description: 'Valor da nota em reais. Aceita formatos: R$ 1.500,00, 1500 reais, 2k (2000). Ex: 1500.00, 2500.50',
           },
           service_description: {
             type: 'string',
-            description: 'Descrição detalhada do serviço prestado. Ex: "Consultoria em TI", "Desenvolvimento de sistema web"',
+            description: 'Descrição detalhada do serviço prestado. Extrair de "por X" ou "referente a X". Ex: "Consultoria em TI", "Desenvolvimento de sistema web"',
           },
           service_code: {
             type: 'string',
@@ -174,25 +185,32 @@ export const FUNCTION_DEFINITIONS = [
     type: 'function',
     function: {
       name: 'create_client',
-      description: 'Cadastra um novo cliente no sistema. Use quando o usuário quiser criar ou cadastrar um cliente.',
+      description: `Cadastra um novo cliente no sistema. Use quando o usuário quiser criar, cadastrar, registrar, adicionar ou incluir um cliente. Detecte a intenção mesmo em mensagens conversacionais como:
+- "Cadastrar cliente João Silva CPF 123.456.789-00"
+- "Preciso cadastrar um novo cliente. O nome é Maria e o CPF é 987.654.321-00"
+- "Quero adicionar um cliente chamado Pedro, documento 12345678900"
+- "Oi MAY, cadastre o cliente Empresa ABC LTDA, CNPJ 12.345.678/0001-90"
+- "Me ajuda a criar um cliente novo: Nome: Ana, CPF: 111.222.333-44"
+- "Novo cliente: Roberto Alves, CPF 555.666.777-88, email roberto@email.com"
+Extraia nome e documento de QUALQUER formato de mensagem.`,
       parameters: {
         type: 'object',
         properties: {
           name: {
             type: 'string',
-            description: 'Nome completo ou razão social do cliente',
+            description: 'Nome completo ou razão social do cliente. Extraia de padrões como "nome é X", "chamado X", "cliente X", ou qualquer menção ao nome no contexto.',
           },
           document: {
             type: 'string',
-            description: 'CPF (11 dígitos) ou CNPJ (14 dígitos), apenas números',
+            description: 'CPF (11 dígitos) ou CNPJ (14 dígitos), apenas números. Aceite formatos como: 123.456.789-00, 12345678900, 12.345.678/0001-90, ou após palavras como CPF, CNPJ, documento.',
           },
           email: {
             type: 'string',
-            description: 'Email do cliente (opcional)',
+            description: 'Email do cliente (opcional). Extraia se mencionado na mensagem.',
           },
           phone: {
             type: 'string',
-            description: 'Telefone do cliente (opcional)',
+            description: 'Telefone do cliente (opcional). Extraia se mencionado na mensagem.',
           },
         },
         required: ['name', 'document'],
@@ -438,6 +456,13 @@ REGRAS DE INTERPRETAÇÃO:
    - Se o usuário mencionar um nome, busque o cliente cadastrado
    - Se não encontrar, peça o CPF/CNPJ para cadastrar
    - Formate CPF como XXX.XXX.XXX-XX e CNPJ como XX.XXX.XXX/XXXX-XX
+   - IMPORTANTE: Detecte intenção de cadastrar cliente em QUALQUER formato:
+     * Direto: "criar cliente João CPF 123.456.789-00"
+     * Conversacional: "preciso cadastrar um cliente chamado João com CPF 123.456.789-00"
+     * Com rótulos: "Nome: João Silva, CPF: 123.456.789-00"
+     * Informal: "novo cliente João Silva, documento 12345678900"
+     * Com extras: "cadastrar cliente Pedro, CPF 555.666.777-88, email pedro@email.com"
+   - Sempre extraia nome e documento de qualquer formato de mensagem
 
 3. PERÍODOS:
    - "hoje" = data atual
@@ -453,6 +478,31 @@ REGRAS DE INTERPRETAÇÃO:
    - Websites: 0108
    - Se não especificado, use 1701
 
+EMISSÃO DE NOTAS:
+- Detecte intenção de emitir nota em QUALQUER formato de mensagem:
+  * Simples: "Emitir nota de R$ 1.500 para João Silva"
+  * Com "uma": "Emitir uma nota de R$ 2.000 para Maria Santos"
+  * "Nova nota": "Nova nota de R$ 3.500 para Pedro Oliveira"
+  * Com serviço: "Emitir nota de R$ 2.500 para Ana Costa por consultoria em TI"
+  * Com CPF: "Emitir nota de R$ 1.800 para Roberto Alves CPF 123.456.789-00"
+  * Com CNPJ: "Emitir nota de R$ 5.000 para Empresa ABC LTDA CNPJ 12.345.678/0001-90"
+  * Conversacional: "Preciso emitir uma nota de R$ 1.200 para Fernando Lima"
+  * Com "reais": "Emitir nota de 1500 reais para Carlos Mendes"
+  * Com "k": "Emitir nota de 2k para Rafael Souza" (2k = R$ 2.000)
+  * Informal: "Oi MAY, quero emitir uma nota de R$ 2.500 para Fernanda Costa"
+  * Com "pela empresa": "Emitir nota de R$ 4.000 para Tech Solutions pela empresa 34.172.396/0001-76"
+  * Completo: "Emitir nota de R$ 3.500 para João Silva CPF 123.456.789-00 por consultoria"
+  * Com vírgula: "Emitir nota de R$ 1.800,00 para Ana Paula, referente a serviços de design"
+  * Mínimo: "Emitir nota para João Silva" (perguntar valor)
+  * Só valor: "Emitir nota de R$ 2.000" (perguntar cliente)
+  * Com decimal: "Emitir nota de R$ 1.250,50 para Maria Santos"
+  * "Fazer nota": "Fazer uma nota de R$ 1.500 para Pedro"
+  * Por serviço: "Emitir nota de R$ 2.000 para Carlos por treinamento"
+  * Múltiplos detalhes: "Emitir uma nota fiscal de R$ 3.200 para Empresa XYZ CNPJ 98.765.432/0001-11"
+  * Passo a passo: "Quero emitir uma nota. O valor é R$ 1.500 e o cliente é João Silva"
+  * Com "o cliente": "Emitir nota de R$ 2.500 para o cliente Roberto Alves"
+  * Pedindo ajuda: "Me ajuda a emitir uma nota de R$ 1.800 para Maria"
+
 FLUXO DE EMISSÃO DE NOTA:
 
 1. Usuário pede: "Emitir nota de R$ 2.000 para João Silva por consultoria"
@@ -461,8 +511,10 @@ FLUXO DE EMISSÃO DE NOTA:
 4. Só emite após confirmação explícita ("sim", "confirma", "ok")
 
 SE FALTAR INFORMAÇÃO:
-- Valor não informado: "Para emitir a nota, preciso saber o valor do serviço. Qual é o valor?"
-- Cliente não encontrado: "Não encontrei 'João' cadastrado. Qual o CPF ou CNPJ dele?"
+- Valor não informado: "💰 Qual o valor da nota fiscal para [nome do cliente]? Exemplo: R$ 1.500"
+- Cliente não informado: "👤 Para quem é a nota fiscal de R$ [valor]? Me diga o nome do cliente."
+- Ambos faltando: "📝 Para emitir uma nota, preciso de: valor e cliente. Ex: 'Emitir nota de R$ 1.500 para João Silva'"
+- Cliente não encontrado: "Não encontrei '[nome]' cadastrado. Qual o CPF ou CNPJ dele?"
 - Serviço não claro: Assuma consultoria (1701) e pergunte se está correto
 
 FORMATO DE RESPOSTA:
@@ -493,9 +545,11 @@ Precisa de mais detalhes?"
 Para cliente não encontrado:
 "Não encontrei um cliente chamado 'Gabriel' cadastrado. 🤔
 
-Para criar o cadastro, preciso do documento:
-• CPF: 'criar cliente Gabriel Silva CPF 123.456.789-00'
-• CNPJ: 'criar cliente Empresa XYZ CNPJ 12.345.678/0001-99'
+Para criar o cadastro, me informe o nome e documento de qualquer forma:
+• 'Cadastrar cliente Gabriel Silva, CPF 123.456.789-00'
+• 'Novo cliente: Empresa XYZ, CNPJ 12.345.678/0001-99'
+• 'O nome é Gabriel Silva e o CPF é 123.456.789-00'
+• Ou simplesmente: 'Gabriel Silva CPF 123.456.789-00'
 
 Ou você pode acessar a seção **Clientes** no menu lateral."
 
