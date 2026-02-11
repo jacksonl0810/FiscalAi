@@ -268,6 +268,56 @@ export const FUNCTION_DEFINITIONS = [
   {
     type: 'function',
     function: {
+      name: 'create_company',
+      description: 'Cadastra uma nova empresa no sistema. Use quando o usuário quiser criar, cadastrar ou registrar uma empresa.',
+      parameters: {
+        type: 'object',
+        properties: {
+          cnpj: {
+            type: 'string',
+            description: 'CNPJ da empresa (14 dígitos, apenas números). Ex: "12345678000199"',
+          },
+          razao_social: {
+            type: 'string',
+            description: 'Razão social da empresa. Ex: "Empresa ABC Ltda"',
+          },
+          nome_fantasia: {
+            type: 'string',
+            description: 'Nome fantasia da empresa (opcional). Ex: "ABC Tech"',
+          },
+          cidade: {
+            type: 'string',
+            description: 'Cidade da empresa. Ex: "São Paulo"',
+          },
+          uf: {
+            type: 'string',
+            description: 'Estado (UF) da empresa (2 letras). Ex: "SP", "RJ"',
+          },
+          regime_tributario: {
+            type: 'string',
+            enum: ['MEI', 'Simples Nacional', 'Lucro Presumido', 'Lucro Real'],
+            description: 'Regime tributário da empresa',
+          },
+          email: {
+            type: 'string',
+            description: 'Email de contato da empresa',
+          },
+          telefone: {
+            type: 'string',
+            description: 'Telefone de contato da empresa',
+          },
+          inscricao_municipal: {
+            type: 'string',
+            description: 'Inscrição municipal da empresa',
+          },
+        },
+        required: ['cnpj', 'razao_social'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'provide_help',
       description: 'Fornece ajuda e orientações sobre o que o assistente pode fazer.',
       parameters: {
@@ -275,7 +325,7 @@ export const FUNCTION_DEFINITIONS = [
         properties: {
           topic: {
             type: 'string',
-            enum: ['notas', 'clientes', 'impostos', 'faturamento', 'geral'],
+            enum: ['notas', 'clientes', 'impostos', 'faturamento', 'empresas', 'geral'],
             description: 'Tópico específico para ajuda',
           },
         },
@@ -285,8 +335,29 @@ export const FUNCTION_DEFINITIONS = [
   {
     type: 'function',
     function: {
+      name: 'out_of_scope',
+      description: 'Responde quando o pedido do usuário está fora do escopo do assistente fiscal. Use quando o usuário perguntar sobre assuntos não relacionados à gestão fiscal, como: previsão do tempo, receitas de comida, notícias, programação não fiscal, jogos, piadas, etc.',
+      parameters: {
+        type: 'object',
+        properties: {
+          user_request: {
+            type: 'string',
+            description: 'Descrição do que o usuário pediu',
+          },
+          suggestion: {
+            type: 'string',
+            description: 'Sugestão do que o assistente pode ajudar',
+          },
+        },
+        required: ['user_request'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'ask_clarification',
-      description: 'Pede esclarecimento quando a intenção do usuário não está clara.',
+      description: 'Pede esclarecimento quando a intenção do usuário não está clara ou quando falta informação.',
       parameters: {
         type: 'object',
         properties: {
@@ -428,11 +499,28 @@ Para criar o cadastro, preciso do documento:
 
 Ou você pode acessar a seção **Clientes** no menu lateral."
 
+CADASTRO DE EMPRESAS:
+- Quando o usuário quiser cadastrar uma nova empresa, peça as informações necessárias:
+  • CNPJ (obrigatório)
+  • Razão Social (obrigatório)
+  • Cidade e UF (obrigatórios)
+  • Regime Tributário (MEI ou Simples Nacional)
+  • Email e Telefone
+  • Inscrição Municipal
+- Confirme os dados antes de criar
+- Exemplo: "criar empresa CNPJ 12.345.678/0001-99 Razão Social ABC Ltda"
+
+FORA DO ESCOPO:
+- Se o usuário perguntar sobre assuntos NÃO relacionados à gestão fiscal (previsão do tempo, receitas, piadas, programação genérica, notícias, esportes, política, etc.), use a função out_of_scope e responda educadamente redirecionando para suas funcionalidades.
+- NUNCA tente responder perguntas fora do escopo fiscal.
+- SEMPRE redirecione educadamente para suas funcionalidades.
+
 NUNCA:
 - Exponha erros técnicos ou códigos de erro
 - Execute ações sem confirmação do usuário
 - Invente dados que não existem
-- Forneça informações fiscais incorretas`;
+- Forneça informações fiscais incorretas
+- Responda perguntas fora do escopo fiscal`;
 }
 
 /**
@@ -453,9 +541,11 @@ export function mapFunctionToAction(functionName) {
     'create_client': 'criar_cliente',
     'list_clients': 'listar_clientes',
     'search_client': 'buscar_cliente',
+    'create_company': 'criar_empresa',
     'get_taxes': 'ver_impostos',
     'check_fiscal_connection': 'verificar_conexao',
     'provide_help': 'ajuda',
+    'out_of_scope': 'fora_de_escopo',
     'ask_clarification': 'esclarecer',
   };
   
@@ -473,6 +563,7 @@ export function requiresConfirmation(actionType) {
     'emitir_nfse',
     'cancelar_nfse',
     'criar_cliente',
+    'criar_empresa',
   ];
   
   return requiresConfirm.includes(actionType);

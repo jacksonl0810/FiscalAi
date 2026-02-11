@@ -718,7 +718,7 @@ const UsersTab = () => {
                   <div className="relative flex items-center gap-2 z-10">
                     <ListChecks className="w-4 h-4 text-orange-400 group-hover:text-orange-300 transition-colors duration-500" />
                     <span className="group-hover:text-orange-100 transition-colors duration-500">
-                      Ações em Massa ({selectedUsers.length})
+                  Ações em Massa ({selectedUsers.length})
                     </span>
                     <ChevronDown className="w-4 h-4 text-orange-400/70 group-hover:text-orange-300 transition-colors duration-500" />
                   </div>

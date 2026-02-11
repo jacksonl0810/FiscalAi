@@ -37,12 +37,21 @@ self.addEventListener('install', (event) => {
       })
       .then(() => {
         console.log('[SW] Static assets cached');
-        return self.skipWaiting();
+        // DON'T call skipWaiting() here - let the SW wait until user closes all tabs
+        // This prevents unexpected page reloads when user switches tabs
       })
       .catch((error) => {
         console.error('[SW] Failed to cache static assets:', error);
       })
   );
+});
+
+// Listen for skip waiting message from the main thread
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    console.log('[SW] Received skip waiting message, activating new version...');
+    self.skipWaiting();
+  }
 });
 
 // Activate event - clean up old caches
@@ -70,7 +79,8 @@ self.addEventListener('activate', (event) => {
       })
       .then(() => {
         console.log('[SW] Service worker activated');
-        return self.clients.claim();
+        // DON'T call clients.claim() automatically - this can cause unexpected reloads
+        // The new SW will control pages after they're refreshed normally
       })
   );
 });

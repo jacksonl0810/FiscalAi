@@ -302,6 +302,108 @@ export function constructWebhookEvent(payload, signature, secret) {
   }
 }
 
+/**
+ * Create and charge a one-time payment (for Pay Per Use invoices)
+ * @param {Object} paymentData
+ * @param {string} paymentData.customerId - Stripe customer ID
+ * @param {number} paymentData.amount - Amount in cents (e.g., 900 for R$9.00)
+ * @param {string} paymentData.currency - Currency code (default: 'brl')
+ * @param {string} paymentData.description - Payment description
+ * @param {Object} [paymentData.metadata] - Additional metadata
+ * @returns {Promise<Object>} Payment result
+ */
+export async function chargeOneTimePayment({
+  customerId,
+  amount,
+  currency = 'brl',
+  description,
+  metadata = {}
+}) {
+  try {
+    console.log('[Stripe] Creating one-time payment for customer:', customerId, 'Amount:', amount);
+    
+    // Get customer's default payment method
+    const customer = await stripe.customers.retrieve(customerId);
+    const defaultPaymentMethod = customer.invoice_settings?.default_payment_method;
+    
+    if (!defaultPaymentMethod) {
+      console.error('[Stripe] Customer has no default payment method:', customerId);
+      throw new Error('PAYMENT_METHOD_REQUIRED');
+    }
+    
+    // Create and confirm PaymentIntent in one step
+    const paymentIntent = await stripe.paymentIntents.create({
+      amount,
+      currency,
+      customer: customerId,
+      payment_method: defaultPaymentMethod,
+      description,
+      confirm: true, // Automatically confirm and charge
+      automatic_payment_methods: {
+        enabled: true,
+        allow_redirects: 'never' // Ensure immediate charge without redirects
+      },
+      metadata
+    });
+    
+    console.log('[Stripe] PaymentIntent created:', paymentIntent.id, 'Status:', paymentIntent.status);
+    
+    if (paymentIntent.status === 'succeeded') {
+      console.log('[Stripe] ✅ One-time payment successful:', paymentIntent.id);
+      return {
+        success: true,
+        paymentIntentId: paymentIntent.id,
+        status: paymentIntent.status,
+        amount: paymentIntent.amount,
+        chargeId: paymentIntent.latest_charge
+      };
+    } else if (paymentIntent.status === 'requires_action') {
+      // Payment requires additional action (3D Secure, etc.)
+      console.log('[Stripe] ⚠️ Payment requires additional action:', paymentIntent.id);
+      return {
+        success: false,
+        requiresAction: true,
+        paymentIntentId: paymentIntent.id,
+        clientSecret: paymentIntent.client_secret,
+        status: paymentIntent.status
+      };
+    } else {
+      console.error('[Stripe] ❌ Payment failed with status:', paymentIntent.status);
+      throw new Error(`Payment failed with status: ${paymentIntent.status}`);
+    }
+  } catch (error) {
+    console.error('[Stripe] Error charging one-time payment:', error);
+    
+    // Handle specific Stripe error codes
+    if (error.type === 'StripeCardError') {
+      throw new Error(`CARD_ERROR: ${error.message}`);
+    }
+    if (error.code === 'payment_method_missing') {
+      throw new Error('PAYMENT_METHOD_REQUIRED');
+    }
+    
+    throw new Error(`Failed to charge payment: ${error.message}`);
+  }
+}
+
+/**
+ * Get customer's payment methods
+ * @param {string} customerId - Stripe customer ID
+ * @returns {Promise<Stripe.PaymentMethod[]>}
+ */
+export async function getCustomerPaymentMethods(customerId) {
+  try {
+    const paymentMethods = await stripe.paymentMethods.list({
+      customer: customerId,
+      type: 'card'
+    });
+    return paymentMethods.data;
+  } catch (error) {
+    console.error('[Stripe] Error listing payment methods:', error);
+    throw new Error(`Failed to list payment methods: ${error.message}`);
+  }
+}
+
 // Export default for convenience
 export default {
   stripe: stripeSDK,
@@ -315,4 +417,6 @@ export default {
   getInvoice,
   listCustomerSubscriptions,
   constructWebhookEvent,
+  chargeOneTimePayment,
+  getCustomerPaymentMethods,
 };
