@@ -104,6 +104,19 @@ export const assistantService = {
     await apiClient.delete('/assistant/history');
   },
 
+  /**
+   * Save a message to conversation history
+   * Used to persist success/error messages generated client-side
+   */
+  async saveMessage(data: {
+    role: 'user' | 'assistant';
+    content: string;
+    metadata?: object;
+  }): Promise<{ id: string; role: string; content: string; createdAt: string }> {
+    const response = await apiClient.post<{ status: string; data: any }>('/assistant/history', data);
+    return response.data.data;
+  },
+
   async executeAction(data: {
     action_type: string;
     action_data: any;
@@ -142,6 +155,42 @@ export const assistantService = {
       invoice_data: invoiceData
     });
     return response.data.data || response.data;
+  },
+
+  /**
+   * Validate client data against registered clients
+   * Used when editing invoice preview
+   */
+  async validateClient(data: {
+    cliente_nome?: string;
+    cliente_documento?: string;
+  }): Promise<{
+    status: string;
+    found: boolean;
+    canAutoCreate?: boolean;
+    documentValid?: boolean;
+    client?: {
+      id: string;
+      nome: string;
+      documento: string;
+      tipoPessoa: string;
+      email?: string;
+      telefone?: string;
+    };
+    suggestedData?: {
+      nome: string;
+      documento: string;
+      tipoPessoa: string;
+    };
+    similarClients?: Array<{
+      id: string;
+      nome: string;
+      documento: string;
+    }>;
+    message: string;
+  }> {
+    const response = await apiClient.post<any>('/assistant/validate-client', data);
+    return response.data;
   },
 };
 
