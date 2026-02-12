@@ -243,30 +243,49 @@ export async function checkInvoiceLimit(userId) {
 }
 
 /**
- * Validate CNPJ uniqueness
+ * Validate CNPJ uniqueness per user
+ * Different users CAN register the same CNPJ (e.g., accountant and business owner)
+ * Same user CANNOT register the same CNPJ twice
  * @param {string} cnpj - CNPJ to validate
- * @throws {AppError} If CNPJ already exists
+ * @param {string} userId - User ID to check uniqueness for
+ * @throws {AppError} If same user already has this CNPJ
  */
-export async function validateCNPJUniqueness(cnpj) {
+export async function validateCNPJUniqueness(cnpj, userId) {
   const normalizedCnpj = cnpj.replace(/\D/g, '');
   
-  const existing = await prisma.company.findUnique({
-    where: { cnpj: normalizedCnpj }
+  // Check if THIS user already has a company with this CNPJ
+  const existingForUser = await prisma.company.findFirst({
+    where: { 
+      cnpj: normalizedCnpj,
+      userId: userId
+    }
   });
 
-  if (existing) {
+  if (existingForUser) {
     throw new AppError(
-      'Este CNPJ já está cadastrado no sistema',
+      'Você já possui uma empresa com este CNPJ cadastrada na sua conta.',
       409,
       'CNPJ_ALREADY_EXISTS',
       {
-        existingCompanyId: existing.id,
-        existingUserId: existing.userId
+        existingCompanyId: existingForUser.id
       }
     );
   }
 
-  return true;
+  // Check if other users have this CNPJ (informational, not blocking)
+  const existingForOthers = await prisma.company.findFirst({
+    where: { 
+      cnpj: normalizedCnpj,
+      userId: { not: userId }
+    },
+    select: { id: true, nuvemFiscalId: true }
+  });
+
+  return {
+    unique: true,
+    existsOnOtherAccounts: !!existingForOthers,
+    otherAccountNuvemFiscalId: existingForOthers?.nuvemFiscalId || null
+  };
 }
 
 /**

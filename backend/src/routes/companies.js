@@ -147,9 +147,9 @@ router.post('/', [
 
   const userId = req.user.id;
 
-  // Validate CNPJ uniqueness
+  // Validate CNPJ uniqueness per user (different users CAN register same CNPJ)
   const { validateCNPJUniqueness, checkCompanyLimit, validateTargetAudience, getUpgradeOptions, getUserPlanId, getPlanConfig } = await import('../services/planService.js');
-  await validateCNPJUniqueness(cnpj);
+  const cnpjCheck = await validateCNPJUniqueness(cnpj, userId);
 
   // Check company limit for user's plan
   const limitCheck = await checkCompanyLimit(userId);
@@ -379,8 +379,34 @@ router.post('/:id/register-fiscal', asyncHandler(async (req, res) => {
   }
 
   try {
-    // Register company in Nuvem Fiscal
-    const registrationResult = await registerCompany(company);
+    // Check if another user already registered this CNPJ in Nuvem Fiscal
+    // This allows sharing the same Nuvem Fiscal company across multiple users
+    const cleanCnpj = (company.cnpj || '').replace(/\D/g, '');
+    const otherCompanyWithSameCnpj = await prisma.company.findFirst({
+      where: {
+        cnpj: cleanCnpj,
+        userId: { not: req.user.id },
+        nuvemFiscalId: { not: null }
+      },
+      select: { nuvemFiscalId: true }
+    });
+
+    let registrationResult;
+    
+    if (otherCompanyWithSameCnpj?.nuvemFiscalId) {
+      // Another user already has this CNPJ registered on Nuvem Fiscal
+      // Reuse the same nuvemFiscalId - no need to re-register
+      console.log('[Companies] CNPJ already registered by another user, reusing nuvemFiscalId:', otherCompanyWithSameCnpj.nuvemFiscalId);
+      registrationResult = {
+        nuvemFiscalId: otherCompanyWithSameCnpj.nuvemFiscalId,
+        status: 'not_connected',
+        message: 'Empresa já registrada na Nuvem Fiscal. Configure o certificado digital para conectar.',
+        alreadyExists: true
+      };
+    } else {
+      // Register company in Nuvem Fiscal (handles duplicate detection internally)
+      registrationResult = await registerCompany(company);
+    }
 
     // Update company with Nuvem Fiscal ID
     await prisma.company.update({
@@ -791,7 +817,30 @@ router.post('/:id/certificate', (req, res, next) => {
 
   // Try to upload certificate to Nuvem Fiscal if company is registered
   let nuvemFiscalStatus = null;
-  if (company.nuvemFiscalId && company.cnpj) {
+  
+  // If company doesn't have nuvemFiscalId yet, check if another user's company with same CNPJ has it
+  let effectiveNuvemFiscalId = company.nuvemFiscalId;
+  if (!effectiveNuvemFiscalId && company.cnpj) {
+    const cleanCnpj = company.cnpj.replace(/\D/g, '');
+    const otherCompany = await prisma.company.findFirst({
+      where: {
+        cnpj: cleanCnpj,
+        nuvemFiscalId: { not: null }
+      },
+      select: { nuvemFiscalId: true }
+    });
+    if (otherCompany?.nuvemFiscalId) {
+      effectiveNuvemFiscalId = otherCompany.nuvemFiscalId;
+      // Update this company's nuvemFiscalId too
+      await prisma.company.update({
+        where: { id },
+        data: { nuvemFiscalId: effectiveNuvemFiscalId }
+      });
+      console.log('[Companies] Linked nuvemFiscalId from another user\'s company:', effectiveNuvemFiscalId);
+    }
+  }
+  
+  if (effectiveNuvemFiscalId && company.cnpj) {
     try {
       const { uploadCertificate } = await import('../services/nuvemFiscal.js');
       const nuvemResult = await uploadCertificate(company.cnpj, certificateBase64, password);
