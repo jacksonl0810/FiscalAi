@@ -33,6 +33,7 @@ import {
   buildMessages,
   getOpenAIConfig 
 } from '../services/aiPromptService.js';
+import { buildRAGContext } from '../services/ragService.js';
 
 // Multer configuration for audio uploads
 const upload = multer({
@@ -200,8 +201,11 @@ router.post('/process', assistantLimiter, [
   try {
     const timeoutMs = getTimeout('openai');
 
-    // Build messages with improved system prompt
-    const messages = buildMessages(message, finalHistory, { company, user: req.user });
+    // Build RAG context - retrieve relevant user data from database
+    const ragContext = await buildRAGContext(message, req.user.id, companyId);
+    
+    // Build messages with improved system prompt + RAG context
+    const messages = buildMessages(message, finalHistory, { company, user: req.user, ragContext });
     
     // Get OpenAI config with function definitions
     const openaiConfig = getOpenAIConfig(messages, true);
@@ -367,12 +371,29 @@ router.post('/process', assistantLimiter, [
         }
       }
       
+      // Map OpenAI function args to frontend-expected format
+      let mappedArgs = functionArgs;
+      
+      if (actionType === 'emitir_nfse') {
+        // OpenAI uses: client_name, value, service_description, client_document, iss_rate, service_code
+        // Frontend expects: cliente_nome, valor, descricao_servico, cliente_documento, aliquota_iss, codigo_servico
+        mappedArgs = {
+          cliente_nome: functionArgs.client_name || functionArgs.cliente_nome || '',
+          cliente_documento: functionArgs.client_document || functionArgs.cliente_documento || '',
+          descricao_servico: functionArgs.service_description || functionArgs.descricao_servico || 'Serviço prestado',
+          valor: parseFloat(functionArgs.value || functionArgs.valor) || 0,
+          aliquota_iss: parseFloat(functionArgs.iss_rate || functionArgs.aliquota_iss) || 5,
+          codigo_servico: functionArgs.service_code || functionArgs.codigo_servico || '',
+          municipio: functionArgs.municipio || '',
+        };
+      }
+      
       // Build response data with extracted action
       responseData = {
         success: true,
         action: {
           type: actionType,
-          data: functionArgs
+          data: mappedArgs
         },
         explanation: assistantResponse.content || generateExplanationForAction(actionType, functionArgs),
         requiresConfirmation: needsConfirm
@@ -761,7 +782,8 @@ async function processWithPatternMatching(message, userId, companyId, res, inten
                           line.length >= 2 && 
                           !/^(?:cpf|cnpj|documento|valor|cliente|nota|emitir|r\$)$/i.test(line);
         if (isNameLine) {
-          multiLineName = line.trim();
+          // Clean the name - remove trailing punctuation
+          multiLineName = line.trim().replace(/[.,;:!?]+$/g, '').trim();
           continue;
         }
       }
@@ -1126,10 +1148,14 @@ async function processWithPatternMatching(message, userId, companyId, res, inten
 
   // ========================================
   // QUERY: Invoice by client name
+  // Skip if the message is about CREATING an invoice (not searching)
   // ========================================
   const clientSearchPattern = /nota(?:s)?\s+(?:de|do|da|para)\s+(.+)/i;
   const clientSearchMatch = message.match(clientSearchPattern);
-  if (clientSearchMatch && !lowerMessage.includes('emitir')) {
+  const isInvoiceCreation = /(?:nova|emitir|gerar|criar|fazer|lan[cç]ar|registrar)\s/i.test(message) ||
+    /nota\s+(?:de\s+)?r\$\s*/i.test(message) ||
+    /nota\s+(?:de\s+)?\d+(?:[.,]\d+)?/i.test(message);
+  if (clientSearchMatch && !isInvoiceCreation) {
     const clientName = clientSearchMatch[1].trim();
     
     const clientInvoices = await prisma.invoice.findMany({
@@ -1570,15 +1596,19 @@ async function processWithPatternMatching(message, userId, companyId, res, inten
       }
     }
     
-    // Clean up client name - remove common suffixes
+    // Clean up client name - remove common suffixes and trailing punctuation
     if (clienteNome) {
       clienteNome = clienteNome
         .replace(/\s+(?:por|referente|,).*/i, '')
         .replace(/\s+\d+.*$/i, '') // Remove trailing numbers (like document fragments)
+        .replace(/[.,;:!?]+$/g, '') // Remove trailing punctuation (., ; : ! ?)
         .trim();
       
       // Split by comma and take first part
       clienteNome = clienteNome.split(/\s*,\s*/)[0].trim();
+      
+      // Final cleanup - remove any remaining trailing punctuation
+      clienteNome = clienteNome.replace(/[.,;:!?]+$/g, '').trim();
     }
     
     // Extract service description if present

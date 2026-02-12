@@ -45,9 +45,10 @@ export default function Layout({ children, currentPageName }) {
   const { data: notifications = [] } = useQuery({
     queryKey: ['notifications'],
     queryFn: () => notificationsService.listUnread(),
-    refetchInterval: 20000,
+    refetchInterval: 15000, // Faster polling (15 seconds instead of 20)
     refetchIntervalInBackground: true,
-    staleTime: 10000,
+    staleTime: 0, // Always consider data stale
+    refetchOnWindowFocus: true, // Refetch when window gains focus
   });
 
   const { data: settings } = useQuery({

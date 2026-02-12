@@ -84,7 +84,10 @@ function PaymentForm({ invoice, company, onSuccess, onCancel, onClose }) {
 
   const handleAddCard = async () => {
     if (!stripe || !elements) {
-      toast.error('Stripe não carregado. Aguarde...');
+      toast.error('⏳ Carregando...', {
+        description: 'O sistema de pagamento está carregando. Aguarde um momento.',
+        duration: 3000
+      });
       return;
     }
 
@@ -108,25 +111,108 @@ function PaymentForm({ invoice, company, onSuccess, onCancel, onClose }) {
       );
 
       if (setupError) {
-        throw new Error(setupError.message);
+        // Translate Stripe error messages
+        const errorMessage = translateStripeError(setupError.message, setupError.code);
+        throw new Error(errorMessage);
       }
 
       // Card saved successfully
       setHasPaymentMethod(true);
       setStep('confirm');
-      toast.success('Cartão adicionado com sucesso!');
+      toast.success('✅ Cartão Cadastrado!', {
+        description: 'Seu cartão foi salvo com segurança. Agora você pode emitir notas.',
+        duration: 4000
+      });
 
     } catch (error) {
       console.error('Error adding card:', error);
-      toast.error('Erro ao adicionar cartão', {
-        description: error.message
+      
+      // Get user-friendly error message
+      const friendlyMessage = getCardErrorMessage(error.message);
+      
+      toast.error(friendlyMessage.title, {
+        description: friendlyMessage.description,
+        duration: 5000
       });
     } finally {
       setIsProcessing(false);
     }
   };
+  
+  // Helper function to translate Stripe error codes
+  const translateStripeError = (message, code) => {
+    const translations = {
+      'card_declined': 'Cartão recusado pelo banco',
+      'expired_card': 'Cartão expirado',
+      'incorrect_cvc': 'Código de segurança incorreto',
+      'incorrect_number': 'Número do cartão incorreto',
+      'invalid_expiry_month': 'Mês de validade inválido',
+      'invalid_expiry_year': 'Ano de validade inválido',
+      'invalid_number': 'Número do cartão inválido',
+      'processing_error': 'Erro de processamento',
+    };
+    return translations[code] || message;
+  };
+  
+  // Helper function to get user-friendly card error messages
+  const getCardErrorMessage = (message) => {
+    const lowerMessage = message?.toLowerCase() || '';
+    
+    if (lowerMessage.includes('declined') || lowerMessage.includes('recusado')) {
+      return {
+        title: '❌ Cartão Recusado',
+        description: 'Seu banco recusou o cartão. Verifique os dados ou tente outro cartão.'
+      };
+    }
+    if (lowerMessage.includes('expired') || lowerMessage.includes('expirado')) {
+      return {
+        title: '📅 Cartão Vencido',
+        description: 'Este cartão está vencido. Use um cartão válido.'
+      };
+    }
+    if (lowerMessage.includes('cvc') || lowerMessage.includes('cvv') || lowerMessage.includes('segurança')) {
+      return {
+        title: '🔢 Código Incorreto',
+        description: 'O código de segurança (CVV) está incorreto. Verifique os 3 números no verso do cartão.'
+      };
+    }
+    if (lowerMessage.includes('number') || lowerMessage.includes('número')) {
+      return {
+        title: '🔢 Número Inválido',
+        description: 'O número do cartão está incorreto. Verifique e tente novamente.'
+      };
+    }
+    if (lowerMessage.includes('insufficient') || lowerMessage.includes('insuficiente')) {
+      return {
+        title: '💰 Saldo Insuficiente',
+        description: 'Seu cartão não tem limite disponível. Tente outro cartão.'
+      };
+    }
+    
+    return {
+      title: '⚠️ Erro no Cartão',
+      description: message || 'Não foi possível adicionar o cartão. Verifique os dados e tente novamente.'
+    };
+  };
 
   const handleConfirmPayment = async () => {
+    // Validate required data before proceeding
+    if (!company?.id) {
+      toast.error('🏢 Empresa Não Selecionada', {
+        description: 'Selecione uma empresa no menu lateral para emitir notas fiscais.',
+        duration: 5000
+      });
+      return;
+    }
+    
+    if (!invoice?.cliente_nome || !invoice?.valor) {
+      toast.error('📝 Dados Incompletos', {
+        description: 'Preencha o nome do cliente e o valor da nota fiscal.',
+        duration: 5000
+      });
+      return;
+    }
+
     setIsProcessing(true);
     setStep('processing');
 
@@ -167,16 +253,115 @@ function PaymentForm({ invoice, company, onSuccess, onCancel, onClose }) {
       const errorStatus = error.response?.status || error.status;
       const errorMessage = error.response?.data?.message || error.message;
       
-      // Check if it's a payment method issue
-      if (errorStatus === 402 || errorCode === 'PAYMENT_METHOD_REQUIRED' || errorCode === 'PAYMENT_FAILED') {
-        setStep('add_card');
-        setHasPaymentMethod(false);
-        toast.error('Pagamento necessário', {
-          description: 'Por favor, adicione um cartão de crédito para continuar.',
-          duration: 5000
-        });
-      } else if (errorCode === 'PAYMENT_REQUIRES_ACTION') {
-        // Handle 3D Secure - we need client secret
+      // User-friendly error messages mapping
+      const getErrorInfo = () => {
+        // Payment method issues
+        if (errorStatus === 402 || errorCode === 'PAYMENT_METHOD_REQUIRED') {
+          return {
+            step: 'add_card',
+            title: '💳 Cartão Necessário',
+            message: 'Para emitir notas fiscais, você precisa cadastrar um cartão de crédito.',
+            action: 'add_card'
+          };
+        }
+        
+        if (errorCode === 'PAYMENT_FAILED') {
+          return {
+            step: 'add_card',
+            title: '❌ Pagamento Recusado',
+            message: 'Seu cartão foi recusado. Verifique o saldo ou tente outro cartão.',
+            action: 'add_card'
+          };
+        }
+        
+        if (errorCode === 'PAYMENT_REQUIRES_ACTION') {
+          return {
+            step: 'confirm',
+            title: '🔐 Autenticação Necessária',
+            message: 'Seu banco requer confirmação adicional. Verifique seu app do banco.',
+            action: '3ds'
+          };
+        }
+        
+        // Card errors
+        if (errorCode === 'card_declined' || errorMessage?.includes('declined')) {
+          return {
+            step: 'add_card',
+            title: '❌ Cartão Recusado',
+            message: 'Seu cartão foi recusado. Verifique os dados ou use outro cartão.',
+            action: 'retry'
+          };
+        }
+        
+        if (errorCode === 'insufficient_funds' || errorMessage?.includes('insufficient')) {
+          return {
+            step: 'add_card',
+            title: '💰 Saldo Insuficiente',
+            message: 'Seu cartão não tem saldo suficiente. Tente outro cartão.',
+            action: 'retry'
+          };
+        }
+        
+        if (errorCode === 'expired_card' || errorMessage?.includes('expired')) {
+          return {
+            step: 'add_card',
+            title: '📅 Cartão Expirado',
+            message: 'Seu cartão está vencido. Por favor, cadastre um novo cartão.',
+            action: 'add_card'
+          };
+        }
+        
+        // Invoice/Fiscal errors
+        if (errorCode === 'COMPANY_NOT_CONFIGURED' || errorMessage?.includes('empresa')) {
+          return {
+            step: 'confirm',
+            title: '🏢 Empresa Não Configurada',
+            message: 'Configure sua empresa antes de emitir notas. Acesse as configurações.',
+            action: 'retry'
+          };
+        }
+        
+        if (errorCode === 'FISCAL_ERROR' || errorMessage?.includes('prefeitura')) {
+          return {
+            step: 'confirm',
+            title: '🏛️ Erro na Prefeitura',
+            message: 'A prefeitura está temporariamente indisponível. Tente novamente em alguns minutos.',
+            action: 'retry'
+          };
+        }
+        
+        if (errorCode === 'INVALID_CLIENT' || errorMessage?.includes('cliente')) {
+          return {
+            step: 'confirm',
+            title: '👤 Cliente Inválido',
+            message: 'Verifique os dados do cliente (nome e CPF/CNPJ).',
+            action: 'retry'
+          };
+        }
+        
+        // Network errors
+        if (errorCode === 'NETWORK_ERROR' || errorMessage?.includes('network')) {
+          return {
+            step: 'confirm',
+            title: '📶 Sem Conexão',
+            message: 'Verifique sua conexão com a internet e tente novamente.',
+            action: 'retry'
+          };
+        }
+        
+        // Default error
+        return {
+          step: 'confirm',
+          title: '⚠️ Ops! Algo deu errado',
+          message: 'Não foi possível processar sua solicitação. Tente novamente.',
+          action: 'retry'
+        };
+      };
+      
+      const errorInfo = getErrorInfo();
+      
+      // Handle 3D Secure authentication
+      if (errorInfo.action === '3ds') {
         const clientSecret = error.response?.data?.data?.clientSecret;
         if (clientSecret && stripe) {
           try {
@@ -189,18 +374,26 @@ function PaymentForm({ invoice, company, onSuccess, onCancel, onClose }) {
             return;
           } catch (_secureError) {
             setStep('confirm');
-            toast.error('Autenticação do cartão falhou', {
-              description: 'Por favor, tente novamente ou use outro cartão.'
+            toast.error('🔐 Autenticação Falhou', {
+              description: 'A verificação do banco não foi concluída. Tente novamente ou use outro cartão.',
+              duration: 6000
             });
+            return;
           }
         }
-      } else {
-        setStep('confirm');
-        toast.error('Erro ao processar', {
-          description: errorMessage || 'Por favor, tente novamente.',
-          duration: 5000
-        });
       }
+      
+      // Update UI state
+      setStep(errorInfo.step);
+      if (errorInfo.action === 'add_card') {
+        setHasPaymentMethod(false);
+      }
+      
+      // Show user-friendly toast
+      toast.error(errorInfo.title, {
+        description: errorInfo.message,
+        duration: 6000
+      });
     } finally {
       setIsProcessing(false);
     }
@@ -210,6 +403,25 @@ function PaymentForm({ invoice, company, onSuccess, onCancel, onClose }) {
     return (
       <div className="flex items-center justify-center py-12">
         <Loader2 className="w-8 h-8 text-orange-400 animate-spin" />
+      </div>
+    );
+  }
+
+  // Show error if company is not available
+  if (!company?.id) {
+    return (
+      <div className="py-8 text-center">
+        <div className="w-20 h-20 mx-auto mb-4 rounded-full bg-gradient-to-br from-red-500/20 to-rose-500/10 flex items-center justify-center">
+          <AlertCircle className="w-10 h-10 text-red-400" />
+        </div>
+        <h4 className="text-xl font-bold text-white mb-2">Empresa não selecionada</h4>
+        <p className="text-slate-400 mb-4">Por favor, selecione uma empresa no menu lateral.</p>
+        <button
+          onClick={onClose}
+          className="px-6 py-2 rounded-xl font-semibold bg-slate-800/50 text-slate-300 hover:text-white border border-slate-700/50 transition-all"
+        >
+          Fechar
+        </button>
       </div>
     );
   }

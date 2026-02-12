@@ -27,6 +27,7 @@ import FiscalStatusIndicator from "@/components/layout/FiscalStatusIndicator";
 function normalizeStatus(status) {
   if (status === 'autorizada') return 'autorizada';
   if (status === 'rejeitada') return 'rejeitada';
+  if (status === 'cancelada') return 'cancelada';
   return 'processando';
 }
 
@@ -36,6 +37,7 @@ function getStatusDisplay(status) {
     processando: { label: 'Processando', bg: 'bg-yellow-500/20', text: 'text-yellow-400' },
     autorizada: { label: 'Autorizada', bg: 'bg-green-500/20', text: 'text-green-400' },
     rejeitada: { label: 'Rejeitada', bg: 'bg-red-500/20', text: 'text-red-400' },
+    cancelada: { label: 'Cancelada', bg: 'bg-slate-500/20', text: 'text-slate-400' },
   };
   return config[normalized] || config.processando;
 }
@@ -44,6 +46,9 @@ export default function Dashboard() {
   const { data: invoices = [] } = useQuery({
     queryKey: ['invoices'],
     queryFn: () => invoicesService.list({ sort: '-created_at' }),
+    staleTime: 0, // Always consider data stale to ensure fresh data
+    refetchOnMount: 'always', // Always refetch when component mounts
+    refetchOnWindowFocus: true, // Refetch when window gains focus
   });
 
   // Get user settings to find active company

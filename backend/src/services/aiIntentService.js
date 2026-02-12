@@ -49,11 +49,11 @@ export const INTENT_TYPES = {
 // Keywords and phrases for each intent (Portuguese + variations)
 const INTENT_PATTERNS = {
   [INTENT_TYPES.EMIT_INVOICE]: {
-    keywords: ['emitir', 'emissão', 'gerar', 'criar', 'nova', 'fazer', 'lançar', 'registrar'],
+    keywords: ['emitir', 'emissao', 'gerar', 'criar', 'nova', 'fazer', 'lancar', 'registrar'],
     phrases: [
-      // Basic patterns
-      'emitir nota', 'nova nota', 'gerar nota', 'criar nota', 'fazer nota', 'emitir nf', 'emissão nf',
-      'emitir uma nota', 'fazer uma nota', 'gerar uma nota', 'criar uma nota', 'lançar nota',
+      // Basic patterns (accent-free since normalizeInput strips accents)
+      'emitir nota', 'nova nota', 'gerar nota', 'criar nota', 'fazer nota', 'emitir nf', 'emissao nf',
+      'emitir uma nota', 'fazer uma nota', 'gerar uma nota', 'criar uma nota', 'lancar nota',
       // Conversational patterns
       'preciso emitir', 'quero emitir', 'gostaria de emitir', 'pode emitir', 'poderia emitir',
       'me ajuda a emitir', 'me ajude a emitir', 'vou emitir', 'vamos emitir',
@@ -78,14 +78,14 @@ const INTENT_PATTERNS = {
     weight: 0.9,
   },
   [INTENT_TYPES.LAST_INVOICE]: {
-    keywords: ['última', 'ultima', 'recente', 'anterior', 'last'],
-    phrases: ['última nota', 'ultima nota', 'nota mais recente', 'última nf', 'minha última', 'last invoice'],
+    keywords: ['ultima', 'recente', 'anterior', 'last'],
+    phrases: ['ultima nota', 'nota mais recente', 'ultima nf', 'minha ultima', 'last invoice'],
     context: ['nota', 'nf'],
     weight: 1.0,
   },
   [INTENT_TYPES.INVOICE_STATUS]: {
-    keywords: ['status', 'situação', 'estado', 'como está', 'andamento'],
-    phrases: ['status da nota', 'situação da nota', 'como está a nota', 'andamento da nota'],
+    keywords: ['status', 'situacao', 'estado', 'como esta', 'andamento'],
+    phrases: ['status da nota', 'situacao da nota', 'como esta a nota', 'andamento da nota'],
     context: ['nota', 'nf'],
     weight: 0.9,
   },
@@ -96,8 +96,8 @@ const INTENT_PATTERNS = {
     weight: 1.0,
   },
   [INTENT_TYPES.PENDING_INVOICES]: {
-    keywords: ['pendente', 'pendentes', 'processando', 'aguardando', 'em análise'],
-    phrases: ['notas pendentes', 'notas processando', 'notas em análise', 'aguardando processamento'],
+    keywords: ['pendente', 'pendentes', 'processando', 'aguardando', 'em analise'],
+    phrases: ['notas pendentes', 'notas processando', 'notas em analise', 'aguardando processamento'],
     context: ['nota', 'notas'],
     weight: 0.9,
   },
@@ -131,13 +131,13 @@ const INTENT_PATTERNS = {
   },
   [INTENT_TYPES.REVENUE]: {
     keywords: ['faturamento', 'receita', 'ganho', 'ganhou', 'vendas', 'quanto', 'faturei'],
-    phrases: ['meu faturamento', 'quanto faturei', 'receita do mês', 'total de vendas', 'quanto ganhei', 'faturamento mensal'],
+    phrases: ['meu faturamento', 'quanto faturei', 'receita do mes', 'total de vendas', 'quanto ganhei', 'faturamento mensal'],
     context: [],
     weight: 1.0,
   },
   [INTENT_TYPES.VIEW_TAXES]: {
     keywords: ['imposto', 'impostos', 'tributo', 'tributos', 'das', 'guia', 'guias'],
-    phrases: ['ver impostos', 'meus impostos', 'guias pendentes', 'das pendente', 'impostos do mês', 'tributos a pagar'],
+    phrases: ['ver impostos', 'meus impostos', 'guias pendentes', 'das pendente', 'impostos do mes', 'tributos a pagar'],
     context: [],
     weight: 0.9,
     // Avoid matching when CPF/CNPJ is present (common Portuguese word "das")
@@ -156,20 +156,20 @@ const INTENT_PATTERNS = {
     weight: 0.9,
   },
   [INTENT_TYPES.CHECK_CONNECTION]: {
-    keywords: ['conexão', 'conectado', 'online', 'status', 'funcionando'],
-    phrases: ['verificar conexão', 'status da conexão', 'está conectado', 'prefeitura online'],
+    keywords: ['conexao', 'conectado', 'online', 'status', 'funcionando'],
+    phrases: ['verificar conexao', 'status da conexao', 'esta conectado', 'prefeitura online'],
     context: ['prefeitura', 'fiscal', 'nuvem'],
     weight: 0.8,
   },
   [INTENT_TYPES.HELP]: {
-    keywords: ['ajuda', 'help', 'socorro', 'como', 'o que', 'dúvida'],
-    phrases: ['preciso de ajuda', 'como funciona', 'o que você faz', 'me ajuda', 'pode me ajudar'],
+    keywords: ['ajuda', 'help', 'socorro', 'como', 'o que', 'duvida'],
+    phrases: ['preciso de ajuda', 'como funciona', 'o que voce faz', 'me ajuda', 'pode me ajudar'],
     context: [],
     weight: 0.7,
   },
   [INTENT_TYPES.GREETING]: {
-    keywords: ['oi', 'olá', 'ola', 'hey', 'hello', 'bom dia', 'boa tarde', 'boa noite', 'e aí', 'eai'],
-    phrases: ['oi', 'olá', 'bom dia', 'boa tarde', 'boa noite', 'tudo bem', 'como vai'],
+    keywords: ['oi', 'ola', 'hey', 'hello', 'bom dia', 'boa tarde', 'boa noite', 'e ai', 'eai'],
+    phrases: ['oi', 'ola', 'bom dia', 'boa tarde', 'boa noite', 'tudo bem', 'como vai'],
     context: [],
     weight: 0.6,
     exactMatch: true,
@@ -178,15 +178,14 @@ const INTENT_PATTERNS = {
 
 // Common typos and abbreviations mapping
 const TYPO_CORRECTIONS = {
-  // Portuguese typos
+  // Portuguese typos (accent-free since normalizeInput strips accents)
   'emtir': 'emitir',
   'emiti': 'emitir',
-  'emissao': 'emissão',
   'faturamneto': 'faturamento',
   'fatuamento': 'faturamento',
-  'ulitma': 'última',
-  'utlima': 'última',
-  'ultma': 'última',
+  'ulitma': 'ultima',
+  'utlima': 'ultima',
+  'ultma': 'ultima',
   'clinte': 'cliente',
   'cleinte': 'cliente',
   'nta': 'nota',
@@ -293,35 +292,43 @@ const PERIOD_KEYWORDS = {
 };
 
 /**
+ * Remove accents from text for comparison
+ * "emissão" → "emissao", "última" → "ultima"
+ * @param {string} text
+ * @returns {string} Text without accents
+ */
+function removeAccents(text) {
+  return text.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+
+/**
  * Normalize and preprocess user input
  * Makes the input easier to analyze by:
  * - Converting to lowercase
+ * - Removing accents for matching
  * - Fixing common typos
  * - Expanding abbreviations
- * - Normalizing accents
+ * - Normalizing whitespace
+ * 
+ * Handles: UPPERCASE, lowercase, MixedCase, accented, unaccented
  * 
  * @param {string} text - Raw user input
- * @returns {string} Normalized text
+ * @returns {string} Normalized text (lowercase, no accents)
  */
 export function normalizeInput(text) {
   if (!text) return '';
   
+  // Step 1: Convert to lowercase
   let normalized = text.toLowerCase().trim();
   
-  // Remove extra whitespace
-  normalized = normalized.replace(/\s+/g, ' ');
+  // Step 2: Remove extra whitespace (but preserve newlines)
+  normalized = normalized.replace(/[^\S\n]+/g, ' ');
   
-  // Normalize common accents that might be missing
-  const accentMap = {
-    'a': '[aáàâã]',
-    'e': '[eéèê]',
-    'i': '[iíìî]',
-    'o': '[oóòôõ]',
-    'u': '[uúùû]',
-    'c': '[cç]',
-  };
+  // Step 3: Remove accents for better matching
+  // "emissão" → "emissao", "última" → "ultima"
+  normalized = removeAccents(normalized);
   
-  // Fix common typos and expand abbreviations
+  // Step 4: Fix common typos and expand abbreviations
   for (const [typo, correction] of Object.entries(TYPO_CORRECTIONS)) {
     const regex = new RegExp(`\\b${typo}\\b`, 'gi');
     normalized = normalized.replace(regex, correction);
@@ -525,6 +532,14 @@ export function extractDocument(text) {
 export function extractClientName(text) {
   if (!text) return null;
   
+  // Helper function to clean extracted names
+  const cleanName = (name) => {
+    if (!name) return null;
+    return name
+      .replace(/[.,;:!?]+$/g, '') // Remove trailing punctuation
+      .trim();
+  };
+  
   // Remove document patterns first to avoid including them in name
   let cleanText = text
     .replace(/\d{2}\.?\d{3}\.?\d{3}[\/]?\d{4}[-]?\d{2}/g, '') // CNPJ
@@ -539,33 +554,33 @@ export function extractClientName(text) {
   // Pattern 1: "Nome: [name]" or "nome é [name]" or "nome = [name]"
   const nomeMatch = cleanText.match(/nome\s*(?:[:=é]|é)\s*([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.]+?)(?:\s*[,;]|\s+(?:cpf|cnpj|documento|email|telefone|tel|fone|e\s+o|com\s)|$)/i);
   if (nomeMatch && nomeMatch[1]?.trim().length > 1) {
-    return nomeMatch[1].trim();
+    return cleanName(nomeMatch[1]);
   }
   
   // Pattern 2: "o nome é/dele é/dela é [name]"
   const nameIsMatch = cleanText.match(/(?:o\s+nome|nome\s+(?:dele|dela)?)\s+(?:é|e)\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.]+?)(?:\s*[,;.]|\s+(?:cpf|cnpj|documento|email|telefone|e\s+o|com\s)|$)/i);
   if (nameIsMatch && nameIsMatch[1]?.trim().length > 1) {
-    return nameIsMatch[1].trim();
+    return cleanName(nameIsMatch[1]);
   }
   
   // Pattern 3: "chamado/chamada [name]" or "de nome [name]"
   const chamadoMatch = cleanText.match(/(?:chamad[oa]|de\s+nome)\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.]+?)(?:\s*[,;.]|\s+(?:cpf|cnpj|documento|email|telefone|com\s)|$)/i);
   if (chamadoMatch && chamadoMatch[1]?.trim().length > 1) {
-    return chamadoMatch[1].trim();
+    return cleanName(chamadoMatch[1]);
   }
   
   // Pattern 4: "criar/cadastrar cliente [name]"
   const afterClienteMatch = cleanText.match(/(?:criar|cadastrar|cadastre|registrar|adicionar|incluir|novo|nova)\s+(?:um\s+|uma\s+|o\s+|a\s+)?(?:novo\s+|nova\s+)?cliente\s*:?\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.]+?)(?:\s*[,;]|\s+(?:cpf|cnpj|documento|email|telefone|tel|fone|com\s|de\s|no\s)|$)/i);
   if (afterClienteMatch && afterClienteMatch[1]?.trim().length > 1) {
-    return afterClienteMatch[1].trim();
+    return cleanName(afterClienteMatch[1]);
   }
   
   // Pattern 5: "cliente [name]" (simple)
   const clienteMatch = cleanText.match(/cliente\s*:?\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.]+?)(?:\s*[,;]|\s+(?:cpf|cnpj|documento|de|no|por|email|telefone)|$)/i);
   if (clienteMatch && clienteMatch[1]?.trim().length > 1) {
-    const candidate = clienteMatch[1].trim();
+    const candidate = cleanName(clienteMatch[1]);
     // Exclude words that aren't names
-    if (!/^(?:novo|nova|um|uma|o|a|com|de|para|meu|minha)$/i.test(candidate)) {
+    if (candidate && !/^(?:novo|nova|um|uma|o|a|com|de|para|meu|minha)$/i.test(candidate)) {
       return candidate;
     }
   }
@@ -573,19 +588,19 @@ export function extractClientName(text) {
   // Pattern 6: "para [name]"
   const paraMatch = cleanText.match(/para\s+(?:o\s+cliente\s+|a\s+empresa\s+)?([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.]+?)(?:\s+(?:cpf|cnpj|documento|de|no\s+valor|por|referente)|$)/i);
   if (paraMatch && paraMatch[1]?.trim().length > 1) {
-    return paraMatch[1].trim();
+    return cleanName(paraMatch[1]);
   }
   
   // Pattern 7: "do/da [name]"
   const doMatch = cleanText.match(/(?:do|da)\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.]+?)(?:\s+(?:cpf|cnpj|documento|de|no|por)|$)/i);
   if (doMatch && doMatch[1]?.trim().length > 1 && !doMatch[1].toLowerCase().includes('cliente')) {
-    return doMatch[1].trim();
+    return cleanName(doMatch[1]);
   }
   
   // Pattern 8: "razão social [name]"
   const razaoMatch = cleanText.match(/(?:razão\s*social|razao\s*social)\s*:?\s*([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.]+?)(?:\s*[,;]|\s+(?:cpf|cnpj|documento|email|telefone)|$)/i);
   if (razaoMatch && razaoMatch[1]?.trim().length > 1) {
-    return razaoMatch[1].trim();
+    return cleanName(razaoMatch[1]);
   }
   
   return null;

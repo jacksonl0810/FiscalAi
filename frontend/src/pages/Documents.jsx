@@ -44,11 +44,13 @@ const statusConfig = {
   processando: { label: "Processando", icon: Clock, color: "text-yellow-400", bg: "bg-yellow-500/20" },
   autorizada: { label: "Autorizada", icon: CheckCircle, color: "text-green-400", bg: "bg-green-500/20" },
   rejeitada: { label: "Rejeitada", icon: XCircle, color: "text-red-400", bg: "bg-red-500/20" },
+  cancelada: { label: "Cancelada", icon: XCircle, color: "text-slate-400", bg: "bg-slate-500/20" },
 };
 
 function normalizeStatus(status) {
   if (status === 'autorizada') return 'autorizada';
   if (status === 'rejeitada') return 'rejeitada';
+  if (status === 'cancelada') return 'cancelada';
   return 'processando';
 }
 
@@ -91,9 +93,12 @@ export default function Documents() {
     return params;
   }, [statusFilter, companyFilter, clientFilter, startDate, endDate]);
 
-  const { data: invoices = [], isLoading } = useQuery({
+  const { data: invoices = [], isLoading, refetch } = useQuery({
     queryKey: ['invoices', filterParams],
     queryFn: () => invoicesService.list(filterParams),
+    staleTime: 0, // Always consider data stale to ensure fresh data
+    refetchOnMount: 'always', // Always refetch when component mounts
+    refetchOnWindowFocus: true, // Refetch when window gains focus
   });
 
   // When opening from Arquivos Recentes (e.g. ?invoiceId=xxx), expand that invoice
@@ -767,7 +772,11 @@ export default function Documents() {
         isOpen={!!cancellationInvoice}
         onClose={() => setCancellationInvoice(null)}
         onSuccess={() => {
-          queryClient.invalidateQueries({ queryKey: ['invoices'] });
+          // Invalidate all invoice-related queries (including filtered ones)
+          queryClient.invalidateQueries({ queryKey: ['invoices'], exact: false });
+          // Invalidate notifications (cancellation creates notification)
+          queryClient.invalidateQueries({ queryKey: ['notifications'] });
+          queryClient.invalidateQueries({ queryKey: ['allNotifications'] });
           setCancellationInvoice(null);
         }}
       />

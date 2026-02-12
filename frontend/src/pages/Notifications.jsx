@@ -57,7 +57,9 @@ export default function Notifications() {
     queryFn: () => notificationsService.list({ sort: '-created_at' }),
     refetchInterval: 10000,
     refetchIntervalInBackground: true,
-    staleTime: 5000,
+    staleTime: 0, // Always consider data stale to ensure fresh notifications
+    refetchOnMount: 'always', // Always refetch when page loads
+    refetchOnWindowFocus: true, // Refetch when window gains focus
   });
 
   /** @type {import('@tanstack/react-query').UseMutationResult<any, Error, string>} */
@@ -190,17 +192,22 @@ export default function Notifications() {
               onClick={markAllAsRead}
               variant="outline"
               className={cn(
-                "bg-gradient-to-br from-white/5 via-white/3 to-white/5",
-                "border border-white/10 text-white",
-                "hover:bg-gradient-to-br hover:from-white/10 hover:via-white/5 hover:to-white/10",
-                "hover:border-white/20",
-                "transition-all duration-200",
-                "shadow-md hover:shadow-lg",
+                "relative overflow-hidden group",
+                "bg-gradient-to-r from-emerald-500/10 via-green-500/5 to-emerald-500/10",
+                "border border-emerald-500/30",
+                "text-emerald-100 font-semibold",
+                "hover:bg-gradient-to-r hover:from-emerald-500/20 hover:via-green-500/15 hover:to-emerald-500/20",
+                "hover:border-emerald-400/50 hover:text-white",
+                "hover:shadow-xl hover:shadow-emerald-500/25",
+                "transition-all duration-300 ease-out",
                 "backdrop-blur-sm",
-                "font-semibold"
+                // Shine effect on hover
+                "before:absolute before:inset-0 before:-translate-x-full",
+                "before:bg-gradient-to-r before:from-transparent before:via-white/10 before:to-transparent",
+                "hover:before:translate-x-full before:transition-transform before:duration-700"
               )}
             >
-              <CheckCheck className="w-4 h-4 mr-2" />
+              <CheckCheck className="w-4 h-4 mr-2 group-hover:scale-110 transition-transform duration-300" />
               Marcar todas como lidas
               </Button>
             )}
@@ -208,17 +215,22 @@ export default function Notifications() {
               onClick={deleteAllNotifications}
               variant="outline"
               className={cn(
-                "bg-gradient-to-br from-red-500/20 via-red-600/10 to-red-500/20",
-                "border border-red-500/40 text-red-300",
-                "hover:bg-gradient-to-br hover:from-red-500/30 hover:via-red-600/20 hover:to-red-500/30",
-                "hover:text-red-200 hover:border-red-500/50",
-                "transition-all duration-200",
-                "shadow-md hover:shadow-lg hover:shadow-red-500/20",
+                "relative overflow-hidden group",
+                "bg-gradient-to-r from-red-500/10 via-rose-500/5 to-red-500/10",
+                "border border-red-500/30",
+                "text-red-200 font-semibold",
+                "hover:bg-gradient-to-r hover:from-red-500/20 hover:via-rose-500/15 hover:to-red-500/20",
+                "hover:border-red-400/50 hover:text-white",
+                "hover:shadow-xl hover:shadow-red-500/25",
+                "transition-all duration-300 ease-out",
                 "backdrop-blur-sm",
-                "font-semibold"
+                // Shine effect on hover
+                "before:absolute before:inset-0 before:-translate-x-full",
+                "before:bg-gradient-to-r before:from-transparent before:via-white/10 before:to-transparent",
+                "hover:before:translate-x-full before:transition-transform before:duration-700"
               )}
             >
-              <Trash2 className="w-4 h-4 mr-2" />
+              <Trash2 className="w-4 h-4 mr-2 group-hover:scale-110 group-hover:rotate-6 transition-all duration-300" />
               Excluir todas
             </Button>
           </motion.div>
@@ -342,15 +354,20 @@ export default function Notifications() {
                             size="sm"
                             onClick={() => markAsReadMutation.mutate(notification.id)}
                             className={cn(
-                              "text-gray-300 hover:text-white",
-                              "hover:bg-gradient-to-br hover:from-white/10 hover:via-white/5 hover:to-white/10",
-                              "border border-transparent hover:border-white/10",
-                              "transition-all duration-200",
-                              "shadow-sm hover:shadow-md",
-                              "font-semibold"
+                              "group relative overflow-hidden",
+                              "text-emerald-200 hover:text-white",
+                              "bg-emerald-500/5 hover:bg-emerald-500/15",
+                              "border border-emerald-500/20 hover:border-emerald-400/40",
+                              "transition-all duration-300",
+                              "shadow-sm hover:shadow-md hover:shadow-emerald-500/20",
+                              "font-semibold",
+                              // Subtle shine effect
+                              "before:absolute before:inset-0 before:-translate-x-full",
+                              "before:bg-gradient-to-r before:from-transparent before:via-white/5 before:to-transparent",
+                              "hover:before:translate-x-full before:transition-transform before:duration-500"
                             )}
                           >
-                            <CheckCheck className="w-4 h-4 mr-2" />
+                            <CheckCheck className="w-4 h-4 mr-2 group-hover:scale-110 transition-transform duration-300" />
                             Marcar como lida
                           </Button>
                         )}
@@ -359,15 +376,19 @@ export default function Notifications() {
                           size="sm"
                           onClick={() => deleteMutation.mutate(notification.id)}
                           className={cn(
-                            "text-gray-400 hover:text-red-300",
-                            "hover:bg-gradient-to-br hover:from-red-500/20 hover:via-red-600/10 hover:to-red-500/20",
-                            "border border-transparent hover:border-red-500/30",
-                            "transition-all duration-200",
+                            "group relative overflow-hidden ml-auto",
+                            "text-red-300/80 hover:text-red-200",
+                            "bg-red-500/5 hover:bg-red-500/15",
+                            "border border-red-500/20 hover:border-red-400/40",
+                            "transition-all duration-300",
                             "shadow-sm hover:shadow-md hover:shadow-red-500/20",
-                            "ml-auto"
+                            // Subtle shine effect
+                            "before:absolute before:inset-0 before:-translate-x-full",
+                            "before:bg-gradient-to-r before:from-transparent before:via-white/5 before:to-transparent",
+                            "hover:before:translate-x-full before:transition-transform before:duration-500"
                           )}
                         >
-                          <Trash2 className="w-4 h-4" />
+                          <Trash2 className="w-4 h-4 group-hover:scale-110 group-hover:rotate-6 transition-all duration-300" />
                         </Button>
                       </div>
                     </div>
