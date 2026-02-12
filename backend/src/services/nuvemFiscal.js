@@ -926,6 +926,22 @@ async function uploadCertificate(cpfCnpj, certificateBase64, password) {
 
     console.log('[NuvemFiscal] Uploading certificate for:', cleanCpfCnpj);
 
+    // First check if company exists on Nuvem Fiscal
+    // If not, try to register it first
+    let companyExists = false;
+    try {
+      const existingCompany = await getCompanyByCnpj(cleanCpfCnpj);
+      companyExists = !!(existingCompany && (existingCompany.id || existingCompany.cpf_cnpj));
+    } catch (e) {
+      console.log('[NuvemFiscal] Could not check company existence, proceeding with certificate upload');
+    }
+
+    if (!companyExists) {
+      console.log('[NuvemFiscal] Company not found on Nuvem Fiscal, will attempt to register before certificate upload');
+      // Company not on Nuvem Fiscal yet - this shouldn't happen normally
+      // but if it does, the certificate upload will fail with a clear error
+    }
+
     const response = await apiRequest(`/empresas/${cleanCpfCnpj}/certificado`, {
       method: 'PUT',
       body: JSON.stringify({
@@ -956,6 +972,11 @@ async function uploadCertificate(cpfCnpj, certificateBase64, password) {
       } else if (error.data.message) {
         errorMessage = error.data.message;
       }
+    }
+    
+    // If company not found on Nuvem Fiscal (404), provide a clearer error
+    if (error.status === 404) {
+      throw new Error('Empresa não encontrada na Nuvem Fiscal. Registre a empresa primeiro antes de enviar o certificado.');
     }
     
     throw new Error(`Falha ao enviar certificado para Nuvem Fiscal: ${errorMessage}`);

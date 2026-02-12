@@ -44,11 +44,38 @@ export const companiesService = {
   /**
    * Register company in fiscal cloud (Nuvem Fiscal)
    */
-  async registerInFiscalCloud(companyId: string): Promise<{ status?: string; message?: string; nuvemFiscalId?: string }> {
-    const response = await apiClient.post<{ status?: string; message?: string; nuvemFiscalId?: string }>(
+  async registerInFiscalCloud(companyId: string): Promise<{ 
+    status?: string; 
+    message?: string; 
+    nuvemFiscalId?: string; 
+    alreadyExists?: boolean;
+    requiresCertificateVerification?: boolean;
+    nextStep?: string;
+  }> {
+    const response = await apiClient.post<{ 
+      status: string; 
+      message: string; 
+      data?: { 
+        status?: string;
+        nuvemFiscalId?: string; 
+        alreadyExists?: boolean;
+        requiresCertificateVerification?: boolean;
+        nextStep?: string;
+        message?: string;
+      } 
+    }>(
       `/companies/${companyId}/register-fiscal`
     );
-    return response.data;
+    // Extract nested data from the wrapped response
+    const result = response.data;
+    return {
+      status: result.data?.status || result.status,
+      message: result.data?.message || result.message,
+      nuvemFiscalId: result.data?.nuvemFiscalId,
+      alreadyExists: result.data?.alreadyExists,
+      requiresCertificateVerification: result.data?.requiresCertificateVerification,
+      nextStep: result.data?.nextStep,
+    };
   },
 
   async getFiscalStatus(companyId: string): Promise<FiscalIntegrationStatus | null> {

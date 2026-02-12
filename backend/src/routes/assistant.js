@@ -1423,16 +1423,17 @@ async function processWithPatternMatching(message, userId, companyId, res, inten
         return responseData;
       }
 
-      // Check if company with this CNPJ already exists
+      // Check if THIS USER already has a company with this CNPJ
+      // Different users CAN register the same CNPJ
       const existingCompany = await prisma.company.findFirst({
-        where: { cnpj }
+        where: { cnpj, userId }
       });
 
       if (existingCompany) {
         const responseData = {
           success: true,
           action: { type: 'empresa_existente', data: { id: existingCompany.id, nome: existingCompany.razaoSocial } },
-          explanation: `Já existe uma empresa cadastrada com este CNPJ: **${existingCompany.razaoSocial}**.\n\nSe quiser editar os dados desta empresa, acesse "Minhas Empresas" no menu lateral.`,
+          explanation: `Você já possui uma empresa cadastrada com este CNPJ: **${existingCompany.razaoSocial}**.\n\nSe quiser editar os dados desta empresa, acesse "Minhas Empresas" no menu lateral.`,
           requiresConfirmation: false
         };
         res.json(responseData);

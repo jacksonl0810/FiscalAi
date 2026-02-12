@@ -105,7 +105,7 @@ model EmailVerificationToken {
 model Company {
   id                           String    @id @default(uuid())
   userId                       String    @map("user_id")
-  cnpj                         String    @unique
+  cnpj                         String    // Not globally unique - same CNPJ can exist for different users
   razaoSocial                  String    @map("razao_social")
   nomeFantasia                 String?   @map("nome_fantasia")
   cidade                       String
@@ -145,6 +145,8 @@ model Company {
   fiscalCredential        FiscalCredential?
   invoiceRetryQueue       InvoiceRetryQueue[]
 
+  @@unique([userId, cnpj]) // Same user can't register same CNPJ twice, but different users CAN
+  @@index([cnpj]) // Index for looking up by CNPJ across all users
   @@map("companies")
 }
 
