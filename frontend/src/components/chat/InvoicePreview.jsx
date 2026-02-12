@@ -133,7 +133,7 @@ export default function InvoicePreview({ invoice, onConfirm, onEdit, onUpdate, o
         <div className="relative bg-gradient-to-br from-[#0a0e14] via-[#141824] to-[#1a1f2e] rounded-2xl border border-white/10 overflow-hidden backdrop-blur-xl shadow-xl">
           {/* Top Accent Bar */}
           <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-blue-500/60 to-transparent" />
-
+          
           <div className="relative p-4">
             {/* Header - Compact */}
             <div className="flex items-center gap-3 mb-4">
@@ -230,7 +230,7 @@ export default function InvoicePreview({ invoice, onConfirm, onEdit, onUpdate, o
                     value={editedInvoice.aliquota_iss}
                     onChange={(e) => handleFieldChange('aliquota_iss', e.target.value)}
                     className="w-full px-3 py-2 rounded-lg text-white text-sm font-bold bg-slate-800/80 border border-slate-700/50 focus:border-amber-400/80 focus:ring-1 focus:ring-amber-500/30 transition-all outline-none placeholder:text-gray-500"
-                    placeholder="5,00"
+                      placeholder="5,00"
                     autoComplete="off"
                   />
                 </div>
@@ -247,7 +247,7 @@ export default function InvoicePreview({ invoice, onConfirm, onEdit, onUpdate, o
                   value={editedInvoice.municipio}
                   onChange={(e) => handleFieldChange('municipio', e.target.value)}
                   className="w-full px-3 py-2 rounded-lg text-white text-sm bg-slate-800/80 border border-slate-700/50 focus:border-rose-400/80 focus:ring-1 focus:ring-rose-500/30 transition-all outline-none placeholder:text-gray-500"
-                  placeholder="Nome da cidade"
+                    placeholder="Nome da cidade"
                   autoComplete="off"
                 />
               </div>
@@ -300,7 +300,7 @@ export default function InvoicePreview({ invoice, onConfirm, onEdit, onUpdate, o
       <div className="relative bg-gradient-to-br from-[#0f1419] via-[#1a1a2e] to-[#16213e] rounded-2xl border border-white/10 overflow-hidden backdrop-blur-xl shadow-xl">
         {/* Top Accent Line */}
         <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-orange-500/50 to-transparent" />
-
+        
         <div className="relative p-4">
           {/* Header - Compact */}
           <div className="flex items-center gap-3 mb-4">
@@ -357,20 +357,20 @@ export default function InvoicePreview({ invoice, onConfirm, onEdit, onUpdate, o
                   <div className="flex justify-between items-center mt-1">
                     <span className="text-xs text-gray-400">Valor do serviço</span>
                     <span className="text-sm font-bold text-white">
-                      R$ {invoice.valor?.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                    </span>
-                  </div>
-                  {invoice.aliquota_iss && (
+                        R$ {invoice.valor?.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                      </span>
+                    </div>
+                    {invoice.aliquota_iss && (
                     <div className="flex justify-between items-center mt-0.5">
                       <span className="text-xs text-gray-400">ISS ({invoice.aliquota_iss}%)</span>
                       <span className="text-xs font-semibold text-orange-400">
-                        R$ {(invoice.valor_iss || (invoice.valor * invoice.aliquota_iss / 100))?.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                      </span>
-                    </div>
-                  )}
+                          R$ {(invoice.valor_iss || (invoice.valor * invoice.aliquota_iss / 100))?.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                        </span>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
-            </div>
 
             {/* Total - Compact Highlight */}
             <div className="relative p-3 rounded-xl bg-gradient-to-r from-orange-500/15 via-purple-500/10 to-orange-500/15 border border-orange-500/30">
@@ -380,10 +380,10 @@ export default function InvoicePreview({ invoice, onConfirm, onEdit, onUpdate, o
                   <p className="text-[10px] text-gray-500">Incluindo todos os impostos</p>
                 </div>
                 <span className="text-xl font-bold bg-gradient-to-r from-orange-400 via-amber-400 to-orange-400 bg-clip-text text-transparent">
-                  R$ {invoice.valor?.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                </span>
+                    R$ {invoice.valor?.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                  </span>
+                </div>
               </div>
-            </div>
           </div>
 
           {/* Actions - Compact */}

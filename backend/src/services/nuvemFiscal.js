@@ -862,6 +862,20 @@ async function checkNfseStatus(companyNuvemId, nfseId) {
  * @returns {Promise<object>} Cancellation result
  */
 async function cancelNfse(nuvemFiscalId, nfseId, motivo) {
+  // Check if this is a simulated invoice (created when API had errors)
+  if (nfseId && nfseId.startsWith('SIM-')) {
+    console.log('[NuvemFiscal] Simulated invoice detected, canceling locally only:', nfseId);
+    return {
+      status: 'success',
+      message: 'NFS-e simulada cancelada com sucesso (apenas local)',
+      data: {
+        simulated: true,
+        nfseId: nfseId,
+        motivo: motivo
+      }
+    };
+  }
+  
   try {
     const response = await apiRequest(`/empresas/${nuvemFiscalId}/nfse/${nfseId}/cancelar`, {
       method: 'POST',

@@ -569,6 +569,15 @@ FORA DO ESCOPO:
 - NUNCA tente responder perguntas fora do escopo fiscal.
 - SEMPRE redirecione educadamente para suas funcionalidades.
 
+USO DOS DADOS DO USUÁRIO (RAG):
+- Abaixo você pode receber dados reais do banco de dados do usuário
+- Use esses dados para responder com precisão (ex: nome do cliente, valores, status)
+- Quando o usuário perguntar sobre um cliente, verifique primeiro nos dados fornecidos
+- Para emitir nota, verifique se o cliente já está cadastrado nos dados
+- Para consultas de faturamento, use os valores reais dos dados
+- NUNCA invente dados - use apenas os dados fornecidos
+- Se os dados não contêm a informação solicitada, informe que não encontrou
+
 NUNCA:
 - Exponha erros técnicos ou códigos de erro
 - Execute ações sem confirmação do usuário
@@ -628,16 +637,24 @@ export function requiresConfirmation(actionType) {
  * 
  * @param {string} userMessage - Current user message
  * @param {array} history - Conversation history
- * @param {object} context - Additional context
+ * @param {object} context - Additional context (company, user, ragContext)
  * @returns {array} Messages array for OpenAI
  */
 export function buildMessages(userMessage, history = [], context = {}) {
-  const { company, user } = context;
+  const { company, user, ragContext } = context;
+  
+  // Build system prompt with RAG context appended
+  let systemPrompt = generateSystemPrompt(company, user);
+  
+  // Append RAG context if available
+  if (ragContext && ragContext.length > 0) {
+    systemPrompt += ragContext;
+  }
   
   const messages = [
     {
       role: 'system',
-      content: generateSystemPrompt(company, user),
+      content: systemPrompt,
     },
   ];
   

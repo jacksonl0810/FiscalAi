@@ -62,7 +62,7 @@ export default function Assistant() {
   const welcomeMessage = {
     id: 1,
     isAI: true,
-    content: "Olá! Sou seu assistente fiscal inteligente. Posso ajudá-lo a emitir notas fiscais, consultar documentos e gerenciar sua empresa.\n\nExemplos do que posso fazer:\n• \"Emitir nota de R$ 2.000 para Maria Silva\"\n• \"Qual meu faturamento este mês?\"\n• \"Listar minhas últimas notas fiscais\"",
+    content: "Olá! Sou a **MAY**, sua assistente fiscal inteligente. 🚀\n\nPosso ajudá-lo com:\n\n📝 **Emitir Notas Fiscais:**\n• \"Emitir nota de R$ 2.000 para Maria Silva\"\n• \"Nova nota de R$ 1.500 para João por consultoria\"\n• Ou envie em linhas separadas:\n  `10,00`\n  `LUCIANO BERNARDO`\n  `CPF 65325273949`\n\n👥 **Cadastrar Clientes:**\n• \"Cadastrar cliente João Silva CPF 123.456.789-00\"\n• \"Novo cliente: Empresa ABC, CNPJ 12.345.678/0001-90\"\n\n💰 **Consultas:**\n• \"Qual meu faturamento este mês?\"\n• \"Listar minhas últimas notas\"\n• \"Ver impostos pendentes\"\n\n💡 *Pode escrever em maiúsculas, minúsculas ou misturado - eu entendo!*",
     time: "Agora"
   };
 
@@ -106,7 +106,8 @@ export default function Assistant() {
   const createInvoiceMutation = useMutation({
     mutationFn: (data) => invoicesService.create(data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['invoices'] });
+      // Invalidate all invoice-related queries (including filtered ones)
+      queryClient.invalidateQueries({ queryKey: ['invoices'], exact: false });
     }
   });
 
@@ -252,16 +253,24 @@ export default function Assistant() {
       
       // For Pay Per Use plan, show payment modal instead of blocking
       if (planLimits.planId === 'pay_per_use' || planLimits.planName?.toLowerCase().includes('pay per use')) {
+        // Ensure we have an active company before showing payment modal
+        if (!activeCompany?.id) {
+          toast.error('🏢 Empresa Não Selecionada', {
+            description: 'Selecione uma empresa no menu lateral para poder emitir notas fiscais.',
+            duration: 5000
+          });
+          return;
+        }
         setShowPaymentModal(true);
         return;
       }
       
       if (!invoiceLimit.allowed) {
-        toast.error("Limite de notas fiscais atingido", {
-          description: `Seu plano ${planLimits.planName} permite até ${invoiceLimit.max} ${invoiceLimit.max === 1 ? 'nota fiscal' : 'notas fiscais'} por mês. Faça upgrade para emitir mais notas.`,
-          duration: 5000,
+        toast.error("📊 Limite de Notas Atingido", {
+          description: `Você já emitiu ${invoiceLimit.max} ${invoiceLimit.max === 1 ? 'nota' : 'notas'} este mês. Faça upgrade para continuar emitindo!`,
+          duration: 6000,
           action: {
-            label: "Ver Planos",
+            label: "🚀 Ver Planos",
             onClick: () => navigate(createPageUrl("Pricing"))
           }
         });
@@ -333,8 +342,12 @@ export default function Assistant() {
         };
         setMessages(prev => [...prev, aiResponse]);
         setPendingInvoice(null);
-        queryClient.invalidateQueries({ queryKey: ['invoices'] });
+        // Invalidate all invoice-related queries (including filtered ones)
+        queryClient.invalidateQueries({ queryKey: ['invoices'], exact: false });
         queryClient.invalidateQueries({ queryKey: ['conversation-history'] });
+        // Invalidate notifications (new invoice creates notification)
+        queryClient.invalidateQueries({ queryKey: ['notifications'] });
+        queryClient.invalidateQueries({ queryKey: ['allNotifications'] });
       } else {
         throw new Error(result.message || 'Erro ao emitir nota fiscal');
       }
@@ -344,7 +357,15 @@ export default function Assistant() {
       const errorCode = error.response?.data?.code || error.code;
       
       if (errorStatus === 402 || errorCode === 'PAYMENT_METHOD_REQUIRED' || errorCode === 'PAYMENT_FAILED') {
-        // Show payment modal for Pay Per Use users
+        // Show payment modal for Pay Per Use users, but only if we have a company
+        if (!activeCompany?.id) {
+          toast.error('🏢 Empresa Não Selecionada', {
+            description: 'Selecione uma empresa no menu lateral para poder emitir notas fiscais.',
+            duration: 5000
+          });
+          setIsProcessing(false);
+          return;
+        }
         setShowPaymentModal(true);
         setIsProcessing(false);
         return;
@@ -438,9 +459,13 @@ export default function Assistant() {
       };
       setMessages(prev => [...prev, aiResponse]);
       setPendingInvoice(null);
-      queryClient.invalidateQueries({ queryKey: ['invoices'] });
+      // Invalidate all invoice-related queries (including filtered ones)
+      queryClient.invalidateQueries({ queryKey: ['invoices'], exact: false });
       queryClient.invalidateQueries({ queryKey: ['plan-limits'] });
       queryClient.invalidateQueries({ queryKey: ['conversation-history'] });
+      // Invalidate notifications (new invoice creates notification)
+      queryClient.invalidateQueries({ queryKey: ['notifications'] });
+      queryClient.invalidateQueries({ queryKey: ['allNotifications'] });
     }
   };
 
@@ -600,12 +625,7 @@ export default function Assistant() {
       queryClient.invalidateQueries({ queryKey: ['conversation-history'] });
       
       // Reset to welcome message
-      setMessages([{
-        id: 1,
-        isAI: true,
-        content: "Olá! Sou seu assistente fiscal inteligente. Posso ajudá-lo a emitir notas fiscais, consultar documentos e gerenciar sua empresa.\n\nExemplos do que posso fazer:\n• \"Emitir nota de R$ 2.000 para Maria Silva\"\n• \"Qual meu faturamento este mês?\"\n• \"Listar minhas últimas notas fiscais\"",
-        time: "Agora"
-      }]);
+      setMessages([welcomeMessage]);
     } catch (error) {
       console.error('Error clearing history:', error);
     }
