@@ -192,17 +192,18 @@ export const FUNCTION_DEFINITIONS = [
 - "Oi MAY, cadastre o cliente Empresa ABC LTDA, CNPJ 12.345.678/0001-90"
 - "Me ajuda a criar um cliente novo: Nome: Ana, CPF: 111.222.333-44"
 - "Novo cliente: Roberto Alves, CPF 555.666.777-88, email roberto@email.com"
-Extraia nome e documento de QUALQUER formato de mensagem.`,
+Extraia nome e documento de QUALQUER formato de mensagem. 
+IMPORTANTE: NÃO confunda nome com documento - são campos diferentes!`,
       parameters: {
         type: 'object',
         properties: {
           name: {
             type: 'string',
-            description: 'Nome completo ou razão social do cliente. Extraia de padrões como "nome é X", "chamado X", "cliente X", ou qualquer menção ao nome no contexto.',
+            description: 'Nome completo ou razão social do cliente (TEXTO, não número). Exemplos: "Maria Silva", "João da Silva", "Empresa ABC LTDA", "Maia Assessoria". Extraia de padrões como "nome é X", "chamado X", "cliente X", ou qualquer menção ao nome no contexto. NUNCA coloque um número de CPF/CNPJ aqui.',
           },
           document: {
             type: 'string',
-            description: 'CPF (11 dígitos) ou CNPJ (14 dígitos), apenas números. Aceite formatos como: 123.456.789-00, 12345678900, 12.345.678/0001-90, ou após palavras como CPF, CNPJ, documento.',
+            description: 'CPF (11 dígitos) ou CNPJ (14 dígitos), apenas números. Exemplos: "12345678900", "12345678000190". Aceite formatos como: 123.456.789-00, 12345678900, 12.345.678/0001-90, ou após palavras como CPF, CNPJ, documento. SEMPRE extraia apenas os dígitos.',
           },
           email: {
             type: 'string',
@@ -463,6 +464,7 @@ REGRAS DE INTERPRETAÇÃO:
      * Informal: "novo cliente João Silva, documento 12345678900"
      * Com extras: "cadastrar cliente Pedro, CPF 555.666.777-88, email pedro@email.com"
    - Sempre extraia nome e documento de qualquer formato de mensagem
+   - CRÍTICO: NUNCA confunda nome com documento! Nome é TEXTO (ex: "Maria Silva", "Maia"), documento é NÚMERO (ex: "12345678900")
 
 3. PERÍODOS:
    - "hoje" = data atual

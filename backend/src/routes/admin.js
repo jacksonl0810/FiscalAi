@@ -580,6 +580,81 @@ router.get('/companies', [
 }));
 
 // ==========================================
+// CLIENT MANAGEMENT
+// ==========================================
+
+/**
+ * GET /api/admin/clients
+ * List all clients across all users
+ */
+router.get('/clients', [
+  query('page').optional().isInt({ min: 1 }),
+  query('limit').optional().isInt({ min: 1, max: 100 }),
+  query('search').optional().trim()
+], validateRequest, asyncHandler(async (req, res) => {
+  const page = parseInt(req.query.page) || 1;
+  const limit = parseInt(req.query.limit) || 20;
+  const skip = (page - 1) * limit;
+  const search = req.query.search || '';
+
+  const where = {};
+  if (search) {
+    where.OR = [
+      { nome: { contains: search, mode: 'insensitive' } },
+      { email: { contains: search, mode: 'insensitive' } },
+      { documento: { contains: search } },
+      { apelido: { contains: search, mode: 'insensitive' } }
+    ];
+  }
+
+  const [clients, total] = await Promise.all([
+    prisma.client.findMany({
+      where,
+      skip,
+      take: limit,
+      orderBy: { createdAt: 'desc' },
+      include: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+            email: true
+          }
+        }
+      }
+    }),
+    prisma.client.count({ where })
+  ]);
+
+  // Count invoices for each client by matching documento
+  const clientsWithInvoiceCount = await Promise.all(
+    clients.map(async (client) => {
+      const invoiceCount = await prisma.invoice.count({
+        where: {
+          clienteDocumento: client.documento
+        }
+      });
+      return {
+        ...client,
+        _count: {
+          invoices: invoiceCount
+        }
+      };
+    })
+  );
+
+  sendSuccess(res, 'Clients retrieved', {
+    clients: clientsWithInvoiceCount,
+    pagination: {
+      page,
+      limit,
+      total,
+      totalPages: Math.ceil(total / limit)
+    }
+  });
+}));
+
+// ==========================================
 // INVOICE MANAGEMENT
 // ==========================================
 

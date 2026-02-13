@@ -300,60 +300,89 @@ router.post('/process', assistantLimiter, [
         if (cleanDocument.length === 11 || cleanDocument.length === 14) {
           console.log('[Assistant] Auto-executing criar_cliente with complete data:', functionArgs);
           
-          const tipoPessoa = cleanDocument.length === 11 ? 'pf' : 'pj';
-          const docLabel = tipoPessoa === 'pf' ? 'CPF' : 'CNPJ';
-          
-          // Check if client already exists
-          const existingClient = await prisma.client.findFirst({
-            where: {
-              userId: req.user.id,
-              documento: cleanDocument
-            }
-          });
-          
-          if (existingClient) {
-            const docFormatado = formatDocumentForDisplay(existingClient.documento, existingClient.tipoPessoa);
+          // VALIDATION: Check if name is actually a document number (common AI mistake)
+          const cleanName = functionArgs.name.replace(/\D/g, '');
+          if (cleanName.length === 11 || cleanName.length === 14) {
+            console.error('[Assistant] VALIDATION ERROR: Name appears to be a document number!', {
+              name: functionArgs.name,
+              document: functionArgs.document
+            });
             responseData = {
-              success: true,
-              action: { type: 'cliente_existente', data: { id: existingClient.id, nome: existingClient.nome, documento: existingClient.documento } },
-              explanation: `Já existe um cliente cadastrado com este ${docLabel}: **${existingClient.nome}** (${docFormatado}).\n\n` +
-                `Você pode emitir notas para ele. Diga:\n` +
-                `"Emitir nota de R$ [valor] para ${existingClient.nome}"`,
+              success: false,
+              action: null,
+              explanation: `❌ Erro ao processar os dados do cliente. O nome não pode ser um número de documento.\n\n` +
+                `Por favor, informe o nome completo e documento no formato correto:\n` +
+                `Exemplo: "Cadastrar cliente Maria Silva CPF 123.456.789-00"`,
               requiresConfirmation: false
             };
           } else {
-            // Create new client
-            try {
-              const newClient = await prisma.client.create({
-                data: {
-                  userId: req.user.id,
-                  nome: functionArgs.name.trim(),
-                  documento: cleanDocument,
-                  tipoPessoa,
-                  email: functionArgs.email || null,
-                  telefone: functionArgs.phone || null,
-                  ativo: true
-                }
-              });
-              
-              const docFormatado = formatDocumentForDisplay(cleanDocument, tipoPessoa);
+            const tipoPessoa = cleanDocument.length === 11 ? 'pf' : 'pj';
+            const docLabel = tipoPessoa === 'pf' ? 'CPF' : 'CNPJ';
+            
+            // Check if client already exists
+            const existingClient = await prisma.client.findFirst({
+              where: {
+                userId: req.user.id,
+                documento: cleanDocument
+              }
+            });
+            
+            if (existingClient) {
+              const docFormatado = formatDocumentForDisplay(existingClient.documento, existingClient.tipoPessoa);
               responseData = {
                 success: true,
-                action: { type: 'cliente_criado', data: { id: newClient.id, nome: newClient.nome, documento: newClient.documento } },
-                explanation: `✅ Cliente **${newClient.nome}** cadastrado com sucesso!\n\n` +
-                  `${docLabel}: ${docFormatado}\n\n` +
-                  `Agora você pode emitir notas para este cliente. Diga:\n` +
-                  `"Emitir nota de R$ [valor] para ${newClient.nome}"`,
+                action: { type: 'cliente_existente', data: { id: existingClient.id, nome: existingClient.nome, documento: existingClient.documento } },
+                explanation: `Já existe um cliente cadastrado com este ${docLabel}: **${existingClient.nome}** (${docFormatado}).\n\n` +
+                  `Você pode emitir notas para ele. Diga:\n` +
+                  `"Emitir nota de R$ [valor] para ${existingClient.nome}"`,
                 requiresConfirmation: false
               };
-            } catch (createError) {
-              console.error('[Assistant] Error auto-creating client:', createError.message);
-              responseData = {
-                success: false,
-                action: null,
-                explanation: `❌ Não foi possível cadastrar o cliente.\n\nErro: ${createError.message}`,
-                requiresConfirmation: false
-              };
+            } else {
+              // Create new client
+              try {
+                console.log('[Assistant] Creating client with:', {
+                  nome: functionArgs.name.trim(),
+                  documento: cleanDocument,
+                  tipoPessoa
+                });
+                
+                const newClient = await prisma.client.create({
+                  data: {
+                    userId: req.user.id,
+                    nome: functionArgs.name.trim(),
+                    documento: cleanDocument,
+                    tipoPessoa,
+                    email: functionArgs.email || null,
+                    telefone: functionArgs.phone || null,
+                    ativo: true
+                  }
+                });
+                
+                const docFormatado = formatDocumentForDisplay(cleanDocument, tipoPessoa);
+                console.log('[Assistant] Client created successfully:', {
+                  id: newClient.id,
+                  nome: newClient.nome,
+                  documento: newClient.documento
+                });
+                
+                responseData = {
+                  success: true,
+                  action: { type: 'cliente_criado', data: { id: newClient.id, nome: newClient.nome, documento: newClient.documento } },
+                  explanation: `✅ Cliente **${newClient.nome}** cadastrado com sucesso!\n\n` +
+                    `${docLabel}: ${docFormatado}\n\n` +
+                    `Agora você pode emitir notas para este cliente. Diga:\n` +
+                    `"Emitir nota de R$ [valor] para ${newClient.nome}"`,
+                  requiresConfirmation: false
+                };
+              } catch (createError) {
+                console.error('[Assistant] Error auto-creating client:', createError.message);
+                responseData = {
+                  success: false,
+                  action: null,
+                  explanation: `❌ Não foi possível cadastrar o cliente.\n\nErro: ${createError.message}`,
+                  requiresConfirmation: false
+                };
+              }
             }
           }
           
@@ -843,8 +872,35 @@ async function processWithPatternMatching(message, userId, companyId, res, inten
         const docFormatado = formatDocumentForDisplay(multiLineDocument, tipoPessoa);
         const valorFormatado = multiLineValue.toLocaleString('pt-BR', { minimumFractionDigits: 2 });
         
+        // VALIDATION: Check if name is actually a document number before auto-creating
+        const cleanName = multiLineName.replace(/\D/g, '');
+        if (cleanName.length === 11 || cleanName.length === 14) {
+          console.error('[MultiLine Invoice] VALIDATION ERROR: Name appears to be a document number!', {
+            name: multiLineName,
+            document: multiLineDocument
+          });
+          const responseData = {
+            success: false,
+            action: null,
+            explanation: `❌ Erro ao processar os dados do cliente. O nome não pode ser um número de documento.\n\n` +
+              `Por favor, informe corretamente:\n` +
+              `Linha 1: Valor (ex: 100,00)\n` +
+              `Linha 2: Nome do cliente (ex: Maria Silva)\n` +
+              `Linha 3: CPF ou CNPJ (ex: 123.456.789-00)`,
+            requiresConfirmation: false
+          };
+          res.json(responseData);
+          return responseData;
+        }
+        
         // Auto-create the client and prepare invoice
         try {
+          console.log('[MultiLine Invoice] Auto-creating client with:', {
+            nome: multiLineName,
+            documento: multiLineDocument,
+            tipoPessoa
+          });
+          
           const newClient = await prisma.client.create({
             data: {
               userId,
@@ -1337,6 +1393,25 @@ async function processWithPatternMatching(message, userId, companyId, res, inten
         return responseData;
       }
       
+      // VALIDATION: Check if name is actually a document number (common mistake)
+      const cleanName = extracted.name.replace(/\D/g, '');
+      if (cleanName.length === 11 || cleanName.length === 14) {
+        console.error('[Client Creation] VALIDATION ERROR: Name appears to be a document number!', {
+          name: extracted.name,
+          document: extracted.document
+        });
+        const responseData = {
+          success: false,
+          action: null,
+          explanation: `❌ Erro ao processar os dados do cliente. O nome não pode ser um número de documento.\n\n` +
+            `Por favor, informe o nome completo e documento no formato correto:\n` +
+            `Exemplo: "Cadastrar cliente Maria Silva CPF 123.456.789-00"`,
+          requiresConfirmation: false
+        };
+        res.json(responseData);
+        return responseData;
+      }
+      
       const tipoPessoa = documento.length === 11 ? 'pf' : 'pj';
       
       // Check if client already exists
@@ -1367,6 +1442,7 @@ async function processWithPatternMatching(message, userId, companyId, res, inten
       
       // Create the client
       try {
+        console.log('[Client Creation] Creating client with:', clientData);
         const newClient = await prisma.client.create({ data: clientData });
         
         let successMsg = `✅ Cliente **${newClient.nome}** cadastrado com sucesso!\n\n${tipoPessoa === 'pf' ? 'CPF' : 'CNPJ'}: ${formatDocumentForDisplay(documento, tipoPessoa)}`;
@@ -4034,6 +4110,20 @@ async function executeCreateClient(actionData, userId, res) {
     });
   }
   
+  // VALIDATION: Check if name is actually a document number
+  const cleanName = name.replace(/\D/g, '');
+  if (cleanName.length === 11 || cleanName.length === 14) {
+    console.error('[executeCreateClient] VALIDATION ERROR: Name appears to be a document number!', {
+      name,
+      document
+    });
+    return res.status(400).json({
+      status: 'error',
+      message: 'Nome do cliente não pode ser um número de documento. Por favor, informe o nome completo ou razão social.',
+      code: 'VALIDATION_ERROR'
+    });
+  }
+  
   const tipoPessoa = cleanDocument.length === 11 ? 'pf' : 'pj';
   
   // Check if client already exists
@@ -4060,6 +4150,12 @@ async function executeCreateClient(actionData, userId, res) {
   
   // Create new client
   try {
+    console.log('[executeCreateClient] Creating client with:', {
+      nome: name.trim(),
+      documento: cleanDocument,
+      tipoPessoa
+    });
+    
     const newClient = await prisma.client.create({
       data: {
         userId,
@@ -4074,6 +4170,12 @@ async function executeCreateClient(actionData, userId, res) {
     
     const docLabel = tipoPessoa === 'pf' ? 'CPF' : 'CNPJ';
     const docFormatado = formatDocumentForDisplay(cleanDocument, tipoPessoa);
+    
+    console.log('[executeCreateClient] Client created successfully:', {
+      id: newClient.id,
+      nome: newClient.nome,
+      documento: newClient.documento
+    });
     
     return sendSuccess(res, 'Cliente cadastrado com sucesso', {
       client: {

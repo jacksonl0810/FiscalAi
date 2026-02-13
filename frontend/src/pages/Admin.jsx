@@ -72,7 +72,8 @@ import {
   LayoutDashboard,
   Bell,
   ChevronDown,
-  LogOut
+  LogOut,
+  UserCheck
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -122,8 +123,9 @@ const adminService = {
   extendSubscription: (id, days) => apiClient.post(`/admin/subscriptions/${id}/extend`, { days }).then(r => r.data),
   bulkSubscriptionAction: (subscriptionIds, action) => apiClient.post('/admin/subscriptions/bulk-action', { subscriptionIds, action }).then(r => r.data),
   
-  // Companies & Invoices
+  // Companies, Clients & Invoices
   getCompanies: (params) => apiClient.get('/admin/companies', { params }).then(r => r.data?.data || r.data),
+  getClients: (params) => apiClient.get('/admin/clients', { params }).then(r => r.data?.data || r.data),
   getInvoices: (params) => apiClient.get('/admin/invoices', { params }).then(r => r.data?.data || r.data),
   
   // Activity & Settings
@@ -222,6 +224,7 @@ const StatusBadge = ({ status }) => {
     // Invoice statuses
     autorizada: { bg: 'bg-emerald-500/20', text: 'text-emerald-400', border: 'border-emerald-500/30', icon: CheckCircle, label: 'Autorizada' },
     rejeitada: { bg: 'bg-red-500/20', text: 'text-red-400', border: 'border-red-500/30', icon: XCircle, label: 'Rejeitada' },
+    cancelada: { bg: 'bg-gray-500/20', text: 'text-gray-400', border: 'border-gray-500/30', icon: XCircle, label: 'Cancelada' },
     processando: { bg: 'bg-amber-500/20', text: 'text-amber-400', border: 'border-amber-500/30', icon: RefreshCw, label: 'Processando' },
     rascunho: { bg: 'bg-slate-500/20', text: 'text-slate-400', border: 'border-slate-500/30', icon: Clock, label: 'Rascunho' },
     // Fiscal integration statuses
@@ -1433,6 +1436,168 @@ const CompaniesTab = () => {
 };
 
 // ==========================================
+// CLIENTS TAB
+// ==========================================
+
+const ClientsTab = () => {
+  const [page, setPage] = useState(1);
+  const [searchTerm, setSearchTerm] = useState('');
+
+  const { data, isLoading, isFetching, refetch } = useQuery({
+    queryKey: ['admin-clients', page, searchTerm],
+    queryFn: () => adminService.getClients({ page, limit: 10, search: searchTerm }),
+    staleTime: 0,
+  });
+
+  const clients = data?.clients || [];
+  const pagination = data?.pagination || { page: 1, totalPages: 1, total: 0 };
+
+  const formatDocument = (doc, tipo) => {
+    if (!doc) return 'N/A';
+    if (tipo === 'pf' || doc.length === 11) {
+      return doc.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4');
+    }
+    return doc.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, '$1.$2.$3/$4-$5');
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between gap-4">
+        <div className="relative flex-1 max-w-md">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
+          <Input
+            type="text"
+            placeholder="Buscar clientes por nome, documento ou email..."
+            value={searchTerm}
+            onChange={(e) => {
+              setSearchTerm(e.target.value);
+              setPage(1);
+            }}
+            className="pl-10 bg-[#0f0f1a]/60 border-white/10 text-white placeholder:text-gray-500"
+          />
+        </div>
+        <motion.button
+          onClick={() => {
+            refetch();
+            toast.success('Lista de clientes atualizada!');
+          }}
+          whileHover={{ scale: 1.05 }}
+          whileTap={{ scale: 0.95 }}
+          disabled={isFetching}
+          className="group relative overflow-hidden px-5 py-2.5 rounded-xl font-medium text-sm
+            bg-gradient-to-br from-[#1a1a2e]/80 to-[#0f0f1a]/80 backdrop-blur-sm
+            border border-white/10 text-gray-300
+            hover:border-orange-500/60 hover:text-white
+            hover:bg-gradient-to-br hover:from-orange-500/20 hover:via-orange-600/10 hover:to-[#0f0f1a]/80
+            hover:shadow-xl hover:shadow-orange-500/25
+            disabled:opacity-70 disabled:cursor-not-allowed
+            transition-all duration-500 ease-out"
+        >
+          <motion.div
+            className="absolute inset-0 bg-gradient-to-r from-transparent via-orange-500/30 to-transparent opacity-0 group-hover:opacity-100"
+            initial={{ x: '-100%' }}
+            whileHover={{ x: '100%' }}
+            transition={{ duration: 1.5, repeat: Infinity, ease: 'linear' }}
+          />
+          <div className="absolute inset-0 bg-gradient-to-br from-orange-500/0 via-orange-500/0 to-orange-500/20 opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
+          <motion.div
+            className="absolute inset-0 rounded-xl border-2 border-orange-500/0 group-hover:border-orange-500/40"
+            animate={{
+              boxShadow: [
+                '0 0 0px rgba(249, 115, 22, 0)',
+                '0 0 20px rgba(249, 115, 22, 0.3)',
+                '0 0 0px rgba(249, 115, 22, 0)',
+              ],
+            }}
+            transition={{ duration: 2, repeat: Infinity, ease: 'easeInOut' }}
+          />
+          <div className="relative flex items-center gap-2 z-10">
+            <RefreshCw className={`w-4 h-4 text-gray-400 group-hover:text-orange-400 transition-colors duration-500 ${isFetching ? 'animate-spin' : ''}`} />
+            <span className="group-hover:text-orange-100 transition-colors duration-500">Atualizar</span>
+          </div>
+        </motion.button>
+      </div>
+
+      <div className="bg-[#0f0f1a]/60 backdrop-blur-xl rounded-2xl overflow-hidden border border-white/10">
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead>
+              <tr className="bg-gradient-to-r from-white/5 to-white/[0.02]">
+                <th className="text-left text-gray-400 text-xs font-semibold uppercase tracking-wider p-4">Nome</th>
+                <th className="text-left text-gray-400 text-xs font-semibold uppercase tracking-wider p-4">Documento</th>
+                <th className="text-left text-gray-400 text-xs font-semibold uppercase tracking-wider p-4">Tipo</th>
+                <th className="text-left text-gray-400 text-xs font-semibold uppercase tracking-wider p-4">Email</th>
+                <th className="text-left text-gray-400 text-xs font-semibold uppercase tracking-wider p-4">Usuário</th>
+                <th className="text-left text-gray-400 text-xs font-semibold uppercase tracking-wider p-4">Notas</th>
+                <th className="text-left text-gray-400 text-xs font-semibold uppercase tracking-wider p-4">Criado em</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-white/5">
+              {isLoading ? (
+                <tr><td colSpan={7}><LoadingSpinner /></td></tr>
+              ) : clients.length === 0 ? (
+                <tr><td colSpan={7}><EmptyState icon={UserCheck} title="Nenhum cliente" description="Nenhum cliente encontrado" /></td></tr>
+              ) : clients.map((client) => (
+                <tr key={client.id} className="hover:bg-white/[0.02] transition-colors">
+                  <td className="p-4">
+                    <div>
+                      <p className="text-white font-medium">{client.nome || 'N/A'}</p>
+                      {client.apelido && (
+                        <p className="text-gray-500 text-xs">({client.apelido})</p>
+                      )}
+                    </div>
+                  </td>
+                  <td className="p-4">
+                    <span className="font-mono text-orange-400 text-sm">
+                      {formatDocument(client.documento, client.tipoPessoa)}
+                    </span>
+                  </td>
+                  <td className="p-4">
+                    <Badge className={client.tipoPessoa === 'pf' ? 'bg-blue-500/20 text-blue-400' : 'bg-purple-500/20 text-purple-400'}>
+                      {client.tipoPessoa === 'pf' ? 'Pessoa Física' : 'Pessoa Jurídica'}
+                    </Badge>
+                  </td>
+                  <td className="p-4 text-gray-400 text-sm">{client.email || 'N/A'}</td>
+                  <td className="p-4">
+                    <div>
+                      <p className="text-white text-sm">{client.user?.name || 'N/A'}</p>
+                      <p className="text-gray-500 text-xs">{client.user?.email}</p>
+                    </div>
+                  </td>
+                  <td className="p-4">
+                    <span className="text-emerald-400 font-semibold">
+                      {client._count?.invoices || 0}
+                    </span>
+                  </td>
+                  <td className="p-4 text-gray-400 text-sm">
+                    {client.createdAt 
+                      ? new Date(client.createdAt).toLocaleDateString('pt-BR')
+                      : 'N/A'
+                    }
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="flex items-center justify-between p-4 border-t border-white/5 bg-white/[0.02]">
+          <p className="text-gray-500 text-sm">{pagination.total} clientes</p>
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage(p => p - 1)} className="border-white/10">
+              <ChevronLeft className="w-4 h-4" />
+            </Button>
+            <Button variant="outline" size="sm" disabled={page >= pagination.totalPages} onClick={() => setPage(p => p + 1)} className="border-white/10">
+              <ChevronRight className="w-4 h-4" />
+            </Button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ==========================================
 // INVOICES TAB
 // ==========================================
 
@@ -1455,6 +1620,7 @@ const InvoicesTab = () => {
     { value: 'autorizada', label: 'Autorizadas' },
     { value: 'processando', label: 'Processando' },
     { value: 'rejeitada', label: 'Rejeitadas' },
+    { value: 'cancelada', label: 'Canceladas' },
   ];
 
   return (
@@ -2024,9 +2190,11 @@ const SettingsTab = () => {
 export default function Admin() {
   const { user, isAuthenticated, isLoading: authLoading, logout } = useAuth();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState('overview');
   const [hasValidAdminSession, setHasValidAdminSession] = useState(false);
   const [checkingSession, setCheckingSession] = useState(true);
+  const [isRefreshingAll, setIsRefreshingAll] = useState(false);
 
   // Check for valid admin session (step-up authentication)
   useEffect(() => {
@@ -2139,14 +2307,29 @@ export default function Admin() {
           <span className="text-emerald-400 text-sm font-medium">Sistema Online</span>
         </div>
           <motion.button
-            onClick={() => {
-              refetchStats();
-              refetchActivity();
-              toast.success('Dados atualizados com sucesso!');
+            onClick={async () => {
+              setIsRefreshingAll(true);
+              try {
+                // Invalidate ALL admin-related queries to refresh everything
+                await queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
+                await queryClient.invalidateQueries({ queryKey: ['admin-activity'] });
+                await queryClient.invalidateQueries({ queryKey: ['admin-users'] });
+                await queryClient.invalidateQueries({ queryKey: ['admin-subscriptions'] });
+                await queryClient.invalidateQueries({ queryKey: ['admin-companies'] });
+                await queryClient.invalidateQueries({ queryKey: ['admin-clients'] });
+                await queryClient.invalidateQueries({ queryKey: ['admin-invoices'] });
+                await queryClient.invalidateQueries({ queryKey: ['admin-settings'] });
+                await queryClient.invalidateQueries({ queryKey: ['admin-health'] });
+                toast.success('Todos os dados foram atualizados!');
+              } catch (error) {
+                toast.error('Erro ao atualizar dados');
+              } finally {
+                setIsRefreshingAll(false);
+              }
             }}
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
-            disabled={statsFetching}
+            disabled={isRefreshingAll || statsFetching}
             className="group relative overflow-hidden px-5 py-2.5 rounded-xl font-medium text-sm
               bg-gradient-to-br from-[#1a1a2e]/80 to-[#0f0f1a]/80 backdrop-blur-sm
               border border-white/10 text-gray-300
@@ -2181,7 +2364,7 @@ export default function Admin() {
             />
             
             <div className="relative flex items-center gap-2 z-10">
-              <RefreshCw className={`w-4 h-4 text-gray-400 group-hover:text-orange-400 transition-colors duration-500 ${statsFetching ? 'animate-spin' : ''}`} />
+              <RefreshCw className={`w-4 h-4 text-gray-400 group-hover:text-orange-400 transition-colors duration-500 ${isRefreshingAll || statsFetching ? 'animate-spin' : ''}`} />
               <span className="group-hover:text-orange-100 transition-colors duration-500">Atualizar</span>
             </div>
           </motion.button>
@@ -2364,6 +2547,12 @@ export default function Admin() {
             <Building2 className="w-4 h-4 mr-2" /> Empresas
           </TabsTrigger>
           <TabsTrigger 
+            value="clients" 
+            className="data-[state=active]:bg-gradient-to-r data-[state=active]:from-orange-500 data-[state=active]:to-orange-600 rounded-lg px-4 py-2"
+          >
+            <UserCheck className="w-4 h-4 mr-2" /> Clientes
+          </TabsTrigger>
+          <TabsTrigger 
             value="invoices" 
             className="data-[state=active]:bg-gradient-to-r data-[state=active]:from-orange-500 data-[state=active]:to-orange-600 rounded-lg px-4 py-2"
           >
@@ -2421,6 +2610,7 @@ export default function Admin() {
         <TabsContent value="users"><UsersTab /></TabsContent>
         <TabsContent value="subscriptions"><SubscriptionsTab /></TabsContent>
         <TabsContent value="companies"><CompaniesTab /></TabsContent>
+        <TabsContent value="clients"><ClientsTab /></TabsContent>
         <TabsContent value="invoices"><InvoicesTab /></TabsContent>
         <TabsContent value="settings"><SettingsTab /></TabsContent>
       </Tabs>
