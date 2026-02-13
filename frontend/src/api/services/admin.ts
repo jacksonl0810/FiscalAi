@@ -115,6 +115,12 @@ export const adminService = {
     return response.data.data;
   },
 
+  // Clients
+  getClients: async (params?: { page?: number; limit?: number; search?: string }) => {
+    const response = await apiClient.get('/admin/clients', { params });
+    return response.data.data;
+  },
+
   // Invoices
   getInvoices: async (params?: { page?: number; limit?: number; status?: string }) => {
     const response = await apiClient.get('/admin/invoices', { params });
