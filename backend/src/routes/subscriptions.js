@@ -617,6 +617,7 @@ router.get('/trial-eligibility', asyncHandler(async (req, res) => {
 /**
  * GET /api/subscriptions/status
  * Get current user's subscription status
+ * Syncs with Stripe to ensure accurate billing dates
  */
 router.get('/status', asyncHandler(async (req, res) => {
   const userId = req.user.id;
@@ -634,15 +635,47 @@ router.get('/status', asyncHandler(async (req, res) => {
   let planId = null;
   let currentPeriodEnd = null;
   let daysRemaining = 0;
+  let billingCycle = null;
 
-    if (subscription) {
-      status = subscription.status;
-    planId = subscription.planId;
-      currentPeriodEnd = subscription.currentPeriodEnd;
+  if (subscription) {
+    const stripeSubId = subscription.stripeSubscriptionId;
     
-      if (currentPeriodEnd) {
-        const now = new Date();
-        daysRemaining = Math.max(0, Math.ceil((new Date(currentPeriodEnd) - now) / (1000 * 60 * 60 * 24)));
+    // Sync with Stripe if we have a valid Stripe subscription ID
+    if (stripeSubId && !stripeSubId.startsWith('ppu_')) {
+      try {
+        const stripeSubscription = await stripeSDK.getSubscription(stripeSubId);
+        
+        if (stripeSubscription) {
+          const newPeriodEnd = new Date(stripeSubscription.current_period_end * 1000);
+          const newPeriodStart = new Date(stripeSubscription.current_period_start * 1000);
+          
+          // Update database if period end has changed
+          if (!subscription.currentPeriodEnd || 
+              newPeriodEnd.getTime() !== new Date(subscription.currentPeriodEnd).getTime()) {
+            subscription = await prisma.subscription.update({
+              where: { id: subscription.id },
+              data: {
+                currentPeriodStart: newPeriodStart,
+                currentPeriodEnd: newPeriodEnd
+              }
+            });
+            console.log(`[Subscription] Synced period end for user ${userId}: ${newPeriodEnd.toISOString()}`);
+          }
+        }
+      } catch (error) {
+        console.error(`[Subscription] Error syncing with Stripe for user ${userId}:`, error.message);
+        // Continue with database values if Stripe sync fails
+      }
+    }
+    
+    status = subscription.status;
+    planId = subscription.planId;
+    currentPeriodEnd = subscription.currentPeriodEnd;
+    billingCycle = subscription.billingCycle;
+    
+    if (currentPeriodEnd) {
+      const now = new Date();
+      daysRemaining = Math.max(0, Math.ceil((new Date(currentPeriodEnd) - now) / (1000 * 60 * 60 * 24)));
     }
   }
 
@@ -650,7 +683,8 @@ router.get('/status', asyncHandler(async (req, res) => {
     status,
     plan_id: planId,
     current_period_end: currentPeriodEnd,
-    days_remaining: daysRemaining
+    days_remaining: daysRemaining,
+    billing_cycle: billingCycle
   });
 }));
 

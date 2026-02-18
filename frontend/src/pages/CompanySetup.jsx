@@ -3,7 +3,7 @@ import React, { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useLocation } from "react-router-dom";
 import { createPageUrl } from "../utils";
-import { companiesService, notificationsService, settingsService, subscriptionsService } from "@/api/services";
+import { companiesService, notificationsService, settingsService, subscriptionsService, municipalitiesService } from "@/api/services";
 // Animation handled with CSS classes
 import { toast } from "sonner";
 import {
@@ -23,7 +23,8 @@ import {
   Clock,
   AlertTriangle,
   ExternalLink,
-  Crown
+  Crown,
+  Lock
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -68,6 +69,12 @@ export default function CompanySetup() {
   });
   const [certificateFile, setCertificateFile] = useState(null);
   const [certificatePassword, setCertificatePassword] = useState("");
+  const [credentialType, setCredentialType] = useState('certificate'); // 'certificate' | 'municipal' | 'both' | 'later'
+  const [municipalLogin, setMunicipalLogin] = useState("");
+  const [municipalPassword, setMunicipalPassword] = useState("");
+  const [municipalToken, setMunicipalToken] = useState("");
+  const [municipalityAuthLoading, setMunicipalityAuthLoading] = useState(false);
+  const [municipalityAuthRequirements, setMunicipalityAuthRequirements] = useState(null);
   const fileInputRef = React.useRef(null);
   const queryClient = useQueryClient();
   const navigate = useNavigate();
@@ -274,8 +281,13 @@ export default function CompanySetup() {
         }
       }
 
-      // Upload certificate if a file was selected
-      if (certificateFile && certificatePassword) {
+      // Determine if we need to upload credentials based on municipality requirements
+      const authMode = municipalityAuthRequirements?.auth_requirements?.authMode;
+      const needsCertificate = authMode === 'both' || authMode === 'certificate_only' || credentialType === 'certificate';
+      const needsMunicipalCredentials = authMode === 'both' || authMode === 'municipal_only' || credentialType === 'municipal';
+
+      // Upload certificate if needed (certificate method selected OR both required)
+      if (needsCertificate && certificateFile && certificatePassword) {
         try {
           const certResult = await companiesService.uploadCertificate(savedCompany.id, certificateFile, certificatePassword);
           
@@ -306,7 +318,7 @@ export default function CompanySetup() {
               },
             });
           } else {
-            toast.success('✓ Certificado Digital Enviado!\n\nCertificado configurado com sucesso. Não é necessário enviar novamente.', {
+            toast.success('✓ Certificado Digital Enviado!\n\nCertificado configurado com sucesso.', {
               duration: 4000,
               style: {
                 background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)',
@@ -341,6 +353,138 @@ export default function CompanySetup() {
         }
       }
 
+      // Save municipal credentials if needed (municipal method selected OR both required)
+      if (needsMunicipalCredentials && municipalLogin && municipalPassword) {
+        try {
+          const muniResult = await companiesService.saveMunicipalCredentials(
+            savedCompany.id,
+            municipalLogin,
+            municipalPassword,
+            municipalToken || undefined
+          );
+
+          if (muniResult?.nuvem_fiscal?.status === 'error' || muniResult?.nuvem_fiscal?.status === 'warning') {
+            toast.error(`⚠️ Aviso das Credenciais\n\n${muniResult.nuvem_fiscal.message}`, {
+              duration: 6000,
+              style: {
+                background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)',
+                border: '1px solid rgba(251, 191, 36, 0.3)',
+                borderRadius: '16px',
+                padding: '16px',
+                boxShadow: '0 10px 40px rgba(251, 191, 36, 0.2)',
+                color: '#fff',
+                whiteSpace: 'pre-line',
+              },
+            });
+          } else {
+            toast.success('✓ Credenciais da Prefeitura Salvas!\n\nLogin e senha configurados com sucesso.', {
+              duration: 4000,
+              style: {
+                background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)',
+                border: '1px solid rgba(34, 197, 94, 0.3)',
+                borderRadius: '16px',
+                padding: '16px',
+                boxShadow: '0 10px 40px rgba(34, 197, 94, 0.2)',
+                color: '#fff',
+                whiteSpace: 'pre-line',
+              },
+            });
+          }
+
+          // Show warning if same credentials are used for other companies
+          if (muniResult?.warning?.type === 'shared_credentials') {
+            setTimeout(() => {
+              toast.warning(`⚠️ Credenciais Compartilhadas\n\n${muniResult.warning.message}`, {
+                duration: 10000,
+                style: {
+                  background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)',
+                  border: '1px solid rgba(251, 191, 36, 0.5)',
+                  borderRadius: '16px',
+                  padding: '16px',
+                  boxShadow: '0 10px 40px rgba(251, 191, 36, 0.3)',
+                  color: '#fff',
+                  whiteSpace: 'pre-line',
+                },
+              });
+            }, 500);
+          }
+        } catch (/** @type {any} */ muniError) {
+          const { handleError } = await import('@/services/errorTranslationService');
+          await handleError(muniError, {
+            operation: 'save_municipal_credentials',
+            companyId: savedCompany.id
+          }, (message) => {
+            toast.error(`⚠️ Erro nas Credenciais\n\n${message}`, {
+              duration: 8000,
+              style: {
+                background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)',
+                border: '1px solid rgba(239, 68, 68, 0.3)',
+                borderRadius: '16px',
+                padding: '16px',
+                boxShadow: '0 10px 40px rgba(239, 68, 68, 0.2)',
+                color: '#fff',
+                whiteSpace: 'pre-line',
+              },
+            });
+          });
+        }
+      }
+
+      // After credentials are saved, test NFS-e emission capability
+      // This detects provider bugs early (like the Publica provider XML typo bug)
+      if (savedCompany.nuvem_fiscal_id && (needsCertificate || needsMunicipalCredentials)) {
+        try {
+          const testResult = await companiesService.testNfseEmission(savedCompany.id);
+          
+          if (!testResult.canEmit && testResult.code === 'NUVEM_FISCAL_XML_BUG') {
+            // Provider bug detected - show critical warning
+            toast.error(
+              `⚠️ Bug Detectado no Provedor\n\n${testResult.message}\n\n` +
+              `${testResult.action}`,
+              {
+                duration: 15000,
+                style: {
+                  background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)',
+                  border: '1px solid rgba(239, 68, 68, 0.5)',
+                  borderRadius: '16px',
+                  padding: '16px',
+                  boxShadow: '0 10px 40px rgba(239, 68, 68, 0.3)',
+                  color: '#fff',
+                  whiteSpace: 'pre-line',
+                },
+              }
+            );
+            
+            // Create notification for reference
+            await notificationsService.create({
+              titulo: "Bug no provedor NFS-e",
+              mensagem: `${testResult.message}. Município: ${testResult.municipality?.cidade}/${testResult.municipality?.uf}. Reporte em: ${testResult.supportUrl}`,
+              tipo: "alerta"
+            });
+          } else if (!testResult.canEmit) {
+            // Other issue detected
+            toast.warning(
+              `⚠️ Atenção\n\n${testResult.message}\n\n${testResult.action || ''}`,
+              {
+                duration: 8000,
+                style: {
+                  background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)',
+                  border: '1px solid rgba(251, 191, 36, 0.5)',
+                  borderRadius: '16px',
+                  padding: '16px',
+                  boxShadow: '0 10px 40px rgba(251, 191, 36, 0.3)',
+                  color: '#fff',
+                  whiteSpace: 'pre-line',
+                },
+              }
+            );
+          }
+        } catch (testError) {
+          // Test failed - non-critical, just log it
+          console.warn('[CompanySetup] NFS-e emission test failed:', testError);
+        }
+      }
+
       return { savedCompany, isNewCompany: isNew };
     },
     onSuccess: ({ isNewCompany }) => {
@@ -348,25 +492,28 @@ export default function CompanySetup() {
       queryClient.invalidateQueries({ queryKey: ['fiscalStatus'] });
       queryClient.invalidateQueries({ queryKey: ['companies'] });
       
-      if (isNewCompany) {
-        toast.success('✓ Empresa Criada!\n\nRedirecionando para Minhas Empresas...', {
-          duration: 2000,
-          style: {
-            background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)',
-            border: '1px solid rgba(34, 197, 94, 0.3)',
-            borderRadius: '16px',
-            padding: '16px',
-            boxShadow: '0 10px 40px rgba(34, 197, 94, 0.2)',
-            color: '#fff',
-            whiteSpace: 'pre-line',
-          },
-        });
-        setTimeout(() => {
-          // Navigate to list view (remove ?new=true from URL)
-          setShowListView(true);
-          navigate(createPageUrl('CompanySetup'), { replace: true });
-        }, 1500);
-      }
+      const successMessage = isNewCompany 
+        ? '✓ Empresa Criada!\n\nRedirecionando para Minhas Empresas...'
+        : '✓ Empresa Atualizada!\n\nRedirecionando para Minhas Empresas...';
+      
+      toast.success(successMessage, {
+        duration: 2000,
+        style: {
+          background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)',
+          border: '1px solid rgba(34, 197, 94, 0.3)',
+          borderRadius: '16px',
+          padding: '16px',
+          boxShadow: '0 10px 40px rgba(34, 197, 94, 0.2)',
+          color: '#fff',
+          whiteSpace: 'pre-line',
+        },
+      });
+      
+      // Always redirect to list view after saving
+      setTimeout(() => {
+        setShowListView(true);
+        navigate(createPageUrl('CompanySetup'), { replace: true });
+      }, 1500);
     },
     onError: async (/** @type {any} */ error) => {
       const { handleError } = await import('@/services/errorTranslationService');
@@ -394,6 +541,45 @@ export default function CompanySetup() {
   };
 
   const [cepLoading, setCepLoading] = useState(false);
+
+  // Fetch municipality authentication requirements when codigo_municipio changes
+  useEffect(() => {
+    const fetchMunicipalityAuth = async () => {
+      const cleanCodigo = (formData.codigo_municipio || '').replace(/\D/g, '');
+      
+      if (cleanCodigo.length !== 7) {
+        setMunicipalityAuthRequirements(null);
+        return;
+      }
+
+      setMunicipalityAuthLoading(true);
+      try {
+        const authData = await municipalitiesService.getAuthRequirements(cleanCodigo);
+        setMunicipalityAuthRequirements(authData);
+        
+        // Auto-select credential type based on municipality requirements
+        if (authData.auth_requirements) {
+          const { authMode } = authData.auth_requirements;
+          if (authMode === 'certificate_only') {
+            setCredentialType('certificate');
+          } else if (authMode === 'municipal_only') {
+            setCredentialType('municipal');
+          } else if (authMode === 'both') {
+            setCredentialType('both');
+          }
+        }
+        
+        console.log('[CompanySetup] Municipality auth requirements:', authData);
+      } catch (error) {
+        console.error('[CompanySetup] Error fetching municipality auth:', error);
+        setMunicipalityAuthRequirements(null);
+      } finally {
+        setMunicipalityAuthLoading(false);
+      }
+    };
+
+    fetchMunicipalityAuth();
+  }, [formData.codigo_municipio]);
 
   const fetchAddressFromCep = async (cep) => {
     const cleanCep = cep.replace(/\D/g, '');
@@ -645,6 +831,10 @@ export default function CompanySetup() {
   const handleConfigureLater = () => {
     setCertificateFile(null);
     setCertificatePassword("");
+    setMunicipalLogin("");
+    setMunicipalPassword("");
+    setMunicipalToken("");
+    setCredentialType('later');
     handleInputChange('certificado_digital', false);
   };
 
@@ -1532,31 +1722,117 @@ export default function CompanySetup() {
                 {company?.id && (
                   <FiscalStatusIndicator companyId={company.id} />
                 )}
-                <div className={cn(
-                  "p-6 rounded-2xl",
-                  "bg-gradient-to-br from-slate-900/90 via-slate-800/70 to-slate-900/90",
-                  "backdrop-blur-xl border border-orange-500/30",
-                  "shadow-2xl shadow-black/50",
-                  "before:absolute before:inset-0 before:bg-gradient-to-br before:from-orange-500/5 before:via-purple-500/5 before:to-transparent before:pointer-events-none relative"
-                )}>
-                  <div className="flex items-start gap-4 relative z-10">
-                    <div className={cn(
-                      "w-14 h-14 rounded-xl flex items-center justify-center",
-                      "bg-gradient-to-br from-orange-500/30 via-orange-600/20 to-orange-500/30",
-                      "border border-orange-500/30",
-                      "shadow-lg shadow-orange-500/20"
-                    )}>
-                      <Shield className="w-7 h-7 text-orange-300" />
-                    </div>
-                    <div>
-                      <h3 className="text-lg font-bold text-white mb-2">Certificado Digital</h3>
-                      <p className="text-gray-300 mt-1 font-medium">
-                        O certificado digital é necessário para autenticar as notas fiscais emitidas. 
-                        Você pode configurá-lo agora ou posteriormente.
-                      </p>
+
+                {/* Municipality Auth Requirements Info */}
+                {municipalityAuthLoading ? (
+                  <div className={cn(
+                    "p-6 rounded-2xl",
+                    "bg-gradient-to-br from-slate-900/90 via-slate-800/70 to-slate-900/90",
+                    "backdrop-blur-xl border border-blue-500/30",
+                    "shadow-2xl shadow-black/50"
+                  )}>
+                    <div className="flex items-center gap-4">
+                      <Loader2 className="w-6 h-6 text-blue-400 animate-spin" />
+                      <div>
+                        <p className="text-white font-medium">Verificando requisitos do município...</p>
+                        <p className="text-gray-400 text-sm">Consultando a prefeitura para determinar o método de autenticação necessário.</p>
+                      </div>
                     </div>
                   </div>
-                </div>
+                ) : municipalityAuthRequirements?.supported === false ? (
+                  <div className={cn(
+                    "p-6 rounded-2xl",
+                    "bg-gradient-to-br from-slate-900/90 via-slate-800/70 to-slate-900/90",
+                    "backdrop-blur-xl border border-red-500/30",
+                    "shadow-2xl shadow-black/50"
+                  )}>
+                    <div className="flex items-start gap-4">
+                      <AlertCircle className="w-7 h-7 text-red-400 flex-shrink-0" />
+                      <div>
+                        <h3 className="text-lg font-bold text-red-400 mb-2">Município não suportado</h3>
+                        <p className="text-gray-300">{municipalityAuthRequirements?.message}</p>
+                        {municipalityAuthRequirements?.hint && (
+                          <p className="text-gray-400 text-sm mt-2">{municipalityAuthRequirements.hint}</p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ) : municipalityAuthRequirements?.auth_requirements ? (
+                  <div className={cn(
+                    "p-6 rounded-2xl",
+                    "bg-gradient-to-br from-slate-900/90 via-slate-800/70 to-slate-900/90",
+                    "backdrop-blur-xl border",
+                    municipalityAuthRequirements.auth_requirements.authMode === 'both' 
+                      ? "border-amber-500/30" 
+                      : "border-green-500/30",
+                    "shadow-2xl shadow-black/50",
+                    "before:absolute before:inset-0 before:bg-gradient-to-br before:from-orange-500/5 before:via-purple-500/5 before:to-transparent before:pointer-events-none relative"
+                  )}>
+                    <div className="flex items-start gap-4 relative z-10">
+                      <div className={cn(
+                        "w-14 h-14 rounded-xl flex items-center justify-center flex-shrink-0",
+                        "bg-gradient-to-br",
+                        municipalityAuthRequirements.auth_requirements.authMode === 'both'
+                          ? "from-amber-500/30 via-amber-600/20 to-amber-500/30 border-amber-500/30"
+                          : "from-green-500/30 via-green-600/20 to-green-500/30 border-green-500/30",
+                        "border shadow-lg"
+                      )}>
+                        <Shield className={cn(
+                          "w-7 h-7",
+                          municipalityAuthRequirements.auth_requirements.authMode === 'both' ? "text-amber-300" : "text-green-300"
+                        )} />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-3 mb-2">
+                          <h3 className="text-lg font-bold text-white">
+                            {municipalityAuthRequirements.nome || 'Município'} - {municipalityAuthRequirements.uf || 'UF'}
+                          </h3>
+                          {municipalityAuthRequirements.provedor && (
+                            <span className="px-2 py-0.5 text-xs bg-blue-500/20 text-blue-400 rounded-full border border-blue-500/30">
+                              {municipalityAuthRequirements.provedor}
+                            </span>
+                          )}
+                        </div>
+                        <p className={cn(
+                          "font-medium",
+                          municipalityAuthRequirements.auth_requirements.authMode === 'both' ? "text-amber-300" : "text-green-300"
+                        )}>
+                          {municipalityAuthRequirements.auth_requirements.authModeDescription}
+                        </p>
+                        {municipalityAuthRequirements.auth_requirements.authMode === 'both' && (
+                          <p className="text-gray-400 text-sm mt-2">
+                            Configure AMBOS os métodos abaixo para habilitar a emissão de notas fiscais.
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className={cn(
+                    "p-6 rounded-2xl",
+                    "bg-gradient-to-br from-slate-900/90 via-slate-800/70 to-slate-900/90",
+                    "backdrop-blur-xl border border-orange-500/30",
+                    "shadow-2xl shadow-black/50",
+                    "before:absolute before:inset-0 before:bg-gradient-to-br before:from-orange-500/5 before:via-purple-500/5 before:to-transparent before:pointer-events-none relative"
+                  )}>
+                    <div className="flex items-start gap-4 relative z-10">
+                      <div className={cn(
+                        "w-14 h-14 rounded-xl flex items-center justify-center",
+                        "bg-gradient-to-br from-orange-500/30 via-orange-600/20 to-orange-500/30",
+                        "border border-orange-500/30",
+                        "shadow-lg shadow-orange-500/20"
+                      )}>
+                        <Shield className="w-7 h-7 text-orange-300" />
+                      </div>
+                      <div>
+                        <h3 className="text-lg font-bold text-white mb-2">Autenticação Fiscal</h3>
+                        <p className="text-gray-300 mt-1 font-medium">
+                          Configure o código IBGE do município (Etapa 2) para identificar automaticamente o método de autenticação necessário.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 <input
                   ref={fileInputRef}
@@ -1565,113 +1841,365 @@ export default function CompanySetup() {
                   onChange={handleFileChange}
                   className="hidden"
                 />
-                
-                <div className="space-y-4">
-                  <button
-                    type="button"
-                    onClick={handleCertificateUpload}
-                    className={cn(
-                      "w-full p-5 rounded-xl border text-left transition-all duration-200",
-                      "backdrop-blur-sm shadow-md hover:shadow-lg",
-                      certificateFile
-                        ? cn(
-                            "border-green-500/50 bg-gradient-to-br from-green-500/20 via-green-600/10 to-green-500/20",
-                            "shadow-lg shadow-green-500/20"
-                          )
-                        : cn(
-                            "border-white/10 bg-gradient-to-br from-white/5 via-white/3 to-white/5",
-                            "hover:bg-gradient-to-br hover:from-green-500/20 hover:via-green-600/10 hover:to-green-500/20",
-                            "hover:border-green-500/50 hover:scale-[1.02]"
-                          )
-                    )}
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <Check className={`w-5 h-5 ${certificateFile ? 'text-green-400' : 'text-gray-500'}`} />
-                        <span className="font-medium text-white">
-                          {certificateFile ? certificateFile.name : 'Selecionar certificado A1 (.pfx)'}
-                        </span>
-                      </div>
-                      <ChevronRight className="w-5 h-5 text-gray-500" />
-                    </div>
-                    <p className="text-sm text-gray-500 mt-2 ml-8">
-                      {certificateFile ? 'Clique para alterar o certificado' : 'Faça upload do seu certificado A1 (.pfx)'}
-                    </p>
-                  </button>
 
-                  {certificateFile && (
-                    <div className={cn(
-                      "p-5 rounded-xl border space-y-4",
-                      "bg-gradient-to-br from-white/5 via-white/3 to-white/5",
-                      "border-white/10 backdrop-blur-sm",
-                      "shadow-md"
-                    )}>
-                      <div className="space-y-2">
-                        <Label className="text-gray-300 font-semibold">Senha do Certificado *</Label>
-                        <Input
-                          type="password"
-                          value={certificatePassword}
-                          onChange={(e) => setCertificatePassword(e.target.value)}
-                          placeholder="Digite a senha do certificado"
-                          className={cn(
-                            "h-12",
-                            "bg-gradient-to-br from-slate-800/90 via-slate-700/80 to-slate-800/90",
-                            "backdrop-blur-xl border text-white",
-                            "hover:border-orange-500/30 hover:bg-gradient-to-br hover:from-slate-800/95 hover:via-slate-700/85 hover:to-slate-800/95",
-                            "focus:ring-2 transition-all duration-200",
-                            "shadow-lg shadow-black/20",
-                            "placeholder:text-gray-400 placeholder:opacity-100",
-                            certificatePassword 
-                              ? 'border-green-500/50 focus:border-green-500 focus:ring-green-500/20' 
-                              : 'border-white/10 focus:border-orange-500/50 focus:ring-orange-500/20'
-                          )}
-                          style={{ color: '#ffffff' }}
-                        />
-                        <p className="text-xs text-gray-500">
-                          {certificatePassword 
-                            ? '✓ Senha informada' 
-                            : 'Obrigatório para validar e enviar o certificado'}
-                        </p>
-                      </div>
-                      {certificateFile && certificatePassword && (
-                        <div className="p-3 rounded-lg bg-green-500/10 border border-green-500/20">
-                          <div className="flex items-center gap-2">
-                            <Check className="w-4 h-4 text-green-400" />
-                            <span className="text-sm text-green-400">Certificado pronto para envio</span>
-                          </div>
+                {/* Credential Type Selector - Show based on municipality requirements */}
+                {municipalityAuthRequirements?.auth_requirements?.authMode === 'both' ? (
+                  /* BOTH required - show combined UI */
+                  <div className={cn(
+                    "p-4 rounded-xl border border-amber-500/30 bg-amber-500/10"
+                  )}>
+                    <div className="flex items-center gap-2 mb-4">
+                      <AlertTriangle className="w-5 h-5 text-amber-400" />
+                      <span className="text-amber-300 font-medium">Este município requer AMBOS os métodos de autenticação</span>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className={cn(
+                        "p-4 rounded-xl border",
+                        certificateFile && certificatePassword
+                          ? "border-green-500/50 bg-green-500/10"
+                          : "border-orange-500/30 bg-orange-500/10"
+                      )}>
+                        <div className="flex items-center gap-2 mb-2">
+                          <Shield className="w-5 h-5 text-orange-400" />
+                          <span className="font-semibold text-white">1. Certificado Digital</span>
+                          {certificateFile && certificatePassword && <Check className="w-4 h-4 text-green-400" />}
                         </div>
-                      )}
+                        <p className="text-sm text-gray-400">Arquivo .pfx do e-CNPJ A1</p>
+                      </div>
+                      <div className={cn(
+                        "p-4 rounded-xl border",
+                        municipalLogin && municipalPassword
+                          ? "border-green-500/50 bg-green-500/10"
+                          : "border-purple-500/30 bg-purple-500/10"
+                      )}>
+                        <div className="flex items-center gap-2 mb-2">
+                          <Lock className="w-5 h-5 text-purple-400" />
+                          <span className="font-semibold text-white">2. Credenciais da Prefeitura</span>
+                          {municipalLogin && municipalPassword && <Check className="w-4 h-4 text-green-400" />}
+                        </div>
+                        <p className="text-sm text-gray-400">Login e senha do portal NFS-e</p>
+                      </div>
                     </div>
-                  )}
+                  </div>
+                ) : (
+                  /* Single method or unknown - show selector */
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCredentialType('certificate');
+                        setMunicipalLogin('');
+                        setMunicipalPassword('');
+                        setMunicipalToken('');
+                      }}
+                      disabled={municipalityAuthRequirements?.auth_requirements?.authMode === 'municipal_only'}
+                      className={cn(
+                        "p-5 rounded-xl border text-left transition-all duration-200",
+                        "backdrop-blur-sm shadow-md hover:shadow-lg",
+                        municipalityAuthRequirements?.auth_requirements?.authMode === 'municipal_only' && "opacity-50 cursor-not-allowed",
+                        credentialType === 'certificate'
+                          ? cn(
+                              "border-orange-500/50 bg-gradient-to-br from-orange-500/20 via-orange-600/10 to-orange-500/20",
+                              "shadow-lg shadow-orange-500/20"
+                            )
+                          : cn(
+                              "border-white/10 bg-gradient-to-br from-white/5 via-white/3 to-white/5",
+                              "hover:border-orange-500/30 hover:scale-[1.01]"
+                            )
+                      )}
+                    >
+                      <div className="flex items-center gap-3 mb-2">
+                        <Shield className={cn("w-6 h-6", credentialType === 'certificate' ? 'text-orange-400' : 'text-gray-500')} />
+                        <span className="font-semibold text-white">Certificado Digital A1</span>
+                        {municipalityAuthRequirements?.auth_requirements?.authMode === 'certificate_only' && (
+                          <span className="px-2 py-0.5 text-xs bg-green-500/20 text-green-400 rounded-full border border-green-500/30">
+                            Requerido
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-sm text-gray-400 ml-9">
+                        Upload do arquivo .pfx do certificado digital
+                      </p>
+                      {municipalityAuthRequirements?.auth_requirements?.authMode === 'municipal_only' && (
+                        <p className="text-sm text-amber-400 ml-9 mt-2">
+                          Este município não aceita certificado digital
+                        </p>
+                      )}
+                    </button>
 
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCredentialType('municipal');
+                        setCertificateFile(null);
+                        setCertificatePassword('');
+                      }}
+                      disabled={municipalityAuthRequirements?.auth_requirements?.authMode === 'certificate_only'}
+                      className={cn(
+                        "p-5 rounded-xl border text-left transition-all duration-200",
+                        "backdrop-blur-sm shadow-md hover:shadow-lg",
+                        municipalityAuthRequirements?.auth_requirements?.authMode === 'certificate_only' && "opacity-50 cursor-not-allowed",
+                        credentialType === 'municipal'
+                          ? cn(
+                              "border-purple-500/50 bg-gradient-to-br from-purple-500/20 via-purple-600/10 to-purple-500/20",
+                              "shadow-lg shadow-purple-500/20"
+                            )
+                          : cn(
+                              "border-white/10 bg-gradient-to-br from-white/5 via-white/3 to-white/5",
+                              "hover:border-purple-500/30 hover:scale-[1.01]"
+                            )
+                      )}
+                    >
+                      <div className="flex items-center gap-3 mb-2">
+                        <Lock className={cn("w-6 h-6", credentialType === 'municipal' ? 'text-purple-400' : 'text-gray-500')} />
+                        <span className="font-semibold text-white">Login da Prefeitura</span>
+                        {municipalityAuthRequirements?.auth_requirements?.authMode === 'municipal_only' && (
+                          <span className="px-2 py-0.5 text-xs bg-green-500/20 text-green-400 rounded-full border border-green-500/30">
+                            Requerido
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-sm text-gray-400 ml-9">
+                        Usuário e senha do portal da prefeitura
+                      </p>
+                      {municipalityAuthRequirements?.auth_requirements?.authMode === 'certificate_only' && (
+                        <p className="text-sm text-amber-400 ml-9 mt-2">
+                          Este município não aceita credenciais da prefeitura
+                        </p>
+                      )}
+                    </button>
+                  </div>
+                )}
+
+                {/* Certificate Upload Section - Show when certificate is selected OR when both are required */}
+                {(credentialType === 'certificate' || credentialType === 'both' || 
+                  municipalityAuthRequirements?.auth_requirements?.authMode === 'both') && (
+                  <div className="space-y-4">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Shield className="w-5 h-5 text-orange-400" />
+                      <span className="font-semibold text-white">Certificado Digital A1</span>
+                      {(certificateFile && certificatePassword) && <Check className="w-4 h-4 text-green-400 ml-auto" />}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleCertificateUpload}
+                      className={cn(
+                        "w-full p-5 rounded-xl border text-left transition-all duration-200",
+                        "backdrop-blur-sm shadow-md hover:shadow-lg",
+                        certificateFile
+                          ? cn(
+                              "border-green-500/50 bg-gradient-to-br from-green-500/20 via-green-600/10 to-green-500/20",
+                              "shadow-lg shadow-green-500/20"
+                            )
+                          : cn(
+                              "border-white/10 bg-gradient-to-br from-white/5 via-white/3 to-white/5",
+                              "hover:bg-gradient-to-br hover:from-green-500/20 hover:via-green-600/10 hover:to-green-500/20",
+                              "hover:border-green-500/50 hover:scale-[1.02]"
+                            )
+                      )}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <Check className={`w-5 h-5 ${certificateFile ? 'text-green-400' : 'text-gray-500'}`} />
+                          <span className="font-medium text-white">
+                            {certificateFile ? certificateFile.name : 'Selecionar certificado A1 (.pfx)'}
+                          </span>
+                        </div>
+                        <ChevronRight className="w-5 h-5 text-gray-500" />
+                      </div>
+                      <p className="text-sm text-gray-500 mt-2 ml-8">
+                        {certificateFile ? 'Clique para alterar o certificado' : 'Faça upload do seu certificado A1 (.pfx)'}
+                      </p>
+                    </button>
+
+                    {certificateFile && (
+                      <div className={cn(
+                        "p-5 rounded-xl border space-y-4",
+                        "bg-gradient-to-br from-white/5 via-white/3 to-white/5",
+                        "border-white/10 backdrop-blur-sm",
+                        "shadow-md"
+                      )}>
+                        <div className="space-y-2">
+                          <Label className="text-gray-300 font-semibold">Senha do Certificado *</Label>
+                          <Input
+                            type="password"
+                            value={certificatePassword}
+                            onChange={(e) => setCertificatePassword(e.target.value)}
+                            placeholder="Digite a senha do certificado"
+                            className={cn(
+                              "h-12",
+                              "bg-gradient-to-br from-slate-800/90 via-slate-700/80 to-slate-800/90",
+                              "backdrop-blur-xl border text-white",
+                              "hover:border-orange-500/30",
+                              "focus:ring-2 transition-all duration-200",
+                              "shadow-lg shadow-black/20",
+                              "placeholder:text-gray-400 placeholder:opacity-100",
+                              certificatePassword
+                                ? 'border-green-500/50 focus:border-green-500 focus:ring-green-500/20'
+                                : 'border-white/10 focus:border-orange-500/50 focus:ring-orange-500/20'
+                            )}
+                            style={{ color: '#ffffff' }}
+                          />
+                          <p className="text-xs text-gray-500">
+                            {certificatePassword
+                              ? '✓ Senha informada'
+                              : 'Obrigatório para validar e enviar o certificado'}
+                          </p>
+                        </div>
+                        {certificateFile && certificatePassword && (
+                          <div className="p-3 rounded-lg bg-green-500/10 border border-green-500/20">
+                            <div className="flex items-center gap-2">
+                              <Check className="w-4 h-4 text-green-400" />
+                              <span className="text-sm text-green-400">Certificado pronto para envio</span>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Municipal Credentials Section - Show when municipal is selected OR when both are required */}
+                {(credentialType === 'municipal' || credentialType === 'both' ||
+                  municipalityAuthRequirements?.auth_requirements?.authMode === 'both') && (
+                  <div className={cn(
+                    "p-5 rounded-xl border space-y-4",
+                    "bg-gradient-to-br from-white/5 via-white/3 to-white/5",
+                    "border-purple-500/20 backdrop-blur-sm",
+                    "shadow-md"
+                  )}>
+                    <div className="flex items-center gap-2 mb-2">
+                      <Lock className="w-5 h-5 text-purple-400" />
+                      <span className="font-semibold text-white">Credenciais da Prefeitura</span>
+                      {(municipalLogin && municipalPassword) && <Check className="w-4 h-4 text-green-400 ml-auto" />}
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="text-gray-300 font-semibold">Login / Usuário da Prefeitura *</Label>
+                      <Input
+                        type="text"
+                        value={municipalLogin}
+                        onChange={(e) => setMunicipalLogin(e.target.value)}
+                        placeholder="Usuário ou login do portal da prefeitura"
+                        className={cn(
+                          "h-12",
+                          "bg-gradient-to-br from-slate-800/90 via-slate-700/80 to-slate-800/90",
+                          "backdrop-blur-xl border text-white",
+                          "hover:border-purple-500/30",
+                          "focus:ring-2 transition-all duration-200",
+                          "shadow-lg shadow-black/20",
+                          "placeholder:text-gray-400 placeholder:opacity-100",
+                          municipalLogin
+                            ? 'border-green-500/50 focus:border-green-500 focus:ring-green-500/20'
+                            : 'border-white/10 focus:border-purple-500/50 focus:ring-purple-500/20'
+                        )}
+                        style={{ color: '#ffffff' }}
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label className="text-gray-300 font-semibold">Senha da Prefeitura *</Label>
+                      <Input
+                        type="password"
+                        value={municipalPassword}
+                        onChange={(e) => setMunicipalPassword(e.target.value)}
+                        placeholder="Senha do portal da prefeitura"
+                        className={cn(
+                          "h-12",
+                          "bg-gradient-to-br from-slate-800/90 via-slate-700/80 to-slate-800/90",
+                          "backdrop-blur-xl border text-white",
+                          "hover:border-purple-500/30",
+                          "focus:ring-2 transition-all duration-200",
+                          "shadow-lg shadow-black/20",
+                          "placeholder:text-gray-400 placeholder:opacity-100",
+                          municipalPassword
+                            ? 'border-green-500/50 focus:border-green-500 focus:ring-green-500/20'
+                            : 'border-white/10 focus:border-purple-500/50 focus:ring-purple-500/20'
+                        )}
+                        style={{ color: '#ffffff' }}
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label className="text-gray-300 font-semibold">Token (Opcional)</Label>
+                      <Input
+                        type="text"
+                        value={municipalToken}
+                        onChange={(e) => setMunicipalToken(e.target.value)}
+                        placeholder="Token de acesso (se exigido pela prefeitura)"
+                        className={cn(
+                          "h-12",
+                          "bg-gradient-to-br from-slate-800/90 via-slate-700/80 to-slate-800/90",
+                          "backdrop-blur-xl border text-white",
+                          "hover:border-purple-500/30",
+                          "focus:ring-2 transition-all duration-200",
+                          "shadow-lg shadow-black/20",
+                          "placeholder:text-gray-400 placeholder:opacity-100",
+                          "border-white/10 focus:border-purple-500/50 focus:ring-purple-500/20"
+                        )}
+                        style={{ color: '#ffffff' }}
+                      />
+                      <p className="text-xs text-gray-500">
+                        Algumas prefeituras exigem um token adicional. Deixe em branco se não for necessário.
+                      </p>
+                    </div>
+
+                    {municipalLogin && municipalPassword && (
+                      <div className="p-3 rounded-lg bg-purple-500/10 border border-purple-500/20">
+                        <div className="flex items-center gap-2">
+                          <Check className="w-4 h-4 text-purple-400" />
+                          <span className="text-sm text-purple-400">Credenciais prontas para envio</span>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="p-4 rounded-xl bg-blue-500/10 border border-blue-500/20">
+                      <p className="text-sm text-blue-300 font-medium mb-2">Onde encontrar suas credenciais?</p>
+                      <ul className="text-xs text-gray-400 space-y-1">
+                        <li>- Acesse o portal da NFS-e da sua prefeitura</li>
+                        <li>- Use o mesmo usuário e senha que você utiliza para acessar o portal</li>
+                        <li>- Se necessário, procure por "Webservice" ou "API" nas configurações do portal</li>
+                        <li>- Em caso de dúvida, entre em contato com seu contador ou com a prefeitura</li>
+                      </ul>
+                    </div>
+                  </div>
+                )}
+
+                {/* Configure Later Option - Hide if municipality requires BOTH auth methods */}
+                {municipalityAuthRequirements?.auth_requirements?.authMode !== 'both' && (
                   <button
                     type="button"
-                    onClick={handleConfigureLater}
+                    onClick={() => {
+                      setCredentialType('later');
+                      setCertificateFile(null);
+                      setCertificatePassword('');
+                      setMunicipalLogin('');
+                      setMunicipalPassword('');
+                      setMunicipalToken('');
+                      handleInputChange('certificado_digital', false);
+                    }}
                     className={cn(
-                      "w-full p-5 rounded-xl border text-left transition-all duration-200 hover:scale-[1.02]",
+                      "w-full p-5 rounded-xl border text-left transition-all duration-200 hover:scale-[1.01]",
                       "backdrop-blur-sm shadow-md hover:shadow-lg",
-                      !certificateFile
+                      credentialType === 'later'
                         ? cn(
-                            "border-orange-500/50 bg-gradient-to-br from-orange-500/20 via-orange-600/10 to-orange-500/20",
-                            "hover:from-orange-500/30 hover:via-orange-600/20 hover:to-orange-500/30",
-                            "hover:border-orange-500 shadow-lg shadow-orange-500/20"
+                            "border-amber-500/50 bg-gradient-to-br from-amber-500/20 via-amber-600/10 to-amber-500/20",
+                            "shadow-lg shadow-amber-500/20"
                           )
                         : cn(
                             "border-white/10 bg-gradient-to-br from-white/5 via-white/3 to-white/5",
-                            "hover:bg-gradient-to-br hover:from-orange-500/20 hover:via-orange-600/10 hover:to-orange-500/20",
-                            "hover:border-orange-500/50"
+                            "hover:border-amber-500/30"
                           )
                     )}
                   >
                     <div className="flex items-center gap-3">
-                      <AlertCircle className={`w-5 h-5 ${!certificateFile ? 'text-orange-400' : 'text-gray-500'}`} />
+                      <AlertCircle className={cn("w-5 h-5", credentialType === 'later' ? 'text-amber-400' : 'text-gray-500')} />
                       <span className="font-medium text-white">Configurar depois</span>
                     </div>
                     <p className="text-sm text-gray-500 mt-2 ml-8">
-                      Você poderá adicionar o certificado posteriormente
+                      Você poderá adicionar as credenciais posteriormente
                     </p>
                   </button>
-                </div>
+                )}
               </div>
           )}
         </div>

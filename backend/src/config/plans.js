@@ -36,7 +36,7 @@ export const PLANS = {
     isPayPerUse: true,
     // Stripe Price ID for one-time invoice payment
     stripePrices: {
-      per_invoice: 'price_1SxwxN44Zn6Patb4QW3Ua1kh'
+      per_invoice: 'price_1SxunaKTPq3SbMOc1F39Xlqq'
     }
   },
 
@@ -64,8 +64,8 @@ export const PLANS = {
     billingCycle: 'monthly',
     isPayPerUse: false,
     stripePrices: {
-      monthly: 'price_1Sxwtf44Zn6Patb4kUanH1aC',
-      annual: 'price_1Sxwux44Zn6Patb4xeZdtDbq'
+      monthly: 'price_1SxuimKTPq3SbMOcidrSGuDg',
+      annual: 'price_1SxumNKTPq3SbMOcQoWYab7D'
     }
   },
 
@@ -94,8 +94,8 @@ export const PLANS = {
     billingCycle: 'monthly',
     isPayPerUse: false,
     stripePrices: {
-      monthly: 'price_1Sxwvv44Zn6Patb4N5iVniW3',
-      annual: 'price_1Sxwwn44Zn6Patb4WRcrLzGn'
+      monthly: 'price_1SxubrKTPq3SbMOcbwHNdKSD',
+      annual: 'price_1SxueqKTPq3SbMOcZIjEyvJM'
     }
   },
 

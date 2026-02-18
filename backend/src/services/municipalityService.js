@@ -1,13 +1,22 @@
 /**
  * Municipality Service
- * Handles municipality coverage validation and support checking
+ * Handles municipality coverage validation, support checking, and authentication requirements
  * 
- * Uses Nuvem Fiscal CidadesAtendidas endpoint to verify NFS-e support
- * Documentation: https://dev.nuvemfiscal.com.br/docs/api#tag/Nfse/operation/ListarCidadesAtendidas
+ * Uses Nuvem Fiscal endpoints:
+ * - CidadesAtendidas: List all supported municipalities
+ * - /nfse/cidades/{codigo_ibge}: Get specific municipality details including auth requirements
+ * 
+ * Documentation: https://dev.nuvemfiscal.com.br/docs/api#tag/Nfse
  */
 
 import { apiRequest, getBaseUrl, isNuvemFiscalConfigured } from './nuvemFiscal.js';
 import { prisma } from '../lib/prisma.js';
+
+// Cache for municipality auth requirements (refresh every 24 hours)
+let municipalityAuthCache = {
+  data: new Map(),
+  TTL: 24 * 60 * 60 * 1000 // 24 hours
+};
 
 // Cache for supported municipalities (refresh every 24 hours)
 let municipalityCache = {
@@ -67,6 +76,133 @@ export async function getSupportedMunicipalities() {
       console.error('[Municipality] Alternative endpoint also failed:', altError.message);
       return null;
     }
+  }
+}
+
+/**
+ * Get municipality authentication requirements from Nuvem Fiscal
+ * Uses the /nfse/cidades/{codigo_ibge} endpoint
+ * 
+ * The `credenciais` field indicates what authentication methods are required:
+ * - ["certificado"] = only digital certificate needed
+ * - ["login_senha"] = only municipal credentials (login/password) needed  
+ * - ["certificado", "login_senha"] = BOTH methods are required
+ * 
+ * @param {string} codigoMunicipio - IBGE municipality code (7 digits)
+ * @returns {Promise<object>} Municipality auth requirements
+ */
+export async function getMunicipalityAuthRequirements(codigoMunicipio) {
+  try {
+    const cleanCodigo = (codigoMunicipio || '').replace(/\D/g, '');
+    
+    if (!cleanCodigo || cleanCodigo.length !== 7) {
+      return {
+        supported: false,
+        message: `Código do município inválido: ${codigoMunicipio}. Deve conter exatamente 7 dígitos (código IBGE).`,
+        authRequirements: null,
+        checkedAt: new Date()
+      };
+    }
+
+    // Check cache first
+    const cacheKey = cleanCodigo;
+    const cached = municipalityAuthCache.data.get(cacheKey);
+    if (cached && (Date.now() - cached.timestamp) < municipalityAuthCache.TTL) {
+      console.log('[Municipality] Returning cached auth requirements for:', cleanCodigo);
+      return cached.data;
+    }
+
+    if (!isNuvemFiscalConfigured()) {
+      return {
+        supported: null,
+        message: 'Nuvem Fiscal não configurada. Não foi possível verificar os requisitos de autenticação do município.',
+        authRequirements: null,
+        checkedAt: new Date()
+      };
+    }
+
+    console.log('[Municipality] Fetching auth requirements for municipality:', cleanCodigo);
+
+    // Fetch municipality details from Nuvem Fiscal
+    const response = await apiRequest(`/nfse/cidades/${cleanCodigo}`, {
+      method: 'GET'
+    });
+
+    console.log('[Municipality] API response:', JSON.stringify(response, null, 2));
+
+    // Parse the credentials field
+    // Nuvem Fiscal returns: { credenciais: ["certificado"] } or { credenciais: ["certificado", "login_senha"] }
+    const credenciais = response.credenciais || [];
+    
+    const requiresCertificate = credenciais.includes('certificado');
+    const requiresLoginSenha = credenciais.includes('login_senha');
+
+    // Determine auth mode
+    let authMode = 'none';
+    let authModeDescription = 'Não foi possível determinar o método de autenticação';
+    
+    if (requiresCertificate && requiresLoginSenha) {
+      authMode = 'both';
+      authModeDescription = 'Este município requer AMBOS: certificado digital E credenciais da prefeitura (login/senha)';
+    } else if (requiresCertificate) {
+      authMode = 'certificate_only';
+      authModeDescription = 'Este município requer apenas certificado digital (e-CNPJ A1)';
+    } else if (requiresLoginSenha) {
+      authMode = 'municipal_only';
+      authModeDescription = 'Este município requer apenas credenciais da prefeitura (login/senha)';
+    } else if (credenciais.length === 0) {
+      authMode = 'unknown';
+      authModeDescription = 'Não foi possível determinar os requisitos de autenticação do município';
+    }
+
+    const result = {
+      supported: true,
+      codigoIbge: cleanCodigo,
+      nome: response.nome || response.cidade || 'N/A',
+      uf: response.uf || response.estado || 'N/A',
+      provedor: response.provedor || null,
+      ambiente: response.ambiente || null,
+      authRequirements: {
+        raw: credenciais,
+        requiresCertificate,
+        requiresLoginSenha,
+        authMode,
+        authModeDescription
+      },
+      message: authModeDescription,
+      checkedAt: new Date()
+    };
+
+    // Cache the result
+    municipalityAuthCache.data.set(cacheKey, {
+      data: result,
+      timestamp: Date.now()
+    });
+
+    console.log('[Municipality] Auth requirements determined:', authMode);
+    return result;
+
+  } catch (error) {
+    console.error('[Municipality] Error fetching auth requirements:', error.message);
+    
+    // If 404, municipality not supported
+    if (error.status === 404) {
+      return {
+        supported: false,
+        message: `O município com código IBGE ${codigoMunicipio} não está na lista de municípios suportados pela Nuvem Fiscal para emissão de NFS-e.`,
+        authRequirements: null,
+        checkedAt: new Date(),
+        hint: 'Verifique se o código IBGE está correto. Consulte: https://www.ibge.gov.br/explica/codigos-dos-municipios.php'
+      };
+    }
+
+    return {
+      supported: null,
+      message: `Erro ao verificar requisitos do município: ${error.message}`,
+      authRequirements: null,
+      checkedAt: new Date(),
+      error: error.message
+    };
   }
 }
 

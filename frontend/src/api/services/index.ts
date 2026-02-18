@@ -8,6 +8,7 @@ export { settingsService } from './settings';
 export { taxesService } from './taxes';
 export { assistantService } from './assistant';
 export { subscriptionsService } from './subscriptions';
+export { municipalitiesService } from './municipalities';
 
 // Re-export client utilities
 export { 

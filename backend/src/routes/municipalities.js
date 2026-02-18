@@ -11,7 +11,8 @@ import { sendSuccess, sendError } from '../utils/response.js';
 import { 
   checkMunicipalitySupport, 
   checkAndUpdateMunicipalitySupport,
-  getMunicipalitySupportStatus
+  getMunicipalitySupportStatus,
+  getMunicipalityAuthRequirements
 } from '../services/municipalityService.js';
 import { prisma } from '../lib/prisma.js';
 
@@ -107,6 +108,49 @@ router.get('/company/:companyId/status', asyncHandler(async (req, res) => {
   const status = await getMunicipalitySupportStatus(companyId);
   
   return sendSuccess(res, 'Municipality status retrieved', status);
+}));
+
+/**
+ * GET /api/municipalities/:codigoIbge/auth-requirements
+ * Get authentication requirements for a specific municipality
+ * 
+ * Returns what authentication methods are required:
+ * - certificate_only: Only digital certificate needed
+ * - municipal_only: Only municipal credentials (login/password) needed
+ * - both: Both certificate AND municipal credentials required
+ * 
+ * Based on Nuvem Fiscal /nfse/cidades/{codigo_ibge} endpoint
+ * The `credenciais` field indicates requirements:
+ * - ["certificado"] = certificate only
+ * - ["login_senha"] = municipal credentials only
+ * - ["certificado", "login_senha"] = both required
+ */
+router.get('/:codigoIbge/auth-requirements', asyncHandler(async (req, res) => {
+  const { codigoIbge } = req.params;
+  
+  const cleanCodigo = (codigoIbge || '').replace(/\D/g, '');
+  
+  if (!cleanCodigo || cleanCodigo.length !== 7) {
+    throw new AppError(
+      `Código do município inválido: ${codigoIbge}. Deve conter exatamente 7 dígitos (código IBGE).`,
+      400,
+      'INVALID_IBGE_CODE'
+    );
+  }
+
+  const authRequirements = await getMunicipalityAuthRequirements(cleanCodigo);
+  
+  return sendSuccess(res, 'Municipality auth requirements retrieved', {
+    codigo_ibge: cleanCodigo,
+    supported: authRequirements.supported,
+    nome: authRequirements.nome,
+    uf: authRequirements.uf,
+    provedor: authRequirements.provedor,
+    auth_requirements: authRequirements.authRequirements,
+    message: authRequirements.message,
+    checked_at: authRequirements.checkedAt,
+    hint: authRequirements.hint
+  });
 }));
 
 export default router;

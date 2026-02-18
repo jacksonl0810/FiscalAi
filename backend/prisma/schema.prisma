@@ -114,6 +114,7 @@ model Company {
   regimeTributario             String    @map("regime_tributario")
   certificadoDigital           Boolean   @default(false) @map("certificado_digital")
   certificateUploadedToNuvemFiscal Boolean @default(false) @map("certificate_uploaded_to_nuvem_fiscal") // true only when upload to Nuvem Fiscal succeeded
+  municipalCredentialsConfigured Boolean @default(false) @map("municipal_credentials_configured") // true when municipal credentials sent to Nuvem Fiscal
   email                        String
   telefone                     String
   inscricaoMunicipal           String    @map("inscricao_municipal")

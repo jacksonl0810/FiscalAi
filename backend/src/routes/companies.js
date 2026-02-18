@@ -42,14 +42,19 @@ const validateRequest = (req, res, next) => {
 };
 
 // Transform Prisma company data from camelCase to snake_case
-// When status is 'connected' but certificate was never uploaded to Nuvem Fiscal, show not_connected
+// When status is 'connected' but no auth method configured on Nuvem Fiscal, show not_connected
 const transformCompany = (company) => {
   if (!company) return company;
   let fiscalConnectionStatus = company.fiscalConnectionStatus;
   let fiscalConnectionError = company.fiscalConnectionError ?? null;
-  if (fiscalConnectionStatus === 'connected' && company.certificateUploadedToNuvemFiscal === false) {
+  
+  // Check if any authentication method is configured on Nuvem Fiscal
+  const hasNuvemFiscalAuth = company.certificateUploadedToNuvemFiscal === true || 
+                              company.municipalCredentialsConfigured === true;
+  
+  if (fiscalConnectionStatus === 'connected' && !hasNuvemFiscalAuth) {
     fiscalConnectionStatus = 'not_connected';
-    fiscalConnectionError = 'Certificado digital não configurado na Nuvem Fiscal. Envie o certificado na aba Integração Fiscal.';
+    fiscalConnectionError = 'Configure certificado digital ou credenciais da prefeitura na aba Integração Fiscal.';
   }
   return {
     id: company.id,
@@ -264,7 +269,11 @@ router.put('/:id', asyncHandler(async (req, res) => {
   } = req.body;
 
   const updateData = {};
-  if (cnpj !== undefined) updateData.cnpj = cnpj;
+  // CNPJ changes are not allowed after company creation (tied to fiscal integrations)
+  // If frontend sends a different CNPJ, log a warning but don't update it
+  if (cnpj !== undefined && cnpj !== existing.cnpj) {
+    console.warn(`[Companies] Attempted to change CNPJ for company ${req.params.id} from ${existing.cnpj} to ${cnpj}. Ignoring.`);
+  }
   if (razao_social !== undefined) updateData.razaoSocial = razao_social;
   if (nome_fantasia !== undefined) updateData.nomeFantasia = nome_fantasia;
   if (cidade !== undefined) updateData.cidade = cidade;
@@ -550,9 +559,14 @@ router.get('/:id/fiscal-status', asyncHandler(async (req, res) => {
   let statusValue = company.fiscalConnectionStatus || 'not_connected';
   let mensagem = company.fiscalConnectionError || null;
 
-  if (statusValue === 'connected' && company.certificateUploadedToNuvemFiscal === false) {
+  // Check if any valid authentication method is configured (certificate OR municipal credentials)
+  const hasNuvemFiscalAuth = company.certificateUploadedToNuvemFiscal === true || 
+                              company.municipalCredentialsConfigured === true;
+
+  // If status is connected but no auth configured, override to not_connected
+  if (statusValue === 'connected' && !hasNuvemFiscalAuth) {
     statusValue = 'not_connected';
-    mensagem = 'Certificado digital não configurado na Nuvem Fiscal. Envie o certificado na aba Integração Fiscal.';
+    mensagem = 'Configure certificado digital ou credenciais da prefeitura na aba Integração Fiscal.';
   }
 
   if (!mensagem) {
@@ -564,14 +578,15 @@ router.get('/:id/fiscal-status', asyncHandler(async (req, res) => {
       mensagem = 'Empresa não registrada na Nuvem Fiscal. Registre a empresa para habilitar a emissão.';
     } else if (!company.fiscalCredential) {
       statusValue = 'not_connected';
-      mensagem = 'Certificado digital não configurado. Faça upload do certificado (.pfx ou .p12) para conectar.';
-    } else if (company.fiscalCredential.type !== 'certificate') {
+      mensagem = 'Configure certificado digital ou credenciais da prefeitura para conectar.';
+    } else if (company.fiscalCredential.type !== 'certificate' && company.fiscalCredential.type !== 'municipal_credentials') {
+      // Only reject if credential type is neither certificate nor municipal_credentials
       statusValue = 'not_connected';
-      mensagem = 'Certificado digital é obrigatório. Faça upload do certificado na aba Integração Fiscal.';
+      mensagem = 'Configure certificado digital ou credenciais da prefeitura na aba Integração Fiscal.';
     } else if (statusValue === 'connected') {
       mensagem = 'Conexão fiscal ativa. Pronto para emitir notas fiscais.';
     } else if (statusValue === 'not_connected') {
-      mensagem = mensagem || 'Configure o certificado digital e clique em Salvar para enviar à Nuvem Fiscal.';
+      mensagem = mensagem || 'Configure o certificado digital ou credenciais da prefeitura e clique em Salvar.';
     } else if (statusValue === 'expired') {
       mensagem = mensagem || 'Certificado digital expirado. Renove e faça upload novamente.';
     } else {
@@ -842,25 +857,73 @@ router.post('/:id/certificate', (req, res, next) => {
   
   if (effectiveNuvemFiscalId && company.cnpj) {
     try {
-      const { uploadCertificate } = await import('../services/nuvemFiscal.js');
+      const { uploadCertificate, configureNfseForCertificate } = await import('../services/nuvemFiscal.js');
       const nuvemResult = await uploadCertificate(company.cnpj, certificateBase64, password);
       nuvemFiscalStatus = {
         status: 'success',
         message: nuvemResult.message
       };
       console.log('[Companies] Certificate uploaded to Nuvem Fiscal successfully');
+
+      // After uploading certificate, configure NFS-e to use certificate (not prefeitura login)
+      // This is critical for certificate-only municipalities (e.g. Balneário Camboriú/SC)
+      try {
+        await configureNfseForCertificate(company.cnpj, company);
+        console.log('[Companies] NFS-e configured to use certificate (removed any prefeitura credentials)');
+      } catch (nfseConfigErr) {
+        console.warn('[Companies] Could not auto-configure NFS-e for certificate:', nfseConfigErr.message);
+        // Non-fatal — certificate is uploaded, NFS-e config may already be set correctly
+      }
       
-      // Certificate uploaded successfully = company is now connected and ready to issue invoices
+      // Certificate uploaded successfully - mark as uploaded
+      // Check if municipality requires BOTH auth methods before setting CONNECTED
+      const { validateMunicipalityAuthConfig } = await import('../services/fiscalConnectionService.js');
+      const updatedCompanyForValidation = await prisma.company.findUnique({
+        where: { id },
+        select: {
+          codigoMunicipio: true,
+          certificateUploadedToNuvemFiscal: true,
+          municipalCredentialsConfigured: true
+        }
+      });
+      
+      // Mark certificate as uploaded first
       await prisma.company.update({
         where: { id },
         data: {
-          fiscalConnectionStatus: 'connected',
-          fiscalConnectionError: null,
-          lastConnectionCheck: new Date(),
-          certificateUploadedToNuvemFiscal: true
+          certificateUploadedToNuvemFiscal: true,
+          lastConnectionCheck: new Date()
         }
       });
-      console.log('[Companies] Fiscal connection status set to connected');
+
+      // Now validate if all required auth methods are configured
+      const authValidation = await validateMunicipalityAuthConfig({
+        ...updatedCompanyForValidation,
+        certificateUploadedToNuvemFiscal: true // Since we just uploaded it
+      });
+
+      if (authValidation.valid) {
+        // All required auth methods configured = company is connected
+        await prisma.company.update({
+          where: { id },
+          data: {
+            fiscalConnectionStatus: 'connected',
+            fiscalConnectionError: null
+          }
+        });
+        console.log('[Companies] All auth requirements met - Fiscal connection status set to connected');
+      } else {
+        // Still missing required auth method (likely municipal credentials)
+        await prisma.company.update({
+          where: { id },
+          data: {
+            fiscalConnectionStatus: 'not_connected',
+            fiscalConnectionError: authValidation.message
+          }
+        });
+        nuvemFiscalStatus.message += ` Atenção: ${authValidation.message}`;
+        console.log('[Companies] Missing auth requirements:', authValidation.message);
+      }
     } catch (nuvemError) {
       console.error('[Companies] Error uploading certificate to Nuvem Fiscal:', nuvemError.message);
       
@@ -976,14 +1039,15 @@ router.delete('/:id/certificate', asyncHandler(async (req, res) => {
 
 /**
  * POST /api/companies/:id/municipal-credentials
- * Store municipal credentials securely
+ * Store municipal credentials securely and configure on Nuvem Fiscal
  */
 router.post('/:id/municipal-credentials', [
   body('username').notEmpty().withMessage('Username is required'),
-  body('password').notEmpty().withMessage('Password is required')
+  body('password').notEmpty().withMessage('Password is required'),
+  body('token').optional().isString()
 ], validateRequest, asyncHandler(async (req, res) => {
   const { id } = req.params;
-  const { username, password } = req.body;
+  const { username, password, token } = req.body;
 
   // Check ownership
   const company = await prisma.company.findFirst({
@@ -997,17 +1061,162 @@ router.post('/:id/municipal-credentials', [
     throw new AppError('Company not found', 404, 'NOT_FOUND');
   }
 
+  // Check if same credentials are used for other companies (warning only)
+  let credentialWarning = null;
+  const otherCompaniesWithCredentials = await prisma.company.findMany({
+    where: {
+      userId: req.user.id,
+      id: { not: id },
+      fiscalCredential: {
+        type: 'municipal_credentials'
+      }
+    },
+    include: {
+      fiscalCredential: {
+        select: { metadata: true }
+      }
+    }
+  });
+
+  // Check if any other company has the same username hint
+  const usernameHint = username.substring(0, 2) + '***';
+  const companiesWithSameCredentials = otherCompaniesWithCredentials.filter(c => {
+    const meta = c.fiscalCredential?.metadata;
+    return meta && meta.usernameHint === usernameHint;
+  });
+
+  if (companiesWithSameCredentials.length > 0) {
+    const companyNames = companiesWithSameCredentials.map(c => c.nomeFantasia || c.razaoSocial).join(', ');
+    credentialWarning = {
+      type: 'shared_credentials',
+      message: `Atenção: As mesmas credenciais municipais parecem estar sendo usadas para outras empresas: ${companyNames}. Certifique-se de que este login está autorizado para a empresa ${company.nomeFantasia || company.razaoSocial} no sistema da prefeitura.`,
+      affectedCompanies: companiesWithSameCredentials.map(c => ({
+        id: c.id,
+        name: c.nomeFantasia || c.razaoSocial,
+        cnpj: c.cnpj
+      }))
+    };
+  }
+
   const { storeFiscalCredential } = await import('../services/fiscalCredentialService.js');
 
+  // Store credentials locally (encrypted)
   const credential = await storeFiscalCredential(
     id,
     'municipal_credentials',
-    { username, password }
+    { username, password },
+    {
+      metadata: {
+        hasToken: !!token,
+        tokenHint: token ? token.substring(0, 4) + '***' : null
+      }
+    }
   );
 
-  sendSuccess(res, 'Credenciais municipais armazenadas com sucesso', {
-    credential_id: credential.id
-  });
+  // Try to send credentials to Nuvem Fiscal
+  let nuvemFiscalStatus = null;
+
+  if (company.nuvemFiscalId && company.cnpj) {
+    try {
+      const { configureMunicipalCredentials } = await import('../services/nuvemFiscal.js');
+      const nuvemResult = await configureMunicipalCredentials(
+        company.cnpj,
+        company,
+        username,
+        password,
+        token || null
+      );
+
+      nuvemFiscalStatus = {
+        status: 'success',
+        message: nuvemResult.message
+      };
+
+      console.log('[Companies] Municipal credentials configured on Nuvem Fiscal successfully');
+
+      // Mark municipal credentials as configured first
+      await prisma.company.update({
+        where: { id },
+        data: {
+          municipalCredentialsConfigured: true,
+          lastConnectionCheck: new Date()
+        }
+      });
+
+      // Check if municipality requires BOTH auth methods before setting CONNECTED
+      const { validateMunicipalityAuthConfig } = await import('../services/fiscalConnectionService.js');
+      const updatedCompanyForValidation = await prisma.company.findUnique({
+        where: { id },
+        select: {
+          codigoMunicipio: true,
+          certificateUploadedToNuvemFiscal: true,
+          municipalCredentialsConfigured: true
+        }
+      });
+
+      const authValidation = await validateMunicipalityAuthConfig({
+        ...updatedCompanyForValidation,
+        municipalCredentialsConfigured: true // Since we just configured it
+      });
+
+      if (authValidation.valid) {
+        // All required auth methods configured = company is connected
+        await prisma.company.update({
+          where: { id },
+          data: {
+            fiscalConnectionStatus: 'connected',
+            fiscalConnectionError: null
+          }
+        });
+        console.log('[Companies] All auth requirements met - Fiscal connection status set to connected');
+      } else {
+        // Still missing required auth method (likely certificate)
+        await prisma.company.update({
+          where: { id },
+          data: {
+            fiscalConnectionStatus: 'not_connected',
+            fiscalConnectionError: authValidation.message
+          }
+        });
+        nuvemFiscalStatus.message += ` Atenção: ${authValidation.message}`;
+        console.log('[Companies] Missing auth requirements:', authValidation.message);
+      }
+    } catch (nuvemError) {
+      console.error('[Companies] Error configuring municipal credentials on Nuvem Fiscal:', nuvemError.message);
+
+      nuvemFiscalStatus = {
+        status: 'warning',
+        message: `Credenciais salvas localmente, mas erro ao configurar na Nuvem Fiscal: ${nuvemError.message}`
+      };
+
+      await prisma.company.update({
+        where: { id },
+        data: {
+          fiscalConnectionStatus: 'not_connected',
+          fiscalConnectionError: `Erro ao configurar credenciais municipais: ${nuvemError.message}`,
+          municipalCredentialsConfigured: false,
+          lastConnectionCheck: new Date()
+        }
+      });
+    }
+  } else {
+    nuvemFiscalStatus = {
+      status: 'info',
+      message: 'Credenciais salvas localmente. Registre a empresa na Nuvem Fiscal para habilitar a emissão de notas.'
+    };
+  }
+
+  const responseData = {
+    credential_id: credential.id,
+    nuvem_fiscal: nuvemFiscalStatus
+  };
+
+  // Include warning about shared credentials if detected
+  if (credentialWarning) {
+    responseData.warning = credentialWarning;
+  }
+
+  sendSuccess(res, 'Credenciais municipais armazenadas com sucesso', responseData);
 }));
 
 /**
@@ -1033,6 +1242,69 @@ router.get('/:id/municipal-credentials/status', asyncHandler(async (req, res) =>
   const status = await getCredentialStatus(id);
 
   sendSuccess(res, 'Municipal credentials status retrieved', status);
+}));
+
+/**
+ * POST /api/companies/:id/test-nfse-emission
+ * Test NFS-e emission capability for a company
+ * This performs a dry-run to detect configuration issues or provider bugs
+ */
+router.post('/:id/test-nfse-emission', asyncHandler(async (req, res) => {
+  const { id } = req.params;
+
+  // Check ownership
+  const company = await prisma.company.findFirst({
+    where: {
+      id,
+      userId: req.user.id
+    },
+    select: {
+      id: true,
+      cnpj: true,
+      nuvemFiscalId: true,
+      codigoMunicipio: true,
+      cidade: true,
+      uf: true,
+      certificateUploadedToNuvemFiscal: true,
+      municipalCredentialsConfigured: true
+    }
+  });
+
+  if (!company) {
+    throw new AppError('Company not found', 404, 'NOT_FOUND');
+  }
+
+  if (!company.nuvemFiscalId) {
+    return sendSuccess(res, 'Empresa não registrada na Nuvem Fiscal', {
+      canEmit: false,
+      status: 'not_registered',
+      code: 'NOT_REGISTERED',
+      message: 'Empresa não está registrada na Nuvem Fiscal. Complete o cadastro primeiro.',
+      action: 'Registre a empresa na Nuvem Fiscal antes de testar a emissão.'
+    });
+  }
+
+  if (!company.certificateUploadedToNuvemFiscal && !company.municipalCredentialsConfigured) {
+    return sendSuccess(res, 'Credenciais não configuradas', {
+      canEmit: false,
+      status: 'credentials_missing',
+      code: 'CREDENTIALS_NOT_CONFIGURED',
+      message: 'Nenhum método de autenticação configurado.',
+      action: 'Configure o certificado digital ou credenciais da prefeitura.'
+    });
+  }
+
+  const { testNfseEmissionCapability } = await import('../services/nuvemFiscal.js');
+  const testResult = await testNfseEmissionCapability(company.cnpj);
+
+  // Add municipality context to the response
+  testResult.municipality = {
+    codigo: company.codigoMunicipio,
+    cidade: company.cidade,
+    uf: company.uf
+  };
+
+  sendSuccess(res, testResult.canEmit ? 'Teste de emissão bem-sucedido' : 'Problema detectado na emissão', testResult);
 }));
 
 export default router;
