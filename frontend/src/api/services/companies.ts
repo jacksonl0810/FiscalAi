@@ -142,6 +142,80 @@ export const companiesService = {
     });
     return response.data.data;
   },
+
+  async saveMunicipalCredentials(companyId: string, username: string, password: string, token?: string): Promise<{
+    credential_id?: string;
+    nuvem_fiscal?: {
+      status: string;
+      message: string;
+    };
+    warning?: {
+      type: string;
+      message: string;
+      affectedCompanies?: Array<{
+        id: string;
+        name: string;
+        cnpj: string;
+      }>;
+    };
+  }> {
+    const response = await apiClient.post(`/companies/${companyId}/municipal-credentials`, {
+      username,
+      password,
+      ...(token ? { token } : {})
+    });
+    return response.data.data;
+  },
+
+  async getMunicipalCredentialsStatus(companyId: string): Promise<{
+    exists: boolean;
+    type?: string;
+    usernameHint?: string;
+    hasToken?: boolean;
+    storedAt?: string;
+  }> {
+    const response = await apiClient.get(`/companies/${companyId}/municipal-credentials/status`);
+    return response.data.data;
+  },
+
+  /**
+   * Test NFS-e emission capability for a company
+   * Detects configuration issues or provider bugs before trying to emit real invoices
+   */
+  async testNfseEmission(companyId: string): Promise<{
+    canEmit: boolean;
+    status: string;
+    code?: string;
+    message: string;
+    action?: string;
+    supportUrl?: string;
+    technicalDetails?: unknown;
+    municipality?: {
+      codigo: string;
+      cidade: string;
+      uf: string;
+    };
+  }> {
+    const response = await apiClient.post<{
+      status: string;
+      message: string;
+      data: {
+        canEmit: boolean;
+        status: string;
+        code?: string;
+        message: string;
+        action?: string;
+        supportUrl?: string;
+        technicalDetails?: unknown;
+        municipality?: {
+          codigo: string;
+          cidade: string;
+          uf: string;
+        };
+      };
+    }>(`/companies/${companyId}/test-nfse-emission`);
+    return response.data.data;
+  },
 };
 
 export default companiesService;

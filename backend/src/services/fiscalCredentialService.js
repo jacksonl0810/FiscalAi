@@ -81,36 +81,24 @@ export async function storeFiscalCredential(companyId, type, data, options = {})
     };
   }
 
-  // Check if credential already exists
-  const existing = await prisma.fiscalCredential.findUnique({
-    where: { companyId }
+  // Use upsert to atomically create or update (prevents race conditions)
+  const credential = await prisma.fiscalCredential.upsert({
+    where: { companyId },
+    update: {
+      type,
+      encryptedData,
+      metadata,
+      expiresAt: options.expiresAt || null,
+      updatedAt: new Date()
+    },
+    create: {
+      companyId,
+      type,
+      encryptedData,
+      metadata,
+      expiresAt: options.expiresAt || null
+    }
   });
-
-  let credential;
-  if (existing) {
-    // Update existing
-    credential = await prisma.fiscalCredential.update({
-      where: { id: existing.id },
-      data: {
-        type,
-        encryptedData,
-        metadata,
-        expiresAt: options.expiresAt || null,
-        updatedAt: new Date()
-      }
-    });
-  } else {
-    // Create new
-    credential = await prisma.fiscalCredential.create({
-      data: {
-        companyId,
-        type,
-        encryptedData,
-        metadata,
-        expiresAt: options.expiresAt || null
-      }
-    });
-  }
 
   // Update company connection status
   await prisma.company.update({

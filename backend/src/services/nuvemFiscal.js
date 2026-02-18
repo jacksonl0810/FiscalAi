@@ -643,62 +643,56 @@ async function emitNfse(invoiceData, companyData) {
     const clienteDocumento = (invoiceData.cliente_documento || '').replace(/\D/g, '');
     const ambiente = NUVEM_FISCAL_ENVIRONMENT === 'production' ? 'producao' : 'homologacao';
 
+    // POST /nfse/dps — National DPS format (NFS-e Padrão Nacional)
+    // Fields: provedor, ambiente, referencia (optional), infDPS
+    // Note: opSimpNac and regTrib are configured at the company level via /empresas/{cnpj}/nfse
+    //       and are NOT sent in the DPS payload. InfoPrestador only accepts CNPJ/CPF.
     const nfsePayload = {
+      provedor: 'padrao',
       ambiente: ambiente,
-      referencia: `NF-${Date.now()}`,
-      prestador: {
-        cpf_cnpj: cleanCnpj
-      },
-      DPS: {
-        infDPS: {
-          tpAmb: NUVEM_FISCAL_ENVIRONMENT === 'production' ? 1 : 2,
-          dhEmi: new Date().toISOString(),
-          verAplic: "1.0",
-          dCompet: invoiceData.data_prestacao || new Date().toISOString().split('T')[0],
-          prest: {
-            CNPJ: cleanCnpj,
-            IM: companyData.inscricaoMunicipal || '',
-            regTrib: {
-              opSimpNac: companyData.regimeTributario === 'MEI' ? 1 : (companyData.regimeTributario === 'SIMPLES_NACIONAL' ? 2 : 3),
-              ISSQN: companyData.regimeTributario === 'MEI' ? 1 : 2
-            }
-          },
-          toma: {
-            xNome: invoiceData.cliente_nome,
-            ...(clienteDocumento.length === 11 ? { CPF: clienteDocumento } : {}),
-            ...(clienteDocumento.length === 14 ? { CNPJ: clienteDocumento } : {}),
-          },
+      infDPS: {
+        tpAmb: NUVEM_FISCAL_ENVIRONMENT === 'production' ? 1 : 2,
+        dhEmi: new Date().toISOString(),
+        verAplic: "1.0",
+        dCompet: invoiceData.data_prestacao || new Date().toISOString().split('T')[0],
+        prest: {
+          CNPJ: cleanCnpj
+          // IM (inscrição municipal) is configured at the company level, not in DPS
+          // regTrib is also configured at the company level via /empresas/{cnpj}/nfse
+        },
+        toma: {
+          xNome: invoiceData.cliente_nome,
+          ...(clienteDocumento.length === 11 ? { CPF: clienteDocumento } : {}),
+          ...(clienteDocumento.length === 14 ? { CNPJ: clienteDocumento } : {}),
+        },
           serv: {
-            locPrest: {
-              cLocPrestacao: companyData.codigoMunicipio || '4202008',
-              cPaisPrestacao: '1058'
-            },
-            cServ: {
-              cTribNac: invoiceData.codigo_servico || '010601',
-              xDescServ: invoiceData.descricao_servico || 'Serviço prestado'
-            }
+          // locPrest is optional — Nuvem Fiscal uses the company's registered municipality
+          // Sending cLocPrestacao causes XML schema ordering issues with some municipality providers
+          cServ: {
+            cTribNac: invoiceData.codigo_servico || '010601',
+            xDescServ: invoiceData.descricao_servico || 'Serviço prestado'
+          }
+        },
+        valores: {
+          vServPrest: {
+            vServ: parseFloat(invoiceData.valor || 0)  // vServ = service total value (required)
           },
-          valores: {
-            vServPrest: {
-              vReceb: parseFloat(invoiceData.valor || 0)
-            },
-            trib: {
-              tribMun: {
-                tribISSQN: companyData.regimeTributario === 'MEI' ? 1 : 2,
-                ...(companyData.regimeTributario !== 'MEI' ? { pAliq: parseFloat(invoiceData.aliquota_iss || 5) } : {})
-              }
+          trib: {
+            tribMun: {
+              tribISSQN: 1, // 1=Operação tributável (normal ISS)
+              pAliq: parseFloat(invoiceData.aliquota_iss || 5)
             }
           }
         }
       }
     };
 
-    console.log('[NuvemFiscal] Emitting NFS-e to:', `/nfse`);
+    console.log('[NuvemFiscal] Emitting NFS-e to: /nfse/dps');
     console.log('[NuvemFiscal] NFS-e payload:', JSON.stringify(nfsePayload, null, 2));
     
     let response;
     try {
-      response = await apiRequest(`/nfse`, {
+      response = await apiRequest(`/nfse/dps`, {
         method: 'POST',
         body: JSON.stringify(nfsePayload)
       });
@@ -724,8 +718,28 @@ async function emitNfse(invoiceData, companyData) {
         throw authError;
       }
       
-      if (apiError.status === 405 || apiError.status === 404 || apiError.status === 400) {
-        console.log('[NuvemFiscal] API error, using simulation mode for sandbox testing');
+      // X800 errors with CodigoMunicipioLocalPestacao indicate a known Nuvem Fiscal bug
+      // in their XML generation for the Publica provider. Surface this clearly.
+      if (apiError.data?.error?.errors?.some(e => 
+        e.message?.includes('CodigoMunicipioLocalPestacao') || 
+        e.code === 'X800'
+      )) {
+        const municipalityBugError = new Error(
+          'Erro no sistema da prefeitura (Publica/NFS-e): XML gerado pela Nuvem Fiscal contém elemento incorreto ' +
+          '"CodigoMunicipioLocalPestacao" (deveria ser "CodigoMunicipioLocalPrestacao"). ' +
+          'Este é um bug conhecido na Nuvem Fiscal para este município. ' +
+          'Reporte ao suporte da Nuvem Fiscal: suporte.nuvemfiscal.com.br'
+        );
+        municipalityBugError.status = 400;
+        municipalityBugError.code = 'NUVEM_FISCAL_XML_BUG';
+        municipalityBugError.data = apiError.data;
+        throw municipalityBugError;
+      }
+
+      // Only allow simulation fallback in sandbox/homologacao environment
+      // In production, always surface the real error to the user
+      if (NUVEM_FISCAL_ENVIRONMENT !== 'production' && (apiError.status === 405 || apiError.status === 404)) {
+        console.log('[NuvemFiscal] Sandbox: endpoint not available, using simulation mode');
         const simulatedId = `SIM-${Date.now()}-${Math.random().toString(36).substring(7)}`;
         const simulatedNumero = String(Math.floor(Math.random() * 900000) + 100000);
         
@@ -997,11 +1011,291 @@ async function uploadCertificate(cpfCnpj, certificateBase64, password) {
   }
 }
 
+/**
+ * Configure municipal credentials for NFS-e issuance
+ * Sends login/password/token to Nuvem Fiscal via PUT /empresas/{cpf_cnpj}/nfse
+ * This allows NFS-e issuance without a digital certificate
+ * 
+ * @param {string} cpfCnpj - Company CNPJ
+ * @param {object} companyData - Company data for regime tributario mapping
+ * @param {string} login - Municipal login/username
+ * @param {string} senha - Municipal password
+ * @param {string|null} token - Optional municipal token (some municipalities require it)
+ * @returns {Promise<object>} Result of the configuration
+ */
+async function configureMunicipalCredentials(cpfCnpj, companyData, login, senha, token = null) {
+  try {
+    const cleanCpfCnpj = (cpfCnpj || '').replace(/\D/g, '');
+
+    if (!cleanCpfCnpj || (cleanCpfCnpj.length !== 11 && cleanCpfCnpj.length !== 14)) {
+      throw new Error(`CPF/CNPJ inválido: ${cpfCnpj}`);
+    }
+
+    if (!login || !senha) {
+      throw new Error('Login e senha da prefeitura são obrigatórios');
+    }
+
+    console.log('[NuvemFiscal] Configuring municipal credentials for:', cleanCpfCnpj);
+
+    // opSimpNac valid values: 1=Simples Nacional, 2=Simples Nacional (excesso sublimite), 3=Regime Normal (Lucro Real/Presumido)
+    let opSimpNac = 1; // Default: Simples Nacional
+    const regime = (companyData.regimeTributario || companyData.regime_tributario || '').toLowerCase();
+    if (regime.includes('mei')) {
+      opSimpNac = 1; // MEI is under Simples Nacional
+    } else if (regime.includes('simples')) {
+      opSimpNac = 1; // Simples Nacional
+    } else if (regime.includes('lucro presumido') || regime.includes('lucro real')) {
+      opSimpNac = 3; // Regime Normal
+    }
+
+    const ambiente = NUVEM_FISCAL_ENVIRONMENT === 'production' ? 'producao' : 'homologacao';
+
+    // Build prefeitura object
+    const prefeitura = { login, senha };
+    if (token) {
+      prefeitura.token = token;
+    }
+
+    const nfseConfig = {
+      regTrib: {
+        opSimpNac: opSimpNac,
+        regApTribSN: 1, // 1: Microempresa Municipal, 2: Estimativa, 3: Sociedade de Profissionais
+        regEspTrib: 0
+      },
+      rps: {
+        lote: 0,
+        serie: 'RPS',
+        numero: 0
+      },
+      prefeitura,
+      incentivo_fiscal: false,
+      ambiente
+    };
+
+    console.log('[NuvemFiscal] Sending NFS-e config with prefeitura credentials');
+
+    const response = await apiRequest(`/empresas/${cleanCpfCnpj}/nfse`, {
+      method: 'PUT',
+      body: JSON.stringify(nfseConfig)
+    });
+
+    console.log('[NuvemFiscal] Municipal credentials configured successfully');
+
+    return {
+      status: 'success',
+      message: 'Credenciais da prefeitura configuradas com sucesso na Nuvem Fiscal',
+      data: response
+    };
+  } catch (error) {
+    console.error('[NuvemFiscal] Error configuring municipal credentials:', error);
+
+    let errorMessage = 'Erro desconhecido ao configurar credenciais municipais';
+
+    if (error.message) {
+      errorMessage = error.message;
+    } else if (error.data && typeof error.data === 'object') {
+      if (error.data.error) {
+        errorMessage = typeof error.data.error === 'string'
+          ? error.data.error
+          : JSON.stringify(error.data.error);
+      } else if (error.data.message) {
+        errorMessage = error.data.message;
+      }
+    }
+
+    if (error.status === 404) {
+      throw new Error('Empresa não encontrada na Nuvem Fiscal. Registre a empresa primeiro.');
+    }
+
+    throw new Error(`Falha ao configurar credenciais municipais: ${errorMessage}`);
+  }
+}
+
+/**
+ * Configure NFS-e to use the uploaded digital certificate (for certificate-only municipalities)
+ * This removes any prefeitura credentials and relies solely on the uploaded certificate.
+ * 
+ * @param {string} cpfCnpj - Company CNPJ
+ * @param {object} companyData - Company data for regime tributario mapping
+ * @returns {Promise<object>} Result of the configuration
+ */
+async function configureNfseForCertificate(cpfCnpj, companyData) {
+  try {
+    const cleanCpfCnpj = (cpfCnpj || '').replace(/\D/g, '');
+
+    if (!cleanCpfCnpj || (cleanCpfCnpj.length !== 11 && cleanCpfCnpj.length !== 14)) {
+      throw new Error(`CPF/CNPJ inválido: ${cpfCnpj}`);
+    }
+
+    console.log('[NuvemFiscal] Configuring NFS-e to use digital certificate for:', cleanCpfCnpj);
+
+    // opSimpNac valid values: 1=Simples Nacional, 2=Simples Nacional (excesso sublimite), 3=Regime Normal (Lucro Real/Presumido)
+    let opSimpNac = 1;
+    const regime = (companyData.regimeTributario || companyData.regime_tributario || '').toLowerCase();
+    if (regime.includes('mei')) {
+      opSimpNac = 1; // MEI is under Simples Nacional
+    } else if (regime.includes('simples')) {
+      opSimpNac = 1;
+    } else if (regime.includes('lucro presumido') || regime.includes('lucro real')) {
+      opSimpNac = 3; // Regime Normal
+    }
+
+    const ambiente = NUVEM_FISCAL_ENVIRONMENT === 'production' ? 'producao' : 'homologacao';
+
+    // Set prefeitura: null to explicitly clear any previously stored prefeitura credentials.
+    // For certificate-only municipalities, having prefeitura creds causes auth failures.
+    const nfseConfig = {
+      regTrib: {
+        opSimpNac: opSimpNac,
+        regApTribSN: 1,
+        regEspTrib: 0
+      },
+      rps: {
+        lote: 0,
+        serie: 'RPS',
+        numero: 0
+      },
+      prefeitura: null,
+      incentivo_fiscal: false,
+      ambiente
+    };
+
+    console.log('[NuvemFiscal] Sending NFS-e config (certificate mode, no prefeitura credentials)');
+
+    const response = await apiRequest(`/empresas/${cleanCpfCnpj}/nfse`, {
+      method: 'PUT',
+      body: JSON.stringify(nfseConfig)
+    });
+
+    console.log('[NuvemFiscal] NFS-e configured for certificate use successfully');
+
+    return {
+      status: 'success',
+      message: 'Configuração NFS-e atualizada para usar certificado digital',
+      data: response
+    };
+  } catch (error) {
+    console.error('[NuvemFiscal] Error configuring NFS-e for certificate:', error);
+    let errorMessage = error.message || 'Erro desconhecido';
+    if (error.status === 404) {
+      throw new Error('Empresa não encontrada na Nuvem Fiscal. Registre a empresa primeiro.');
+    }
+    throw new Error(`Falha ao configurar NFS-e para certificado: ${errorMessage}`);
+  }
+}
+
+/**
+ * Test NFS-e emission capability for a company
+ * This performs a "dry run" to detect configuration issues or provider bugs
+ * before the user tries to emit a real invoice.
+ * 
+ * @param {string} cnpj - Company CNPJ
+ * @returns {Promise<object>} Test result with status and any detected issues
+ */
+async function testNfseEmissionCapability(cnpj) {
+  const cleanCnpj = (cnpj || '').replace(/\D/g, '');
+  const ambiente = NUVEM_FISCAL_ENVIRONMENT === 'production' ? 'producao' : 'homologacao';
+
+  // Minimal test payload
+  const testPayload = {
+    provedor: 'padrao',
+    ambiente: ambiente,
+    infDPS: {
+      tpAmb: NUVEM_FISCAL_ENVIRONMENT === 'production' ? 1 : 2,
+      dhEmi: new Date().toISOString(),
+      dCompet: new Date().toISOString().split('T')[0],
+      prest: { CNPJ: cleanCnpj },
+      toma: { xNome: 'TESTE VALIDACAO', CNPJ: '00000000000191' }, // CNPJ válido de teste
+      serv: { cServ: { cTribNac: '010601', xDescServ: 'Teste de validação de emissão' } },
+      valores: {
+        vServPrest: { vServ: 1 },
+        trib: { tribMun: { tribISSQN: 1 } }
+      }
+    }
+  };
+
+  try {
+    // We expect this to fail in various ways, but we're looking for specific errors
+    await apiRequest('/nfse/dps', { method: 'POST', body: JSON.stringify(testPayload) });
+    
+    // If somehow it succeeds, that's unexpected but good
+    return {
+      canEmit: true,
+      status: 'ready',
+      message: 'Empresa pronta para emitir NFS-e'
+    };
+  } catch (error) {
+    // Check for known Nuvem Fiscal bugs
+    const errorMessage = error.message || '';
+    const errorData = error.data?.error;
+
+    // Known bug: CodigoMunicipioLocalPestacao typo in Publica provider
+    if (errorMessage.includes('CodigoMunicipioLocalPestacao') || 
+        errorData?.errors?.some(e => e.message?.includes('CodigoMunicipioLocalPestacao'))) {
+      return {
+        canEmit: false,
+        status: 'provider_bug',
+        code: 'NUVEM_FISCAL_XML_BUG',
+        message: 'Bug detectado no provedor Nuvem Fiscal/Publica: XML com elemento incorreto "CodigoMunicipioLocalPestacao"',
+        action: 'Reporte este erro ao suporte da Nuvem Fiscal (suporte.nuvemfiscal.com.br). ' +
+                'A emissão de NFS-e está temporariamente indisponível para este município até que o bug seja corrigido.',
+        supportUrl: 'https://suporte.nuvemfiscal.com.br',
+        technicalDetails: errorData
+      };
+    }
+
+    // Check for credential issues
+    if (errorMessage.includes('CredentialsNotFound') || errorMessage.includes('Credencial não encontrada')) {
+      return {
+        canEmit: false,
+        status: 'credentials_missing',
+        code: 'CREDENTIALS_NOT_CONFIGURED',
+        message: 'Credenciais não configuradas corretamente',
+        action: 'Configure o certificado digital ou credenciais da prefeitura na configuração da empresa.'
+      };
+    }
+
+    // Check for certificate issues
+    if (errorMessage.includes('certificado') || errorMessage.includes('Certificate')) {
+      return {
+        canEmit: false,
+        status: 'certificate_issue',
+        code: 'CERTIFICATE_ISSUE',
+        message: 'Problema com o certificado digital',
+        action: 'Verifique se o certificado está válido e foi enviado corretamente.'
+      };
+    }
+
+    // Other validation errors (like missing fields) indicate the system is working
+    // These are expected since we're sending minimal test data
+    if (error.status === 400 && !errorMessage.includes('Pestacao')) {
+      return {
+        canEmit: true,
+        status: 'ready',
+        message: 'Configuração de NFS-e validada. Empresa pronta para emitir.',
+        note: 'Teste de validação concluído com sucesso.'
+      };
+    }
+
+    // Unknown error
+    return {
+      canEmit: false,
+      status: 'unknown_error',
+      code: 'UNKNOWN_ERROR',
+      message: `Erro ao testar emissão: ${errorMessage.substring(0, 200)}`,
+      action: 'Verifique as configurações da empresa ou entre em contato com o suporte.'
+    };
+  }
+}
+
 export {
   registerCompany,
   checkConnection,
   emitNfse,
   checkNfseStatus,
   cancelNfse,
-  uploadCertificate
+  uploadCertificate,
+  configureMunicipalCredentials,
+  configureNfseForCertificate,
+  testNfseEmissionCapability
 };

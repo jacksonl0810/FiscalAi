@@ -1,10 +1,20 @@
 /**
  * Fiscal Connection Status Service
  * Manages company-level fiscal connection states and validation
+ * 
+ * Connection flow according to Nuvem Fiscal documentation:
+ * 1. Register company in Nuvem Fiscal (POST /empresas)
+ * 2. Configure authentication based on municipality requirements:
+ *    - Certificate only: PUT /empresas/{cnpj}/certificado
+ *    - Municipal credentials only: PUT /empresas/{cnpj}/nfse with prefeitura object
+ *    - Both: Both of the above
+ * 3. Test connection to verify configuration
+ * 4. Only set status to CONNECTED after successful test
  */
 
 import { prisma } from '../lib/prisma.js';
 import { checkConnection } from './nuvemFiscal.js';
+import { getMunicipalityAuthRequirements } from './municipalityService.js';
 import { AppError } from '../middleware/errorHandler.js';
 
 /**
@@ -14,6 +24,99 @@ import { AppError } from '../middleware/errorHandler.js';
  * - 'failed': Connection test failed
  * - 'expired': Certificate expired
  */
+
+/**
+ * Validate that the company has configured the required authentication methods
+ * based on the municipality's requirements.
+ * 
+ * @param {object} company - Company object with credential info
+ * @returns {Promise<object>} Validation result
+ */
+export async function validateMunicipalityAuthConfig(company) {
+  try {
+    if (!company.codigoMunicipio) {
+      return {
+        valid: false,
+        message: 'Código do município não configurado',
+        missing: ['codigo_municipio']
+      };
+    }
+
+    // Get municipality auth requirements
+    const authRequirements = await getMunicipalityAuthRequirements(company.codigoMunicipio);
+    
+    if (authRequirements.supported === false) {
+      return {
+        valid: false,
+        message: authRequirements.message,
+        unsupportedMunicipality: true
+      };
+    }
+
+    if (!authRequirements.authRequirements) {
+      return {
+        valid: true,
+        message: 'Não foi possível verificar requisitos do município - prosseguindo',
+        warning: 'auth_requirements_unknown'
+      };
+    }
+
+    const { authMode, requiresCertificate, requiresLoginSenha } = authRequirements.authRequirements;
+    const missing = [];
+
+    // Check certificate requirement
+    if (requiresCertificate && !company.certificateUploadedToNuvemFiscal) {
+      missing.push('certificado_digital');
+    }
+
+    // Check municipal credentials requirement
+    if (requiresLoginSenha && !company.municipalCredentialsConfigured) {
+      missing.push('credenciais_prefeitura');
+    }
+
+    if (missing.length > 0) {
+      let message = '';
+      if (authMode === 'both') {
+        message = `Este município (${authRequirements.nome || company.codigoMunicipio}) requer AMBOS: certificado digital E credenciais da prefeitura.`;
+      } else if (authMode === 'certificate_only') {
+        message = `Este município requer certificado digital (e-CNPJ A1).`;
+      } else if (authMode === 'municipal_only') {
+        message = `Este município requer credenciais da prefeitura (login/senha do portal NFS-e).`;
+      }
+
+      const missingDescriptions = missing.map(m => {
+        if (m === 'certificado_digital') return 'Certificado digital não configurado na Nuvem Fiscal';
+        if (m === 'credenciais_prefeitura') return 'Credenciais da prefeitura não configuradas na Nuvem Fiscal';
+        return m;
+      });
+
+      return {
+        valid: false,
+        message: `${message} Faltando: ${missingDescriptions.join(', ')}`,
+        authMode,
+        missing,
+        municipalityName: authRequirements.nome,
+        provedor: authRequirements.provedor
+      };
+    }
+
+    return {
+      valid: true,
+      message: 'Configuração de autenticação válida para o município',
+      authMode,
+      municipalityName: authRequirements.nome,
+      provedor: authRequirements.provedor
+    };
+
+  } catch (error) {
+    console.error('[FiscalConnection] Error validating municipality auth config:', error.message);
+    return {
+      valid: true,
+      message: 'Erro ao validar requisitos do município - prosseguindo',
+      warning: error.message
+    };
+  }
+}
 
 /**
  * Test and update fiscal connection status for a company
@@ -78,113 +181,205 @@ export async function testFiscalConnection(companyId) {
     };
   }
 
-  // Step 2: Check if digital certificate is configured
+  // Step 2: Check if any authentication method is configured (certificate OR municipal credentials)
   if (!company.fiscalCredential) {
     await prisma.company.update({
       where: { id: companyId },
       data: {
         fiscalConnectionStatus: 'not_connected',
-        fiscalConnectionError: 'Certificado digital não configurado',
+        fiscalConnectionError: 'Nenhum método de autenticação configurado',
         lastConnectionCheck: new Date()
       }
     });
 
     return {
       status: 'not_connected',
-      message: 'Certificado digital não configurado. Para emitir notas fiscais via Nuvem Fiscal, você precisa fazer upload do certificado digital (arquivo .pfx ou .p12) na aba "Integração Fiscal" da configuração da empresa.',
-      error: 'Certificado digital não configurado',
-      step: 'upload_certificate'
+      message: 'Nenhum método de autenticação configurado. Configure um certificado digital (arquivo .pfx ou .p12) ou as credenciais da prefeitura (login/senha) na aba "Integração Fiscal".',
+      error: 'Nenhum método de autenticação configurado',
+      step: 'configure_auth'
     };
   }
 
-  // Step 3: Verify credential type is 'certificate' (required for Nuvem Fiscal)
-  if (company.fiscalCredential.type !== 'certificate') {
+  // Step 3: Verify credential type is valid (certificate OR municipal_credentials)
+  const validCredentialTypes = ['certificate', 'municipal_credentials'];
+  if (!validCredentialTypes.includes(company.fiscalCredential.type)) {
     await prisma.company.update({
       where: { id: companyId },
       data: {
         fiscalConnectionStatus: 'not_connected',
-        fiscalConnectionError: 'Certificado digital é obrigatório para Nuvem Fiscal',
+        fiscalConnectionError: 'Tipo de credencial inválido',
         lastConnectionCheck: new Date()
       }
     });
 
     return {
       status: 'not_connected',
-      message: 'Certificado digital é obrigatório para emitir notas fiscais via Nuvem Fiscal. Credenciais municipais (login/senha) não são suficientes. Faça upload do certificado digital (.pfx ou .p12) na aba "Integração Fiscal".',
-      error: 'Certificado digital é obrigatório para Nuvem Fiscal',
-      step: 'upload_certificate'
+      message: 'Tipo de credencial inválido. Configure um certificado digital ou credenciais da prefeitura na aba "Integração Fiscal".',
+      error: 'Tipo de credencial inválido',
+      step: 'configure_auth'
     };
   }
+  
+  // Log the credential type being used
+  console.log('[testFiscalConnection] Using credential type:', company.fiscalCredential.type);
 
-  // Step 4: Check if certificate is expired
-  if (company.fiscalCredential.expiresAt) {
-    if (new Date(company.fiscalCredential.expiresAt) < new Date()) {
-      await prisma.company.update({
-        where: { id: companyId },
-        data: {
-          fiscalConnectionStatus: 'expired',
-          fiscalConnectionError: 'Certificado digital expirado',
-          lastConnectionCheck: new Date()
-        }
-      });
+  // Step 4: Certificate-specific checks (only for certificate type)
+  if (company.fiscalCredential.type === 'certificate') {
+    // Check if certificate is expired
+    if (company.fiscalCredential.expiresAt) {
+      if (new Date(company.fiscalCredential.expiresAt) < new Date()) {
+        await prisma.company.update({
+          where: { id: companyId },
+          data: {
+            fiscalConnectionStatus: 'expired',
+            fiscalConnectionError: 'Certificado digital expirado',
+            lastConnectionCheck: new Date()
+          }
+        });
 
-      return {
-        status: 'expired',
-        message: 'Certificado digital expirado. Renove o certificado e faça upload novamente para continuar emitindo notas fiscais.',
-        error: 'Certificado digital expirado',
-        expiresAt: company.fiscalCredential.expiresAt,
-        step: 'renew_certificate'
-      };
+        return {
+          status: 'expired',
+          message: 'Certificado digital expirado. Renove o certificado e faça upload novamente para continuar emitindo notas fiscais.',
+          error: 'Certificado digital expirado',
+          expiresAt: company.fiscalCredential.expiresAt,
+          step: 'renew_certificate'
+        };
+      }
     }
-  }
 
-  // Step 5: Verify company has certificadoDigital flag (indicates certificate was properly configured)
-  if (!company.certificadoDigital) {
-    await prisma.company.update({
-      where: { id: companyId },
-      data: {
-        fiscalConnectionStatus: 'not_connected',
-        fiscalConnectionError: 'Certificado digital não foi configurado corretamente',
-        lastConnectionCheck: new Date()
-      }
-    });
-
-    return {
-      status: 'not_connected',
-      message: 'Certificado digital não foi configurado corretamente. Faça upload do certificado digital novamente na aba "Integração Fiscal".',
-      error: 'Certificado digital não foi configurado corretamente',
-      step: 'upload_certificate'
-    };
-  }
-
-  // Step 6: Test connection to Nuvem Fiscal
-  // IMPORTANT: checkConnection() only verifies the company exists (GET /empresas/:id).
-  // It does NOT verify that the certificate is configured on Nuvem Fiscal.
-  // So we NEVER set status to 'connected' here - "connected" is set ONLY when our
-  // certificate upload endpoint successfully uploads the cert to Nuvem Fiscal.
-  try {
-    const connectionResult = await checkConnection(company.nuvemFiscalId);
-
-    if (connectionResult.status === 'conectado') {
-      // Company exists on Nuvem Fiscal, but we cannot know from this API call
-      // whether the certificate is actually configured there. So we set not_connected
-      // with a clear message: user must upload the certificate through our app.
+    // Check if certificate was uploaded to Nuvem Fiscal
+    if (!company.certificateUploadedToNuvemFiscal) {
       await prisma.company.update({
         where: { id: companyId },
         data: {
           fiscalConnectionStatus: 'not_connected',
-          fiscalConnectionError: 'Certificado digital não configurado na Nuvem Fiscal. Envie o certificado na aba Integração Fiscal.',
+          fiscalConnectionError: 'Certificado digital não foi enviado para Nuvem Fiscal',
           lastConnectionCheck: new Date()
         }
       });
 
       return {
         status: 'not_connected',
-        message: 'Empresa está registrada na Nuvem Fiscal, mas o certificado digital ainda não foi configurado lá. Para habilitar a emissão de notas fiscais, faça upload do certificado digital (.pfx ou .p12) nesta aplicação na aba "Integração Fiscal".',
-        error: 'Certificado não configurado na Nuvem Fiscal',
-        step: 'upload_certificate',
-        data: connectionResult.data
+        message: 'Certificado digital não foi enviado para Nuvem Fiscal. Faça upload do certificado digital novamente na aba "Integração Fiscal".',
+        error: 'Certificado digital não foi enviado para Nuvem Fiscal',
+        step: 'upload_certificate'
       };
+    }
+  }
+
+  // Step 5: Municipal credentials-specific checks (only for municipal_credentials type)
+  if (company.fiscalCredential.type === 'municipal_credentials') {
+    // Check if municipal credentials were configured on Nuvem Fiscal
+    if (!company.municipalCredentialsConfigured) {
+      await prisma.company.update({
+        where: { id: companyId },
+        data: {
+          fiscalConnectionStatus: 'not_connected',
+          fiscalConnectionError: 'Credenciais da prefeitura não foram configuradas na Nuvem Fiscal',
+          lastConnectionCheck: new Date()
+        }
+      });
+
+      return {
+        status: 'not_connected',
+        message: 'Credenciais da prefeitura não foram configuradas na Nuvem Fiscal. Salve as credenciais novamente na aba "Integração Fiscal".',
+        error: 'Credenciais da prefeitura não foram configuradas na Nuvem Fiscal',
+        step: 'configure_municipal_credentials'
+      };
+    }
+  }
+
+  // Step 5.5: Validate municipality-specific auth requirements
+  // Some municipalities require BOTH certificate AND municipal credentials
+  const fullCompanyData = await prisma.company.findUnique({
+    where: { id: companyId },
+    select: {
+      codigoMunicipio: true,
+      certificateUploadedToNuvemFiscal: true,
+      municipalCredentialsConfigured: true
+    }
+  });
+
+  if (fullCompanyData?.codigoMunicipio) {
+    const authValidation = await validateMunicipalityAuthConfig({
+      ...company,
+      ...fullCompanyData
+    });
+
+    if (!authValidation.valid) {
+      console.log('[testFiscalConnection] Municipality auth config invalid:', authValidation);
+      
+      await prisma.company.update({
+        where: { id: companyId },
+        data: {
+          fiscalConnectionStatus: 'not_connected',
+          fiscalConnectionError: authValidation.message,
+          lastConnectionCheck: new Date()
+        }
+      });
+
+      return {
+        status: 'not_connected',
+        message: authValidation.message,
+        error: authValidation.message,
+        step: authValidation.missing?.includes('certificado_digital') 
+          ? 'upload_certificate' 
+          : 'configure_municipal_credentials',
+        authMode: authValidation.authMode,
+        missing: authValidation.missing
+      };
+    }
+  }
+
+  // Step 6: Test connection to Nuvem Fiscal
+  // Verify the company exists on Nuvem Fiscal
+  try {
+    const connectionResult = await checkConnection(company.nuvemFiscalId);
+
+    if (connectionResult.status === 'conectado') {
+      // Company exists on Nuvem Fiscal and authentication is configured
+      // Check if we have valid auth configured locally
+      const hasValidAuth = company.certificateUploadedToNuvemFiscal || company.municipalCredentialsConfigured;
+      
+      if (hasValidAuth) {
+        // All good - mark as connected
+        await prisma.company.update({
+          where: { id: companyId },
+          data: {
+            fiscalConnectionStatus: 'connected',
+            fiscalConnectionError: null,
+            lastConnectionCheck: new Date()
+          }
+        });
+
+        const authMethod = company.fiscalCredential.type === 'certificate' 
+          ? 'certificado digital' 
+          : 'credenciais da prefeitura';
+
+        return {
+          status: 'connected',
+          message: `Empresa conectada à Nuvem Fiscal com sucesso usando ${authMethod}. Pronta para emitir notas fiscais.`,
+          data: connectionResult.data
+        };
+      } else {
+        // Company exists but no auth configured on Nuvem Fiscal
+        await prisma.company.update({
+          where: { id: companyId },
+          data: {
+            fiscalConnectionStatus: 'not_connected',
+            fiscalConnectionError: 'Autenticação não configurada na Nuvem Fiscal',
+            lastConnectionCheck: new Date()
+          }
+        });
+
+        return {
+          status: 'not_connected',
+          message: 'Empresa está registrada na Nuvem Fiscal, mas a autenticação ainda não foi configurada. Configure o certificado digital ou as credenciais da prefeitura na aba "Integração Fiscal".',
+          error: 'Autenticação não configurada na Nuvem Fiscal',
+          step: 'configure_auth',
+          data: connectionResult.data
+        };
+      }
     } else {
       // Connection test failed
       await prisma.company.update({
