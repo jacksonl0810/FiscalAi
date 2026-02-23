@@ -1,5 +1,5 @@
 import apiClient from '../client';
-import type { AIResponse, AIMessage } from '@/types';
+import type { AIResponse, ConversationHistoryMessage } from '@/types';
 
 export const assistantService = {
   /**
@@ -90,8 +90,8 @@ export const assistantService = {
   /**
    * Get conversation history
    */
-  async getHistory(limit?: number): Promise<AIMessage[]> {
-    const response = await apiClient.get<AIMessage[]>('/assistant/history', {
+  async getHistory(limit?: number): Promise<ConversationHistoryMessage[]> {
+    const response = await apiClient.get<ConversationHistoryMessage[]>('/assistant/history', {
       params: { limit },
     });
     return response.data;
@@ -161,6 +161,23 @@ export const assistantService = {
    * Validate client data against registered clients
    * Used when editing invoice preview
    */
+  /**
+   * Convert text to speech using OpenAI TTS
+   * Returns audio that can be played in browser
+   */
+  async speak(text: string, voice: 'alloy' | 'echo' | 'fable' | 'onyx' | 'nova' | 'shimmer' = 'nova'): Promise<{
+    audio: string; // base64 encoded mp3
+    format: string;
+    voice: string;
+  }> {
+    const response = await apiClient.post<{
+      status: string;
+      message: string;
+      data: { audio: string; format: string; voice: string };
+    }>('/assistant/speak', { text, voice });
+    return response.data.data;
+  },
+
   async validateClient(data: {
     cliente_nome?: string;
     cliente_documento?: string;

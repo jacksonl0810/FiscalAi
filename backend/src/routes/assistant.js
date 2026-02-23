@@ -2670,6 +2670,99 @@ router.post('/transcribe', authenticate, asyncHandler(requireActiveSubscription)
 }));
 
 /**
+ * POST /api/assistant/speak
+ * Convert text to speech using OpenAI TTS API
+ * Returns audio file that can be played in browser
+ */
+router.post('/speak', authenticate, asyncHandler(requireActiveSubscription), asyncHandler(async (req, res) => {
+  const openaiApiKey = process.env.OPENAI_API_KEY;
+  
+  if (!openaiApiKey) {
+    throw new AppError(
+      'OpenAI API key not configured. Text-to-speech requires OpenAI API key.',
+      500,
+      'OPENAI_NOT_CONFIGURED'
+    );
+  }
+
+  const { text, voice = 'nova' } = req.body;
+
+  if (!text || !text.trim()) {
+    throw new AppError(
+      'Text is required for speech synthesis.',
+      400,
+      'TEXT_REQUIRED'
+    );
+  }
+
+  // Limit text length to avoid huge audio files (max ~500 chars for reasonable response time)
+  const maxLength = 500;
+  const truncatedText = text.length > maxLength 
+    ? text.substring(0, maxLength) + '...' 
+    : text;
+
+  // Valid OpenAI TTS voices
+  const validVoices = ['alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer'];
+  const selectedVoice = validVoices.includes(voice) ? voice : 'nova';
+
+  console.log('[TTS] Generating speech:', {
+    textLength: truncatedText.length,
+    voice: selectedVoice,
+    userId: req.user.id
+  });
+
+  try {
+    const response = await axios.post(
+      'https://api.openai.com/v1/audio/speech',
+      {
+        model: 'tts-1',
+        input: truncatedText,
+        voice: selectedVoice,
+        response_format: 'mp3'
+      },
+      {
+        headers: {
+          'Authorization': `Bearer ${openaiApiKey}`,
+          'Content-Type': 'application/json'
+        },
+        responseType: 'arraybuffer',
+        timeout: 30000
+      }
+    );
+
+    console.log('[TTS] Speech generated successfully:', {
+      size: response.data.length,
+      contentType: response.headers['content-type']
+    });
+
+    // Send audio as base64 for easy frontend handling
+    const audioBase64 = Buffer.from(response.data).toString('base64');
+    
+    sendSuccess(res, 'Speech generated successfully', {
+      audio: audioBase64,
+      format: 'mp3',
+      voice: selectedVoice
+    });
+  } catch (error) {
+    console.error('[TTS] Error generating speech:', error.message);
+    
+    if (error.response?.status === 429) {
+      throw new AppError(
+        'Rate limit exceeded. Please try again in a moment.',
+        429,
+        'TTS_RATE_LIMITED'
+      );
+    }
+    
+    throw new AppError(
+      `Failed to generate speech: ${error.message}`,
+      500,
+      'TTS_ERROR'
+    );
+  }
+}));
+
+/**
  * GET /api/assistant/history
  * Get conversation history for current user
  */

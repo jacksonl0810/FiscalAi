@@ -1,8 +1,8 @@
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { invoicesService, companiesService, notificationsService, assistantService, settingsService, subscriptionsService } from "@/api/services";
 import { motion, AnimatePresence } from "framer-motion";
-import { Send, Sparkles, Loader2, Trash2 } from "lucide-react";
+import { Send, Sparkles, Loader2, Trash2, Volume2, VolumeX, Settings2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
@@ -14,6 +14,7 @@ import InvoicePreview from "@/components/chat/InvoicePreview";
 import RecentFiles from "@/components/chat/RecentFiles";
 import VoiceButton from "@/components/ui/VoiceButton";
 import PaymentConfirmationModal from "@/components/chat/PaymentConfirmationModal";
+import { useAudioPlayer } from "@/hooks/useAudioPlayer";
 
 export default function Assistant() {
   const [inputValue, setInputValue] = useState("");
@@ -22,9 +23,55 @@ export default function Assistant() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [voiceEnabled, setVoiceEnabled] = useState(() => {
+    const saved = localStorage.getItem('assistant_voice_enabled');
+    return saved ? JSON.parse(saved) : false;
+  });
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [showVoiceSettings, setShowVoiceSettings] = useState(false);
   const messagesEndRef = useRef(null);
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const audioPlayer = useAudioPlayer();
+
+  // Save voice preference
+  useEffect(() => {
+    localStorage.setItem('assistant_voice_enabled', JSON.stringify(voiceEnabled));
+  }, [voiceEnabled]);
+
+  // Speak text using TTS
+  const speakText = useCallback(async (text) => {
+    if (!text || !voiceEnabled) return;
+    
+    // Clean text for TTS (remove markdown, limit length)
+    const cleanText = text
+      .replace(/\*\*/g, '')
+      .replace(/\*/g, '')
+      .replace(/#{1,6}\s/g, '')
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+      .replace(/`[^`]+`/g, '')
+      .substring(0, 500);
+    
+    if (!cleanText.trim()) return;
+    
+    try {
+      setIsSpeaking(true);
+      const result = await assistantService.speak(cleanText, 'nova');
+      if (result?.audio) {
+        await audioPlayer.playBase64(result.audio, result.format || 'mp3');
+      }
+    } catch (err) {
+      console.error('[Assistant] TTS error:', err);
+    } finally {
+      setIsSpeaking(false);
+    }
+  }, [voiceEnabled, audioPlayer]);
+
+  // Stop speaking
+  const stopSpeaking = useCallback(() => {
+    audioPlayer.stop();
+    setIsSpeaking(false);
+  }, [audioPlayer]);
 
   const { data: invoices = [] } = useQuery({
     queryKey: ['invoices'],
@@ -104,9 +151,9 @@ export default function Assistant() {
   }, [conversationHistory, historyLoading, historyError]);
 
   const createInvoiceMutation = useMutation({
+    /** @param {import('@/types').CreateInvoiceData} data */
     mutationFn: (data) => invoicesService.create(data),
     onSuccess: () => {
-      // Invalidate all invoice-related queries (including filtered ones)
       queryClient.invalidateQueries({ queryKey: ['invoices'], exact: false });
     }
   });
@@ -138,6 +185,7 @@ export default function Assistant() {
 
       const data = await assistantService.processCommand({
         message: text,
+        companyId: activeCompany?.id,
         conversationHistory: recentMessages
       });
 
@@ -147,7 +195,7 @@ export default function Assistant() {
       let explanation = null;
 
       // Check if response contains JSON (could be in explanation, message, or data fields)
-      const responseText = data.explanation || data.message || data.data?.explanation || JSON.stringify(data);
+      const responseText = data.explanation || data.message || /** @type {any} */ (data).data?.explanation || JSON.stringify(data);
       
       // Try to extract JSON from markdown code blocks
       const jsonMatch = responseText.match(/```json\s*([\s\S]*?)\s*```/) || responseText.match(/```\s*([\s\S]*?)\s*```/);
@@ -163,11 +211,11 @@ export default function Assistant() {
 
       // Also check if data itself has action structure
       if (!action) {
-        action = data.action || data.data?.action || parsedData?.action;
+        action = data.action || /** @type {any} */ (data).data?.action || parsedData?.action;
       }
 
       // Get explanation - prefer parsed, then original
-      explanation = explanation || parsedData?.explanation || data.explanation || data.message || data.data?.explanation || "Desculpe, não consegui processar sua mensagem.";
+      explanation = explanation || parsedData?.explanation || data.explanation || data.message || /** @type {any} */ (data).data?.explanation || "Desculpe, não consegui processar sua mensagem.";
 
       // Only show explanation if it's not just JSON
       if (explanation && !explanation.trim().startsWith('{') && !explanation.trim().startsWith('```json')) {
@@ -178,6 +226,11 @@ export default function Assistant() {
           time: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
         };
         setMessages(prev => [...prev, aiResponse]);
+        
+        // Speak the AI response if voice is enabled
+        if (voiceEnabled) {
+          speakText(explanation);
+        }
       }
 
       // Keep conversation-history query in sync so refresh shows saved messages
@@ -200,13 +253,15 @@ export default function Assistant() {
       } else if (parsedData?.action?.type === 'emitir_nfse' && parsedData?.action?.data) {
         // Fallback: check parsed data directly
         const invoiceData = parsedData.action.data;
+        const invoiceValor = Number(invoiceData.valor) || 0;
+        const invoiceAliquota = Number(invoiceData.aliquota_iss) || 5;
         const newInvoice = {
           cliente_nome: invoiceData.cliente_nome,
           cliente_documento: invoiceData.cliente_documento || '',
           descricao_servico: invoiceData.descricao_servico || 'Serviço prestado',
-          valor: parseFloat(invoiceData.valor) || 0,
-          aliquota_iss: parseFloat(invoiceData.aliquota_iss) || 5,
-          valor_iss: (parseFloat(invoiceData.valor) || 0) * (parseFloat(invoiceData.aliquota_iss) || 5) / 100,
+          valor: invoiceValor,
+          aliquota_iss: invoiceAliquota,
+          valor_iss: invoiceValor * invoiceAliquota / 100,
           status: "pendente_confirmacao",
           municipio: invoiceData.municipio || ""
         };
@@ -240,8 +295,11 @@ export default function Assistant() {
   };
 
   const handleVoiceInput = (text) => {
-    // Put transcribed text in the input box so user can review before sending
+    if (!text?.trim()) return;
+    // Show transcribed text briefly, then send to AI and execute action (full voice-command flow)
     setInputValue(text);
+    processMessage(text.trim());
+    setInputValue("");
   };
 
   const handleConfirmInvoice = async () => {
@@ -778,14 +836,52 @@ export default function Assistant() {
           "bg-gradient-to-r from-white/5 via-transparent to-transparent",
           "backdrop-blur-sm relative z-10"
         )}>
+          {/* Voice Settings Bar */}
+          <AnimatePresence>
+            {(isSpeaking || audioPlayer.isPlaying) && (
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 10 }}
+                className="mb-3 flex items-center justify-center gap-3 px-4 py-2 bg-blue-500/10 border border-blue-500/30 rounded-xl"
+              >
+                <div className="flex items-center gap-2">
+                  <Volume2 className="w-4 h-4 text-blue-400 animate-pulse" />
+                  <span className="text-blue-400 text-sm">Assistente falando...</span>
+                </div>
+                <button
+                  onClick={stopSpeaking}
+                  className="px-3 py-1 text-xs bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 rounded-lg transition-colors"
+                >
+                  Parar
+                </button>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
           <div className="flex items-end gap-3">
             <VoiceButton onVoiceInput={handleVoiceInput} disabled={isProcessing} />
+            
+            {/* Voice Toggle Button */}
+            <button
+              onClick={() => setVoiceEnabled(!voiceEnabled)}
+              title={voiceEnabled ? 'Desativar resposta por voz' : 'Ativar resposta por voz'}
+              className={cn(
+                "w-10 h-10 rounded-xl flex items-center justify-center transition-all duration-300",
+                voiceEnabled
+                  ? "bg-gradient-to-br from-green-500/20 to-green-600/20 border border-green-500/30 text-green-400 hover:border-green-400/50"
+                  : "bg-gradient-to-br from-gray-500/20 to-gray-600/20 border border-gray-500/30 text-gray-400 hover:border-gray-400/50"
+              )}
+            >
+              {voiceEnabled ? <Volume2 className="w-5 h-5" /> : <VolumeX className="w-5 h-5" />}
+            </button>
+
             <div className="flex-1 relative">
               <Textarea
                 value={inputValue}
                 onChange={(e) => setInputValue(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder="Digite sua mensagem ou use o microfone..."
+                placeholder={voiceEnabled ? "Digite ou fale... (resposta por voz ativada)" : "Digite sua mensagem ou use o microfone..."}
                 className={cn(
                   "min-h-[56px] max-h-32 resize-none pr-14",
                   "bg-gradient-to-br from-slate-800/90 via-slate-700/80 to-slate-800/90",
@@ -823,7 +919,10 @@ export default function Assistant() {
             </div>
           </div>
           <p className="text-xs text-gray-400 mt-4 text-center font-medium">
-            Dica: Diga "Emitir nota de R$ [valor] para [cliente]" para criar uma nota fiscal rapidamente
+            {voiceEnabled 
+              ? '🔊 Resposta por voz ativada • Diga "Emitir nota de R$ [valor] para [cliente]"'
+              : 'Dica: Diga "Emitir nota de R$ [valor] para [cliente]" para criar uma nota fiscal rapidamente'
+            }
           </p>
         </div>
       </div>

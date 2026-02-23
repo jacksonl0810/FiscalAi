@@ -525,6 +525,7 @@ export function extractDocument(text) {
  * - "para João Silva"
  * - "cliente Maria"
  * - "do cliente Empresa ABC"
+ * - "para mim contra a Maia" → extracts "Maia" (not "mim contra a Maia")
  * 
  * @param {string} text - Text containing client name
  * @returns {string|null} Client name or null
@@ -532,12 +533,42 @@ export function extractDocument(text) {
 export function extractClientName(text) {
   if (!text) return null;
   
+  // Portuguese pronouns and common words that should NOT be client names
+  const INVALID_NAME_STARTERS = [
+    'mim', 'minha', 'meu', 'meus', 'minhas',
+    'eu', 'me', 'nos', 'nós',
+    'você', 'voce', 'tu', 'te', 'ti',
+    'ele', 'ela', 'eles', 'elas',
+    'isso', 'isto', 'aquilo',
+    'esse', 'essa', 'este', 'esta',
+    'contra', 'sobre', 'entre', 'perante',
+    'novo', 'nova', 'um', 'uma', 'o', 'a', 'os', 'as',
+    'com', 'de', 'para', 'por', 'em', 'no', 'na'
+  ];
+  
   // Helper function to clean extracted names
   const cleanName = (name) => {
     if (!name) return null;
-    return name
+    let cleaned = name
       .replace(/[.,;:!?]+$/g, '') // Remove trailing punctuation
       .trim();
+    
+    // Remove leading articles and prepositions
+    cleaned = cleaned.replace(/^(?:o|a|os|as|um|uma|uns|umas)\s+/i, '').trim();
+    
+    // Check if the name starts with an invalid word
+    const firstWord = cleaned.split(/\s+/)[0]?.toLowerCase();
+    if (INVALID_NAME_STARTERS.includes(firstWord)) {
+      // Try to extract the actual name after the invalid word
+      // e.g., "mim contra a Maia" → try to get "Maia"
+      const afterInvalid = cleaned.replace(/^(?:mim|eu|me)\s+(?:contra|pra|para)\s+(?:o|a|os|as)?\s*/i, '').trim();
+      if (afterInvalid && afterInvalid !== cleaned && !INVALID_NAME_STARTERS.includes(afterInvalid.split(/\s+/)[0]?.toLowerCase())) {
+        return afterInvalid;
+      }
+      return null; // Name starts with pronoun/common word
+    }
+    
+    return cleaned.length > 1 ? cleaned : null;
   };
   
   // Remove document patterns first to avoid including them in name
@@ -551,56 +582,77 @@ export function extractClientName(text) {
     .replace(/\(?\d{2}\)?\s*\d{4,5}[-.]?\d{4}/g, '') // Phone
     .trim();
   
+  // SPECIAL PATTERN: "para mim contra [name]" or "pra mim contra [name]"
+  // Common Brazilian expression: "emite uma nota para mim contra o João"
+  // means "issue an invoice for me, billing João"
+  const mimContraMatch = cleanText.match(/(?:para|pra)\s+mim\s+contra\s+(?:o|a|os|as)?\s*([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.]+?)(?:\s*[,;]|\s+(?:cpf|cnpj|documento|de|no\s+valor|por|referente)|$)/i);
+  if (mimContraMatch && mimContraMatch[1]?.trim().length > 1) {
+    const candidate = cleanName(mimContraMatch[1]);
+    if (candidate) return candidate;
+  }
+  
   // Pattern 1: "Nome: [name]" or "nome é [name]" or "nome = [name]"
   const nomeMatch = cleanText.match(/nome\s*(?:[:=é]|é)\s*([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.]+?)(?:\s*[,;]|\s+(?:cpf|cnpj|documento|email|telefone|tel|fone|e\s+o|com\s)|$)/i);
   if (nomeMatch && nomeMatch[1]?.trim().length > 1) {
-    return cleanName(nomeMatch[1]);
+    const candidate = cleanName(nomeMatch[1]);
+    if (candidate) return candidate;
   }
   
   // Pattern 2: "o nome é/dele é/dela é [name]"
   const nameIsMatch = cleanText.match(/(?:o\s+nome|nome\s+(?:dele|dela)?)\s+(?:é|e)\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.]+?)(?:\s*[,;.]|\s+(?:cpf|cnpj|documento|email|telefone|e\s+o|com\s)|$)/i);
   if (nameIsMatch && nameIsMatch[1]?.trim().length > 1) {
-    return cleanName(nameIsMatch[1]);
+    const candidate = cleanName(nameIsMatch[1]);
+    if (candidate) return candidate;
   }
   
   // Pattern 3: "chamado/chamada [name]" or "de nome [name]"
   const chamadoMatch = cleanText.match(/(?:chamad[oa]|de\s+nome)\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.]+?)(?:\s*[,;.]|\s+(?:cpf|cnpj|documento|email|telefone|com\s)|$)/i);
   if (chamadoMatch && chamadoMatch[1]?.trim().length > 1) {
-    return cleanName(chamadoMatch[1]);
+    const candidate = cleanName(chamadoMatch[1]);
+    if (candidate) return candidate;
   }
   
   // Pattern 4: "criar/cadastrar cliente [name]"
   const afterClienteMatch = cleanText.match(/(?:criar|cadastrar|cadastre|registrar|adicionar|incluir|novo|nova)\s+(?:um\s+|uma\s+|o\s+|a\s+)?(?:novo\s+|nova\s+)?cliente\s*:?\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.]+?)(?:\s*[,;]|\s+(?:cpf|cnpj|documento|email|telefone|tel|fone|com\s|de\s|no\s)|$)/i);
   if (afterClienteMatch && afterClienteMatch[1]?.trim().length > 1) {
-    return cleanName(afterClienteMatch[1]);
+    const candidate = cleanName(afterClienteMatch[1]);
+    if (candidate) return candidate;
   }
   
   // Pattern 5: "cliente [name]" (simple)
   const clienteMatch = cleanText.match(/cliente\s*:?\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.]+?)(?:\s*[,;]|\s+(?:cpf|cnpj|documento|de|no|por|email|telefone)|$)/i);
   if (clienteMatch && clienteMatch[1]?.trim().length > 1) {
     const candidate = cleanName(clienteMatch[1]);
-    // Exclude words that aren't names
-    if (candidate && !/^(?:novo|nova|um|uma|o|a|com|de|para|meu|minha)$/i.test(candidate)) {
-      return candidate;
-    }
+    if (candidate) return candidate;
   }
   
-  // Pattern 6: "para [name]"
-  const paraMatch = cleanText.match(/para\s+(?:o\s+cliente\s+|a\s+empresa\s+)?([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.]+?)(?:\s+(?:cpf|cnpj|documento|de|no\s+valor|por|referente)|$)/i);
+  // Pattern 6: "para [name]" (but NOT "para mim", "para eu", etc.)
+  // Note: Don't strip "Empresa" from company names like "Empresa ABC LTDA"
+  const paraMatch = cleanText.match(/para\s+(?:o\s+cliente\s+)?([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.]+?)(?:\s+(?:cpf|cnpj|documento|de|no\s+valor|por|referente)|$)/i);
   if (paraMatch && paraMatch[1]?.trim().length > 1) {
-    return cleanName(paraMatch[1]);
+    const candidate = cleanName(paraMatch[1]);
+    if (candidate) return candidate;
   }
   
   // Pattern 7: "do/da [name]"
   const doMatch = cleanText.match(/(?:do|da)\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.]+?)(?:\s+(?:cpf|cnpj|documento|de|no|por)|$)/i);
   if (doMatch && doMatch[1]?.trim().length > 1 && !doMatch[1].toLowerCase().includes('cliente')) {
-    return cleanName(doMatch[1]);
+    const candidate = cleanName(doMatch[1]);
+    if (candidate) return candidate;
   }
   
   // Pattern 8: "razão social [name]"
   const razaoMatch = cleanText.match(/(?:razão\s*social|razao\s*social)\s*:?\s*([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.]+?)(?:\s*[,;]|\s+(?:cpf|cnpj|documento|email|telefone)|$)/i);
   if (razaoMatch && razaoMatch[1]?.trim().length > 1) {
-    return cleanName(razaoMatch[1]);
+    const candidate = cleanName(razaoMatch[1]);
+    if (candidate) return candidate;
+  }
+  
+  // Pattern 9: "contra [name]" (as fallback for "billing [name]")
+  const contraMatch = cleanText.match(/contra\s+(?:o|a|os|as)?\s*([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.]+?)(?:\s*[,;]|\s+(?:cpf|cnpj|documento|de|no\s+valor|por|referente)|$)/i);
+  if (contraMatch && contraMatch[1]?.trim().length > 1) {
+    const candidate = cleanName(contraMatch[1]);
+    if (candidate) return candidate;
   }
   
   return null;
