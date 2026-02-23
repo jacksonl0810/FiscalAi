@@ -199,11 +199,22 @@ export interface FiscalIntegrationStatus {
 }
 
 // AI Assistant Types
+
+/** Frontend display message (used in the chat UI state) */
 export interface AIMessage {
-  id: number;
+  id: number | string;
   isAI: boolean;
   content: string;
   time: string;
+}
+
+/** Raw message record returned from the DB conversation history API */
+export interface ConversationHistoryMessage {
+  id: string | number;
+  role: 'user' | 'assistant';
+  content: string;
+  createdAt: string;
+  metadata?: Record<string, unknown>;
 }
 
 export interface AIAction {
@@ -225,6 +236,8 @@ export interface AIResponse {
   requiresConfirmation?: boolean;
   error?: string;
   message?: string;
+  /** Some backend routes wrap the payload in a nested data field */
+  data?: Record<string, unknown>;
 }
 
 // API Response Types
