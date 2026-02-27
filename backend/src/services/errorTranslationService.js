@@ -162,7 +162,7 @@ const ERROR_KNOWLEDGE_BASE = {
     action: 'Verifique se o município está correto ou entre em contato com o suporte.'
   },
   
-  // Nuvem Fiscal specific errors
+  // ACBr API / Fiscal specific errors
   'cpf_cnpj_diferente': {
     category: 'certificate',
     message: 'Certificado pertence a outra empresa',
@@ -172,7 +172,7 @@ const ERROR_KNOWLEDGE_BASE = {
   'empresa_nao_encontrada': {
     category: 'validation',
     message: 'Empresa não registrada',
-    explanation: 'A empresa não foi encontrada no sistema da Nuvem Fiscal.',
+    explanation: 'A empresa não foi encontrada no sistema da ACBr API.',
     action: 'Clique em "Verificar conexão com prefeitura" para registrar a empresa primeiro.'
   },
   
@@ -263,8 +263,8 @@ const ERROR_KNOWLEDGE_BASE = {
   },
   'company_not_registered': {
     category: 'configuration',
-    message: 'Empresa não registrada na Nuvem Fiscal',
-    explanation: 'A empresa precisa ser registrada na Nuvem Fiscal antes de emitir notas.',
+    message: 'Empresa não registrada na ACBr API',
+    explanation: 'A empresa precisa ser registrada na ACBr API antes de emitir notas.',
     action: 'Acesse "Minha Empresa" e clique em "Verificar conexão com prefeitura" para registrar.'
   }
 };
@@ -356,10 +356,12 @@ export function translateError(error, context = {}) {
 
   // PRIORITY 4: Check if context indicates this is a fiscal/API error (not user auth)
   const isFiscalContext = context.isFiscalOperation || 
-                          context.nuvemFiscal || 
+                          context.acbrApi || 
+                          context.acbrApi ||
                           context.municipality ||
                           normalizedMessage.includes('prefeitura') ||
                           normalizedMessage.includes('nuvem fiscal') ||
+                          normalizedMessage.includes('acbr') ||
                           normalizedMessage.includes('nfse') ||
                           normalizedMessage.includes('nota fiscal');
 

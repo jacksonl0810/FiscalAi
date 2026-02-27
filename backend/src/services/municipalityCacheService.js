@@ -10,7 +10,7 @@
  */
 
 import { prisma } from '../lib/prisma.js';
-import { apiRequest, isNuvemFiscalConfigured } from './nuvemFiscal.js';
+import { apiRequest, isAcbrApiConfigured } from './acbrApi.js';
 
 // In-memory cache configuration
 const MEMORY_CACHE = {
@@ -132,8 +132,8 @@ export async function getSupportedMunicipalities() {
   }
 
   // Layer 3: API call
-  if (!isNuvemFiscalConfigured()) {
-    console.warn('[MunicipalityCache] Nuvem Fiscal not configured');
+  if (!isAcbrApiConfigured()) {
+    console.warn('[MunicipalityCache] ACBr API not configured');
     return null;
   }
 

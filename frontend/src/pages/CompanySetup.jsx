@@ -24,7 +24,8 @@ import {
   AlertTriangle,
   ExternalLink,
   Crown,
-  Lock
+  Lock,
+  Info
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -196,19 +197,19 @@ export default function CompanySetup() {
         savedCompany = await companiesService.create(data);
       }
 
-      // If company has required data and not registered in Nuvem Fiscal yet
+      // If company has required data and not registered in ACBr API yet
       if (savedCompany.cnpj && savedCompany.inscricao_municipal && !savedCompany.nuvem_fiscal_id) {
         try {
-          const nuvemResult = await companiesService.registerInFiscalCloud(savedCompany.id);
+          const acbrResult = await companiesService.registerInFiscalCloud(savedCompany.id);
 
           // Handle different registration outcomes
-          // nuvemFiscalId being present means registration succeeded (new or existing)
-          if (nuvemResult.nuvemFiscalId) {
-            const isExisting = nuvemResult.alreadyExists === true;
+          // acbrApiId being present means registration succeeded (new or existing)
+          if (acbrResult.acbrApiId) {
+            const isExisting = acbrResult.alreadyExists === true;
             
             if (isExisting) {
-              // Company already exists on Nuvem Fiscal (registered by this or another user)
-              toast.success('✓ Empresa Vinculada à Nuvem Fiscal!\n\nEsta empresa já está cadastrada na Nuvem Fiscal. Configure o certificado digital para conectar e emitir notas fiscais.', {
+              // Company already exists on ACBr API (registered by this or another user)
+              toast.success('✓ Empresa Vinculada à ACBr API!\n\nEsta empresa já está cadastrada na ACBr API. Configure o certificado digital para conectar e emitir notas fiscais.', {
                 duration: 6000,
                 style: {
                   background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)',
@@ -222,12 +223,12 @@ export default function CompanySetup() {
               });
               await notificationsService.create({
                 titulo: "Empresa vinculada",
-                mensagem: "Empresa encontrada na Nuvem Fiscal e vinculada à sua conta. Configure o certificado digital para conectar.",
+                mensagem: "Empresa encontrada na ACBr API e vinculada à sua conta. Configure o certificado digital para conectar.",
                 tipo: "info"
               });
             } else {
               // New company registered successfully
-            toast.success('✓ Integração Fiscal Ativada!\n\nEmpresa registrada com sucesso na Nuvem Fiscal', {
+            toast.success('✓ Integração Fiscal Ativada!\n\nEmpresa registrada com sucesso na ACBr API', {
               duration: 5000,
               style: {
                 background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)',
@@ -241,12 +242,12 @@ export default function CompanySetup() {
             });
             await notificationsService.create({
               titulo: "Empresa registrada",
-              mensagem: "Empresa registrada com sucesso na Nuvem Fiscal!",
+              mensagem: "Empresa registrada com sucesso na ACBr API!",
               tipo: "sucesso"
             });
             }
-          } else if (nuvemResult.status === 'not_configured') {
-            toast.info('ℹ️ Integração Fiscal Pendente\n\nNuvem Fiscal não configurado. Empresa salva localmente.', {
+          } else if (acbrResult.status === 'not_configured') {
+            toast.info('ℹ️ Integração Fiscal Pendente\n\nACBr API não configurado. Empresa salva localmente.', {
               duration: 5000,
               style: {
                 background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)',
@@ -436,7 +437,7 @@ export default function CompanySetup() {
         try {
           const testResult = await companiesService.testNfseEmission(savedCompany.id);
           
-          if (!testResult.canEmit && testResult.code === 'NUVEM_FISCAL_XML_BUG') {
+          if (!testResult.canEmit && testResult.code === 'ACBR_API_XML_BUG') {
             // Provider bug detected - show critical warning
             toast.error(
               `⚠️ Bug Detectado no Provedor\n\n${testResult.message}\n\n` +
@@ -1739,21 +1740,24 @@ export default function CompanySetup() {
                       </div>
                     </div>
                   </div>
-                ) : municipalityAuthRequirements?.supported === false ? (
+                ) : municipalityAuthRequirements?.unknownMunicipality ? (
                   <div className={cn(
                     "p-6 rounded-2xl",
                     "bg-gradient-to-br from-slate-900/90 via-slate-800/70 to-slate-900/90",
-                    "backdrop-blur-xl border border-red-500/30",
+                    "backdrop-blur-xl border border-blue-500/30",
                     "shadow-2xl shadow-black/50"
                   )}>
                     <div className="flex items-start gap-4">
-                      <AlertCircle className="w-7 h-7 text-red-400 flex-shrink-0" />
+                      <Info className="w-7 h-7 text-blue-400 flex-shrink-0" />
                       <div>
-                        <h3 className="text-lg font-bold text-red-400 mb-2">Município não suportado</h3>
+                        <h3 className="text-lg font-bold text-blue-400 mb-2">Informações do município indisponíveis</h3>
                         <p className="text-gray-300">{municipalityAuthRequirements?.message}</p>
                         {municipalityAuthRequirements?.hint && (
                           <p className="text-gray-400 text-sm mt-2">{municipalityAuthRequirements.hint}</p>
                         )}
+                        <p className="text-blue-300 text-sm mt-3 font-medium">
+                          Prossiga com o cadastro usando certificado digital A1.
+                        </p>
                       </div>
                     </div>
                   </div>

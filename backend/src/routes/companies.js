@@ -6,7 +6,7 @@ import { authenticate } from '../middleware/auth.js';
 import { asyncHandler, AppError } from '../middleware/errorHandler.js';
 import { requireActiveSubscription } from '../middleware/subscriptionAccess.js';
 import { fiscalConnectionLimiter } from '../middleware/rateLimiter.js';
-import { registerCompany, checkConnection, isNuvemFiscalConfigured } from '../services/nuvemFiscal.js';
+import { registerCompany, checkConnection, isAcbrApiConfigured } from '../services/acbrApi.js';
 import { getMEILimitStatus } from '../services/meiLimitTracking.js';
 import { sendSuccess } from '../utils/response.js';
 
@@ -42,17 +42,17 @@ const validateRequest = (req, res, next) => {
 };
 
 // Transform Prisma company data from camelCase to snake_case
-// When status is 'connected' but no auth method configured on Nuvem Fiscal, show not_connected
+// When status is 'connected' but no auth method configured on ACBr API, show not_connected
 const transformCompany = (company) => {
   if (!company) return company;
   let fiscalConnectionStatus = company.fiscalConnectionStatus;
   let fiscalConnectionError = company.fiscalConnectionError ?? null;
   
-  // Check if any authentication method is configured on Nuvem Fiscal
-  const hasNuvemFiscalAuth = company.certificateUploadedToNuvemFiscal === true || 
-                              company.municipalCredentialsConfigured === true;
+  // Check if any authentication method is configured on ACBr API
+  const hasAcbrApiAuth = company.certificateUploadedToAcbrApi === true || 
+                          company.municipalCredentialsConfigured === true;
   
-  if (fiscalConnectionStatus === 'connected' && !hasNuvemFiscalAuth) {
+  if (fiscalConnectionStatus === 'connected' && !hasAcbrApiAuth) {
     fiscalConnectionStatus = 'not_connected';
     fiscalConnectionError = 'Configure certificado digital ou credenciais da prefeitura na aba Integração Fiscal.';
   }
@@ -70,7 +70,7 @@ const transformCompany = (company) => {
     email: company.email,
     telefone: company.telefone,
     inscricao_municipal: company.inscricaoMunicipal,
-    nuvem_fiscal_id: company.nuvemFiscalId,
+    acbr_api_id: company.acbrApiId,
     // Address fields
     cep: company.cep,
     logradouro: company.logradouro,
@@ -325,14 +325,14 @@ router.delete('/:id', asyncHandler(async (req, res) => {
 
 /**
  * POST /api/companies/:id/register-fiscal
- * Register company in fiscal cloud (Nuvem Fiscal)
+ * Register company in fiscal cloud (ACBr API)
  */
 router.post('/:id/register-fiscal', asyncHandler(async (req, res) => {
-  // Check if Nuvem Fiscal is configured
-  if (!isNuvemFiscalConfigured()) {
-    return sendSuccess(res, 'Nuvem Fiscal não configurado. Configure as credenciais para habilitar a integração fiscal.', {
+  // Check if ACBr API is configured
+  if (!isAcbrApiConfigured()) {
+    return sendSuccess(res, 'ACBr API não configurado. Configure as credenciais para habilitar a integração fiscal.', {
       status: 'not_configured',
-      message: 'Para usar a integração fiscal, configure NUVEM_FISCAL_CLIENT_ID e NUVEM_FISCAL_CLIENT_SECRET nas variáveis de ambiente.'
+      message: 'Para usar a integração fiscal, configure ACBR_API_CLIENT_ID e ACBR_API_CLIENT_SECRET nas variáveis de ambiente.'
     }, 200);
   }
 
@@ -383,44 +383,44 @@ router.post('/:id/register-fiscal', asyncHandler(async (req, res) => {
   }
 
   if (missingFields.length > 0) {
-    const errorMessage = `Campos obrigatórios faltando para registro fiscal:\n\n${missingFields.map(f => `• ${f}`).join('\n')}\n\nComplete os dados da empresa antes de registrar na Nuvem Fiscal.`;
+    const errorMessage = `Campos obrigatórios faltando para registro fiscal:\n\n${missingFields.map(f => `• ${f}`).join('\n')}\n\nComplete os dados da empresa antes de registrar na ACBr API.`;
     throw new AppError(errorMessage, 400, 'MISSING_REQUIRED_FIELDS', { missingFields });
   }
 
   try {
-    // Check if another user already registered this CNPJ in Nuvem Fiscal
-    // This allows sharing the same Nuvem Fiscal company across multiple users
+    // Check if another user already registered this CNPJ in ACBr API
+    // This allows sharing the same fiscal company across multiple users
     const cleanCnpj = (company.cnpj || '').replace(/\D/g, '');
     const otherCompanyWithSameCnpj = await prisma.company.findFirst({
       where: {
         cnpj: cleanCnpj,
         userId: { not: req.user.id },
-        nuvemFiscalId: { not: null }
+        acbrApiId: { not: null }
       },
-      select: { nuvemFiscalId: true }
+      select: { acbrApiId: true }
     });
 
     let registrationResult;
     
-    if (otherCompanyWithSameCnpj?.nuvemFiscalId) {
-      // Another user already has this CNPJ registered on Nuvem Fiscal
-      // Reuse the same nuvemFiscalId - no need to re-register
-      console.log('[Companies] CNPJ already registered by another user, reusing nuvemFiscalId:', otherCompanyWithSameCnpj.nuvemFiscalId);
+    if (otherCompanyWithSameCnpj?.acbrApiId) {
+      // Another user already has this CNPJ registered on ACBr API
+      // Reuse the same acbrApiId (legacy field) - no need to re-register
+      console.log('[Companies] CNPJ already registered by another user, reusing acbrApiId:', otherCompanyWithSameCnpj.acbrApiId);
       registrationResult = {
-        nuvemFiscalId: otherCompanyWithSameCnpj.nuvemFiscalId,
+        acbrApiId: otherCompanyWithSameCnpj.acbrApiId,
         status: 'not_connected',
-        message: 'Empresa já registrada na Nuvem Fiscal. Configure o certificado digital para conectar.',
+        message: 'Empresa já registrada na ACBr API. Configure o certificado digital para conectar.',
         alreadyExists: true
       };
     } else {
-      // Register company in Nuvem Fiscal (handles duplicate detection internally)
+      // Register company in ACBr API (handles duplicate detection internally)
       registrationResult = await registerCompany(company);
     }
 
-    // Update company with Nuvem Fiscal ID
+    // Update company with ACBr API ID (legacy field name acbrApiId)
     await prisma.company.update({
       where: { id: req.params.id },
-      data: { nuvemFiscalId: registrationResult.nuvemFiscalId }
+      data: { acbrApiId: registrationResult.acbrApiId }
     });
 
     // Map status from registration result to database status
@@ -447,7 +447,7 @@ router.post('/:id/register-fiscal', asyncHandler(async (req, res) => {
 
     // Update company's fiscal connection status
     // IMPORTANT: Company registration alone is NOT enough to be "connected"
-    // According to Nuvem Fiscal docs: company + certificate + settings are required
+    // According to ACBr API docs: company + certificate + settings are required
     // So we set 'not_connected' with a message indicating certificate is needed next
     await prisma.company.update({
       where: { id: req.params.id },
@@ -462,17 +462,17 @@ router.post('/:id/register-fiscal', asyncHandler(async (req, res) => {
     const requiresCertificateVerification = registrationResult.alreadyExists === true;
     
     sendSuccess(res, registrationResult.message, {
-      nuvemFiscalId: registrationResult.nuvemFiscalId,
+      acbrApiId: registrationResult.acbrApiId,
       status: 'not_connected', // Company registered but certificate still needed
       message: requiresCertificateVerification
-        ? 'Empresa já existe na Nuvem Fiscal. Para vincular esta empresa à sua conta, faça upload do certificado digital (e-CNPJ) para verificar a propriedade.'
-        : 'Empresa registrada na Nuvem Fiscal com sucesso. Agora configure o certificado digital para habilitar a emissão de notas fiscais.',
+        ? 'Empresa já existe na ACBr API. Para vincular esta empresa à sua conta, faça upload do certificado digital (e-CNPJ) para verificar a propriedade.'
+        : 'Empresa registrada na ACBr API com sucesso. Agora configure o certificado digital para habilitar a emissão de notas fiscais.',
       nextStep: 'upload_certificate',
       alreadyExists: registrationResult.alreadyExists || false,
       requiresCertificateVerification: requiresCertificateVerification
     });
   } catch (error) {
-    console.error('[Companies] Error registering in Nuvem Fiscal:', error);
+    console.error('[Companies] Error registering in ACBr API:', error);
     console.error('[Companies] Error name:', error?.name);
     console.error('[Companies] Error message:', error?.message);
     console.error('[Companies] Error status:', error?.status);
@@ -560,22 +560,22 @@ router.get('/:id/fiscal-status', asyncHandler(async (req, res) => {
   let mensagem = company.fiscalConnectionError || null;
 
   // Check if any valid authentication method is configured (certificate OR municipal credentials)
-  const hasNuvemFiscalAuth = company.certificateUploadedToNuvemFiscal === true || 
-                              company.municipalCredentialsConfigured === true;
+  const hasAcbrApiAuth = company.certificateUploadedToAcbrApi === true || 
+                          company.municipalCredentialsConfigured === true;
 
   // If status is connected but no auth configured, override to not_connected
-  if (statusValue === 'connected' && !hasNuvemFiscalAuth) {
+  if (statusValue === 'connected' && !hasAcbrApiAuth) {
     statusValue = 'not_connected';
     mensagem = 'Configure certificado digital ou credenciais da prefeitura na aba Integração Fiscal.';
   }
 
   if (!mensagem) {
-    if (!isNuvemFiscalConfigured()) {
+    if (!isAcbrApiConfigured()) {
       statusValue = 'not_configured';
-      mensagem = 'Nuvem Fiscal não configurado no servidor';
-    } else if (!company.nuvemFiscalId) {
+      mensagem = 'ACBr API não configurado no servidor';
+    } else if (!company.acbrApiId) {
       statusValue = 'not_connected';
-      mensagem = 'Empresa não registrada na Nuvem Fiscal. Registre a empresa para habilitar a emissão.';
+      mensagem = 'Empresa não registrada na ACBr API. Registre a empresa para habilitar a emissão.';
     } else if (!company.fiscalCredential) {
       statusValue = 'not_connected';
       mensagem = 'Configure certificado digital ou credenciais da prefeitura para conectar.';
@@ -612,13 +612,13 @@ router.get('/:id/fiscal-status', asyncHandler(async (req, res) => {
 router.post('/:id/check-fiscal-connection', fiscalConnectionLimiter, asyncHandler(async (req, res) => {
   console.log('[FiscalConnection] Checking connection for company:', req.params.id);
   
-  if (!isNuvemFiscalConfigured()) {
-    console.log('[FiscalConnection] Nuvem Fiscal not configured');
-    return sendSuccess(res, 'Nuvem Fiscal não configurado', {
+  if (!isAcbrApiConfigured()) {
+    console.log('[FiscalConnection] ACBr API not configured');
+    return sendSuccess(res, 'ACBr API não configurado', {
       status: 'not_configured',
       connectionStatus: 'not_configured',
-      message: 'Integração fiscal não configurada. Configure as credenciais da Nuvem Fiscal para habilitar a emissão de notas fiscais.',
-      details: 'As variáveis de ambiente NUVEM_FISCAL_CLIENT_ID e NUVEM_FISCAL_CLIENT_SECRET não foram configuradas.'
+      message: 'Integração fiscal não configurada. Configure as credenciais da ACBr API para habilitar a emissão de notas fiscais.',
+      details: 'As variáveis de ambiente ACBR_API_CLIENT_ID e ACBR_API_CLIENT_SECRET não foram configuradas.'
     }, 200);
   }
 
@@ -635,7 +635,7 @@ router.post('/:id/check-fiscal-connection', fiscalConnectionLimiter, asyncHandle
   }
 
   try {
-    const { testFiscalConnection } = await import('../services/fiscalConnectionService.js');
+    const { testFiscalConnection } = await import('../services/acbrConnectionService.js');
     console.log('[FiscalConnection] Testing connection...');
     const connectionResult = await testFiscalConnection(req.params.id);
 
@@ -770,7 +770,7 @@ router.post('/:id/certificate', (req, res, next) => {
   }
 
   // Import services
-  const { storeFiscalCredential } = await import('../services/fiscalCredentialService.js');
+  const { storeFiscalCredential } = await import('../services/acbrCredentialService.js');
   const { verifyCertificateOwnership, parseCertificate } = await import('../services/certificateParserService.js');
 
   // Parse and verify certificate CNPJ matches company CNPJ
@@ -830,43 +830,43 @@ router.post('/:id/certificate', (req, res, next) => {
     data: { certificadoDigital: true }
   });
 
-  // Try to upload certificate to Nuvem Fiscal if company is registered
-  let nuvemFiscalStatus = null;
+  // Try to upload certificate to ACBr API if company is registered
+  let acbrApiStatus = null;
   
-  // If company doesn't have nuvemFiscalId yet, check if another user's company with same CNPJ has it
-  let effectiveNuvemFiscalId = company.nuvemFiscalId;
-  if (!effectiveNuvemFiscalId && company.cnpj) {
+  // If company doesn't have acbrApiId (legacy field) yet, check if another user's company with same CNPJ has it
+  let effectiveAcbrApiId = company.acbrApiId;
+  if (!effectiveAcbrApiId && company.cnpj) {
     const cleanCnpj = company.cnpj.replace(/\D/g, '');
     const otherCompany = await prisma.company.findFirst({
       where: {
         cnpj: cleanCnpj,
-        nuvemFiscalId: { not: null }
+        acbrApiId: { not: null }
       },
-      select: { nuvemFiscalId: true }
+      select: { acbrApiId: true }
     });
-    if (otherCompany?.nuvemFiscalId) {
-      effectiveNuvemFiscalId = otherCompany.nuvemFiscalId;
-      // Update this company's nuvemFiscalId too
+    if (otherCompany?.acbrApiId) {
+      effectiveAcbrApiId = otherCompany.acbrApiId;
+      // Update this company's acbrApiId too
       await prisma.company.update({
         where: { id },
-        data: { nuvemFiscalId: effectiveNuvemFiscalId }
+        data: { acbrApiId: effectiveAcbrApiId }
       });
-      console.log('[Companies] Linked nuvemFiscalId from another user\'s company:', effectiveNuvemFiscalId);
+      console.log('[Companies] Linked acbrApiId from another user\'s company:', effectiveAcbrApiId);
     }
   }
   
-  if (effectiveNuvemFiscalId && company.cnpj) {
+  if (effectiveAcbrApiId && company.cnpj) {
     try {
-      const { uploadCertificate, configureNfseForCertificate } = await import('../services/nuvemFiscal.js');
-      const nuvemResult = await uploadCertificate(company.cnpj, certificateBase64, password);
-      nuvemFiscalStatus = {
+      const { uploadCertificate, configureNfseForCertificate } = await import('../services/acbrApi.js');
+      const acbrResult = await uploadCertificate(company.cnpj, certificateBase64, password);
+      acbrApiStatus = {
         status: 'success',
-        message: nuvemResult.message
+        message: acbrResult.message
       };
-      console.log('[Companies] Certificate uploaded to Nuvem Fiscal successfully');
+      console.log('[Companies] Certificate uploaded to ACBr API successfully');
 
       // After uploading certificate, configure NFS-e to use certificate (not prefeitura login)
-      // This is critical for certificate-only municipalities (e.g. Balneário Camboriú/SC)
+      // This is critical for certificate-only municipalities
       try {
         await configureNfseForCertificate(company.cnpj, company);
         console.log('[Companies] NFS-e configured to use certificate (removed any prefeitura credentials)');
@@ -877,12 +877,12 @@ router.post('/:id/certificate', (req, res, next) => {
       
       // Certificate uploaded successfully - mark as uploaded
       // Check if municipality requires BOTH auth methods before setting CONNECTED
-      const { validateMunicipalityAuthConfig } = await import('../services/fiscalConnectionService.js');
+      const { validateMunicipalityAuthConfig } = await import('../services/acbrConnectionService.js');
       const updatedCompanyForValidation = await prisma.company.findUnique({
         where: { id },
         select: {
           codigoMunicipio: true,
-          certificateUploadedToNuvemFiscal: true,
+          certificateUploadedToAcbrApi: true,
           municipalCredentialsConfigured: true
         }
       });
@@ -891,7 +891,7 @@ router.post('/:id/certificate', (req, res, next) => {
       await prisma.company.update({
         where: { id },
         data: {
-          certificateUploadedToNuvemFiscal: true,
+          certificateUploadedToAcbrApi: true,
           lastConnectionCheck: new Date()
         }
       });
@@ -899,7 +899,7 @@ router.post('/:id/certificate', (req, res, next) => {
       // Now validate if all required auth methods are configured
       const authValidation = await validateMunicipalityAuthConfig({
         ...updatedCompanyForValidation,
-        certificateUploadedToNuvemFiscal: true // Since we just uploaded it
+        certificateUploadedToAcbrApi: true // Since we just uploaded it
       });
 
       if (authValidation.valid) {
@@ -921,13 +921,13 @@ router.post('/:id/certificate', (req, res, next) => {
             fiscalConnectionError: authValidation.message
           }
         });
-        nuvemFiscalStatus.message += ` Atenção: ${authValidation.message}`;
+        acbrApiStatus.message += ` Atenção: ${authValidation.message}`;
         console.log('[Companies] Missing auth requirements:', authValidation.message);
       }
-    } catch (nuvemError) {
-      console.error('[Companies] Error uploading certificate to Nuvem Fiscal:', nuvemError.message);
+    } catch (acbrError) {
+      console.error('[Companies] Error uploading certificate to ACBr API:', acbrError.message);
       
-      let errorMessage = nuvemError.message;
+      let errorMessage = acbrError.message;
       let errorStatus = 'warning';
       
       if (errorMessage.includes('CPF/CNPJ diferente')) {
@@ -935,26 +935,26 @@ router.post('/:id/certificate', (req, res, next) => {
         errorStatus = 'error';
       }
       
-      nuvemFiscalStatus = {
+      acbrApiStatus = {
         status: errorStatus,
-        message: `Certificado salvo localmente, mas erro ao enviar para Nuvem Fiscal: ${errorMessage}`
+        message: `Certificado salvo localmente, mas erro ao enviar para ACBr API: ${errorMessage}`
       };
       
-      // Certificate not uploaded to Nuvem Fiscal = not connected
+      // Certificate not uploaded to ACBr API = not connected
       await prisma.company.update({
         where: { id },
         data: {
           fiscalConnectionStatus: 'not_connected',
-          fiscalConnectionError: `Certificado não enviado para Nuvem Fiscal: ${errorMessage}`,
+          fiscalConnectionError: `Certificado não enviado para ACBr API: ${errorMessage}`,
           lastConnectionCheck: new Date(),
-          certificateUploadedToNuvemFiscal: false
+          certificateUploadedToAcbrApi: false
         }
       });
     }
   } else {
-    nuvemFiscalStatus = {
+    acbrApiStatus = {
       status: 'info',
-      message: 'Certificado salvo localmente. Empresa não registrada na Nuvem Fiscal ainda - registre a empresa para habilitar a emissão de notas fiscais.'
+      message: 'Certificado salvo localmente. Empresa não registrada na ACBr API ainda - registre a empresa para habilitar a emissão de notas fiscais.'
     };
     
     // Certificate saved locally but company not registered = not connected
@@ -962,9 +962,9 @@ router.post('/:id/certificate', (req, res, next) => {
       where: { id },
       data: {
         fiscalConnectionStatus: 'not_connected',
-        fiscalConnectionError: 'Empresa não registrada na Nuvem Fiscal. Registre a empresa para completar a configuração.',
+        fiscalConnectionError: 'Empresa não registrada na ACBr API. Registre a empresa para completar a configuração.',
         lastConnectionCheck: new Date(),
-        certificateUploadedToNuvemFiscal: false
+        certificateUploadedToAcbrApi: false
       }
     });
   }
@@ -972,7 +972,7 @@ router.post('/:id/certificate', (req, res, next) => {
   sendSuccess(res, 'Certificado digital armazenado com sucesso', {
     credential_id: credential.id,
     expires_at: credential.expiresAt,
-    nuvem_fiscal: nuvemFiscalStatus
+    acbr_api: acbrApiStatus
   });
 }));
 
@@ -995,7 +995,7 @@ router.get('/:id/certificate/status', asyncHandler(async (req, res) => {
     throw new AppError('Company not found', 404, 'NOT_FOUND');
   }
 
-  const { getCredentialStatus } = await import('../services/fiscalCredentialService.js');
+  const { getCredentialStatus } = await import('../services/acbrCredentialService.js');
   const status = await getCredentialStatus(id);
 
   sendSuccess(res, 'Certificate status retrieved', status);
@@ -1020,7 +1020,7 @@ router.delete('/:id/certificate', asyncHandler(async (req, res) => {
     throw new AppError('Company not found', 404, 'NOT_FOUND');
   }
 
-  const { revokeFiscalCredential } = await import('../services/fiscalCredentialService.js');
+  const { revokeFiscalCredential } = await import('../services/acbrCredentialService.js');
   await revokeFiscalCredential(id);
 
   // Update company flags
@@ -1028,7 +1028,7 @@ router.delete('/:id/certificate', asyncHandler(async (req, res) => {
     where: { id },
     data: { 
       certificadoDigital: false,
-      certificateUploadedToNuvemFiscal: false,
+      certificateUploadedToAcbrApi: false,
       fiscalConnectionStatus: 'not_connected',
       fiscalConnectionError: 'Certificado digital revogado'
     }
@@ -1039,7 +1039,7 @@ router.delete('/:id/certificate', asyncHandler(async (req, res) => {
 
 /**
  * POST /api/companies/:id/municipal-credentials
- * Store municipal credentials securely and configure on Nuvem Fiscal
+ * Store municipal credentials securely and configure on ACBr API
  */
 router.post('/:id/municipal-credentials', [
   body('username').notEmpty().withMessage('Username is required'),
@@ -1098,7 +1098,7 @@ router.post('/:id/municipal-credentials', [
     };
   }
 
-  const { storeFiscalCredential } = await import('../services/fiscalCredentialService.js');
+  const { storeFiscalCredential } = await import('../services/acbrCredentialService.js');
 
   // Store credentials locally (encrypted)
   const credential = await storeFiscalCredential(
@@ -1113,13 +1113,13 @@ router.post('/:id/municipal-credentials', [
     }
   );
 
-  // Try to send credentials to Nuvem Fiscal
-  let nuvemFiscalStatus = null;
+  // Try to send credentials to ACBr API
+  let acbrApiStatus = null;
 
-  if (company.nuvemFiscalId && company.cnpj) {
+  if (company.acbrApiId && company.cnpj) {
     try {
-      const { configureMunicipalCredentials } = await import('../services/nuvemFiscal.js');
-      const nuvemResult = await configureMunicipalCredentials(
+      const { configureMunicipalCredentials } = await import('../services/acbrApi.js');
+      const acbrResult = await configureMunicipalCredentials(
         company.cnpj,
         company,
         username,
@@ -1127,12 +1127,12 @@ router.post('/:id/municipal-credentials', [
         token || null
       );
 
-      nuvemFiscalStatus = {
+      acbrApiStatus = {
         status: 'success',
-        message: nuvemResult.message
+        message: acbrResult.message
       };
 
-      console.log('[Companies] Municipal credentials configured on Nuvem Fiscal successfully');
+      console.log('[Companies] Municipal credentials configured on ACBr API successfully');
 
       // Mark municipal credentials as configured first
       await prisma.company.update({
@@ -1144,12 +1144,12 @@ router.post('/:id/municipal-credentials', [
       });
 
       // Check if municipality requires BOTH auth methods before setting CONNECTED
-      const { validateMunicipalityAuthConfig } = await import('../services/fiscalConnectionService.js');
+      const { validateMunicipalityAuthConfig } = await import('../services/acbrConnectionService.js');
       const updatedCompanyForValidation = await prisma.company.findUnique({
         where: { id },
         select: {
           codigoMunicipio: true,
-          certificateUploadedToNuvemFiscal: true,
+          certificateUploadedToAcbrApi: true,
           municipalCredentialsConfigured: true
         }
       });
@@ -1178,37 +1178,37 @@ router.post('/:id/municipal-credentials', [
             fiscalConnectionError: authValidation.message
           }
         });
-        nuvemFiscalStatus.message += ` Atenção: ${authValidation.message}`;
+        acbrApiStatus.message += ` Atenção: ${authValidation.message}`;
         console.log('[Companies] Missing auth requirements:', authValidation.message);
       }
-    } catch (nuvemError) {
-      console.error('[Companies] Error configuring municipal credentials on Nuvem Fiscal:', nuvemError.message);
+    } catch (acbrError) {
+      console.error('[Companies] Error configuring municipal credentials on ACBr API:', acbrError.message);
 
-      nuvemFiscalStatus = {
+      acbrApiStatus = {
         status: 'warning',
-        message: `Credenciais salvas localmente, mas erro ao configurar na Nuvem Fiscal: ${nuvemError.message}`
+        message: `Credenciais salvas localmente, mas erro ao configurar na ACBr API: ${acbrError.message}`
       };
 
       await prisma.company.update({
         where: { id },
         data: {
           fiscalConnectionStatus: 'not_connected',
-          fiscalConnectionError: `Erro ao configurar credenciais municipais: ${nuvemError.message}`,
+          fiscalConnectionError: `Erro ao configurar credenciais municipais: ${acbrError.message}`,
           municipalCredentialsConfigured: false,
           lastConnectionCheck: new Date()
         }
       });
     }
   } else {
-    nuvemFiscalStatus = {
+    acbrApiStatus = {
       status: 'info',
-      message: 'Credenciais salvas localmente. Registre a empresa na Nuvem Fiscal para habilitar a emissão de notas.'
+      message: 'Credenciais salvas localmente. Registre a empresa na ACBr API para habilitar a emissão de notas.'
     };
   }
 
   const responseData = {
     credential_id: credential.id,
-    nuvem_fiscal: nuvemFiscalStatus
+    acbr_api: acbrApiStatus
   };
 
   // Include warning about shared credentials if detected
@@ -1238,7 +1238,7 @@ router.get('/:id/municipal-credentials/status', asyncHandler(async (req, res) =>
     throw new AppError('Company not found', 404, 'NOT_FOUND');
   }
 
-  const { getCredentialStatus } = await import('../services/fiscalCredentialService.js');
+  const { getCredentialStatus } = await import('../services/acbrCredentialService.js');
   const status = await getCredentialStatus(id);
 
   sendSuccess(res, 'Municipal credentials status retrieved', status);
@@ -1261,11 +1261,11 @@ router.post('/:id/test-nfse-emission', asyncHandler(async (req, res) => {
     select: {
       id: true,
       cnpj: true,
-      nuvemFiscalId: true,
+      acbrApiId: true,
       codigoMunicipio: true,
       cidade: true,
       uf: true,
-      certificateUploadedToNuvemFiscal: true,
+      certificateUploadedToAcbrApi: true,
       municipalCredentialsConfigured: true
     }
   });
@@ -1274,17 +1274,17 @@ router.post('/:id/test-nfse-emission', asyncHandler(async (req, res) => {
     throw new AppError('Company not found', 404, 'NOT_FOUND');
   }
 
-  if (!company.nuvemFiscalId) {
-    return sendSuccess(res, 'Empresa não registrada na Nuvem Fiscal', {
+  if (!company.acbrApiId) {
+    return sendSuccess(res, 'Empresa não registrada na ACBr API', {
       canEmit: false,
       status: 'not_registered',
       code: 'NOT_REGISTERED',
-      message: 'Empresa não está registrada na Nuvem Fiscal. Complete o cadastro primeiro.',
-      action: 'Registre a empresa na Nuvem Fiscal antes de testar a emissão.'
+      message: 'Empresa não está registrada na ACBr API. Complete o cadastro primeiro.',
+      action: 'Registre a empresa na ACBr API antes de testar a emissão.'
     });
   }
 
-  if (!company.certificateUploadedToNuvemFiscal && !company.municipalCredentialsConfigured) {
+  if (!company.certificateUploadedToAcbrApi && !company.municipalCredentialsConfigured) {
     return sendSuccess(res, 'Credenciais não configuradas', {
       canEmit: false,
       status: 'credentials_missing',
@@ -1294,7 +1294,7 @@ router.post('/:id/test-nfse-emission', asyncHandler(async (req, res) => {
     });
   }
 
-  const { testNfseEmissionCapability } = await import('../services/nuvemFiscal.js');
+  const { testNfseEmissionCapability } = await import('../services/acbrApi.js');
   const testResult = await testNfseEmissionCapability(company.cnpj);
 
   // Add municipality context to the response

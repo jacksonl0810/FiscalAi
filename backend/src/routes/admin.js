@@ -533,8 +533,8 @@ router.get('/companies', [
     let fiscalStatus = 'pendente'; // Default
     let fiscalStatusLabel = 'Pendente';
     
-    // Check if has Nuvem Fiscal ID (registered in Nuvem Fiscal)
-    if (company.nuvemFiscalId) {
+    // Check if has ACBr API ID (registered in ACBr API)
+    if (company.acbrApiId) {
       // Check fiscal integration status
       if (company.fiscalIntegrationStatus?.status === 'conectado') {
         fiscalStatus = 'conectado';
@@ -546,13 +546,13 @@ router.get('/companies', [
         fiscalStatus = 'verificando';
         fiscalStatusLabel = 'Verificando';
       } else {
-        // Has Nuvem Fiscal ID but no integration status - likely configured
+        // Has ACBr API ID but no integration status - likely configured
         fiscalStatus = 'configurado';
         fiscalStatusLabel = 'Configurado';
       }
     } else {
-      // No Nuvem Fiscal ID
-      if (company.certificadoDigital && company.certificateUploadedToNuvemFiscal) {
+      // No ACBr API ID
+      if (company.certificadoDigital && company.certificateUploadedToAcbrApi) {
         fiscalStatus = 'certificado_ok';
         fiscalStatusLabel = 'Certificado OK';
       } else if (company.certificadoDigital) {
@@ -725,8 +725,8 @@ router.get('/settings', asyncHandler(async (req, res) => {
   // Return environment info (sanitized)
   const settings = {
     environment: process.env.NODE_ENV || 'development',
-    nuvemFiscalConfigured: !!(process.env.NUVEM_FISCAL_CLIENT_ID && process.env.NUVEM_FISCAL_CLIENT_SECRET),
-    nuvemFiscalEnvironment: process.env.NUVEM_FISCAL_ENVIRONMENT || 'sandbox',
+    acbrApiConfigured: !!(process.env.ACBR_API_CLIENT_ID && process.env.ACBR_API_CLIENT_SECRET),
+    acbrApiEnvironment: process.env.ACBR_API_ENVIRONMENT || 'sandbox',
     stripeConfigured: !!(process.env.STRIPE_SECRET_KEY),
     emailConfigured: process.env.EMAIL_ENABLED === 'true',
     version: '1.0.0'

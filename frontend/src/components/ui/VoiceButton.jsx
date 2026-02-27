@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import { Mic, MicOff, Loader2, AlertCircle } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
+import { toast } from "sonner";
 import { assistantService } from "@/api/services";
 
 const MAX_RECORDING_MS = 30 * 1000; // 30 seconds max
@@ -10,7 +11,6 @@ export default function VoiceButton({ onVoiceInput, disabled, showTimer = true }
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
   const [permissionDenied, setPermissionDenied] = useState(false);
-  const [error, setError] = useState(null);
   
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
@@ -53,12 +53,10 @@ export default function VoiceButton({ onVoiceInput, disabled, showTimer = true }
   };
 
   const startRecording = async () => {
-    setError(null);
-    
     // Check permission first
     const hasPermission = await checkMicrophonePermission();
     if (!hasPermission) {
-      setError('Permissão do microfone negada. Verifique as configurações do navegador.');
+      toast.error('Permissão do microfone negada. Verifique as configurações do navegador.', { duration: 4000 });
       return;
     }
 
@@ -117,7 +115,7 @@ export default function VoiceButton({ onVoiceInput, disabled, showTimer = true }
         // Check if we have any audio chunks
         if (audioChunksRef.current.length === 0) {
           console.warn('[VoiceButton] No audio chunks recorded');
-          setError('Nenhum áudio gravado. Tente novamente.');
+          toast.error('Nenhum áudio gravado. Tente novamente.', { duration: 4000 });
           setIsRecording(false);
           setRecordingTime(0);
           return;
@@ -137,7 +135,7 @@ export default function VoiceButton({ onVoiceInput, disabled, showTimer = true }
         // Validate blob size
         if (audioBlob.size < 1024) {
           console.warn('Audio recording too short:', audioBlob.size, 'bytes');
-          setError('Gravação muito curta. Grave pelo menos 1 segundo.');
+          toast.error('Gravação muito curta. Grave pelo menos 1 segundo.', { duration: 4000 });
           setIsRecording(false);
           setRecordingTime(0);
           return;
@@ -152,16 +150,15 @@ export default function VoiceButton({ onVoiceInput, disabled, showTimer = true }
           if (result.warning) {
             console.log('[VoiceButton] Transcription warning:', result.warning);
             if (result.warning === 'HALLUCINATION_DETECTED' || result.warning === 'NO_SPEECH_DETECTED') {
-              setError(result.message || 'Não entendi. Fale mais alto e claramente.');
+              toast.error(result.message || 'Não entendi. Fale mais alto e claramente.', { duration: 4000 });
               return;
             }
           }
           
           if (result.text && result.text.trim()) {
-            setError(null);
             onVoiceInput?.(result.text.trim());
           } else {
-            setError('Não foi possível transcrever. Tente falar mais claramente.');
+            toast.error('Não foi possível transcrever. Tente falar mais claramente.', { duration: 4000 });
           }
         } catch (err) {
           console.error('Error transcribing audio:', err);
@@ -182,7 +179,7 @@ export default function VoiceButton({ onVoiceInput, disabled, showTimer = true }
             errorMessage = 'Gravação muito curta. Grave pelo menos 2 segundos.';
           }
           
-          setError(errorMessage);
+          toast.error(errorMessage, { duration: 4000 });
         } finally {
           setIsTranscribing(false);
           setIsRecording(false);
@@ -214,13 +211,13 @@ export default function VoiceButton({ onVoiceInput, disabled, showTimer = true }
       
       if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
         setPermissionDenied(true);
-        setError('Permissão do microfone negada. Clique no ícone de cadeado na barra de endereço para permitir.');
+        toast.error('Permissão do microfone negada. Clique no ícone de cadeado na barra de endereço para permitir.', { duration: 5000 });
       } else if (err.name === 'NotFoundError') {
-        setError('Nenhum microfone encontrado. Conecte um microfone e tente novamente.');
+        toast.error('Nenhum microfone encontrado. Conecte um microfone e tente novamente.', { duration: 4000 });
       } else if (err.name === 'NotReadableError') {
-        setError('Microfone em uso por outro aplicativo. Feche outros apps e tente novamente.');
+        toast.error('Microfone em uso por outro aplicativo. Feche outros apps e tente novamente.', { duration: 4000 });
       } else {
-        setError('Não foi possível acessar o microfone. Verifique as permissões.');
+        toast.error('Não foi possível acessar o microfone. Verifique as permissões.', { duration: 4000 });
       }
     }
   };
@@ -247,8 +244,6 @@ export default function VoiceButton({ onVoiceInput, disabled, showTimer = true }
       startRecording();
     }
   };
-
-  const clearError = () => setError(null);
 
   return (
     <div className="relative flex items-center gap-2">
@@ -375,25 +370,6 @@ export default function VoiceButton({ onVoiceInput, disabled, showTimer = true }
         )}
       </motion.button>
 
-      {/* Error tooltip */}
-      <AnimatePresence>
-        {error && (
-          <motion.div
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 10 }}
-            className="absolute bottom-full mb-2 left-0 right-0 z-50"
-          >
-            <div 
-              className="bg-red-500/90 text-white text-xs px-3 py-2 rounded-lg shadow-lg max-w-xs cursor-pointer"
-              onClick={clearError}
-            >
-              {error}
-              <div className="text-red-200 text-[10px] mt-1">Clique para fechar</div>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
     </div>
   );
 }

@@ -561,7 +561,7 @@ export default function Pricing() {
         {/* Pricing Cards */}
         <section className="py-12 px-4">
           <div className="max-w-7xl mx-auto">
-            <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-5 lg:gap-6 items-start">
+            <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-5 lg:gap-6 items-stretch">
               {plans.map((plan, index) => {
                 const PlanIcon = plan.icon;
                 const displayPrice = getDisplayPrice(plan);
@@ -576,7 +576,7 @@ export default function Pricing() {
                     initial={{ opacity: 0, y: 40 }}
                   animate={{ opacity: 1, y: 0 }}
                     transition={{ duration: 0.7, delay: index * 0.12, ease: [0.25, 0.46, 0.45, 0.94] }}
-                    className={`relative group ${plan.popular ? 'lg:-mt-4 lg:mb-4 z-10' : ''}`}
+                    className={`relative group ${plan.popular ? 'z-10' : ''}`}
                   >
                     {/* Glow effect */}
                     <div className={`absolute -inset-[2px] rounded-[32px] transition-all duration-700 blur-xl ${

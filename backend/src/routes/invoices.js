@@ -4,7 +4,7 @@ import { prisma } from '../lib/prisma.js';
 import { authenticate } from '../middleware/auth.js';
 import { asyncHandler, AppError } from '../middleware/errorHandler.js';
 import { requireActiveSubscription } from '../middleware/subscriptionAccess.js';
-import { emitNfse, checkNfseStatus, cancelNfse } from '../services/nuvemFiscal.js';
+import { emitNfse, checkNfseStatus, cancelNfse } from '../services/acbrApi.js';
 import { sendSuccess } from '../utils/response.js';
 
 const router = express.Router();
@@ -296,7 +296,7 @@ router.post('/issue', [
   const valorIss = (parseFloat(valor) * parseFloat(aliquota_iss)) / 100;
 
   try {
-    // Emit NFS-e via Nuvem Fiscal API
+    // Emit NFS-e via ACBr API
     const invoiceData = {
       cliente_nome,
       cliente_documento,
@@ -330,7 +330,7 @@ router.post('/issue', [
         codigoServico: codigo_servico,
         pdfUrl: nfseResult.nfse.pdf_url,
         xmlUrl: nfseResult.nfse.xml_url,
-        nuvemFiscalId: nfseResult.nfse.nuvem_fiscal_id
+        acbrApiId: nfseResult.nfse.acbr_api_id
       }
     });
 
@@ -369,7 +369,7 @@ router.post('/issue', [
     });
 
     throw new AppError(
-      error.message || 'Falha ao emitir nota fiscal na Nuvem Fiscal',
+      error.message || 'Falha ao emitir nota fiscal na ACBr API',
       500,
       'INVOICE_EMISSION_ERROR'
     );
@@ -399,15 +399,15 @@ router.post('/:id/check-status', asyncHandler(async (req, res) => {
     throw new AppError('Invoice not found', 404, 'NOT_FOUND');
   }
 
-  // Get company to access nuvemFiscalId
+  // Get company to access acbrApiId
   const company = await prisma.company.findFirst({
     where: { id: invoice.companyId }
   });
 
   try {
-    // Check status with Nuvem Fiscal API if invoice has nuvemFiscalId
-    if (invoice.nuvemFiscalId && company?.nuvemFiscalId) {
-      const statusResult = await checkNfseStatus(company.nuvemFiscalId, invoice.nuvemFiscalId);
+    // Check status with ACBr API if invoice has acbrApiId (legacy field name)
+    if (invoice.acbrApiId && company?.acbrApiId) {
+      const statusResult = await checkNfseStatus(company.acbrApiId, invoice.acbrApiId);
       
       // Update invoice status if changed
       if (statusResult.status !== invoice.status) {
@@ -434,7 +434,7 @@ router.post('/:id/check-status', asyncHandler(async (req, res) => {
         mensagem: statusResult.mensagem
       });
     } else {
-      // No Nuvem Fiscal ID, return current database status
+      // No ACBr API ID, return current database status
       sendSuccess(res, 'Status verificado', {
         invoiceStatus: invoice.status
       });
@@ -525,7 +525,7 @@ router.post('/:id/cancel', [
     throw new AppError('Invoice not found', 404, 'NOT_FOUND');
   }
 
-  // Get company to access nuvemFiscalId and codigoMunicipio
+  // Get company to access acbrApiId and codigoMunicipio
   const company = await prisma.company.findFirst({
     where: { id: invoice.companyId }
   });
@@ -559,11 +559,11 @@ router.post('/:id/cancel', [
 
   try {
     // Import cancelNfse function
-    const { cancelNfse } = await import('../services/nuvemFiscal.js');
+    const { cancelNfse } = await import('../services/acbrApi.js');
     
-    // Cancel with Nuvem Fiscal API if invoice has nuvemFiscalId
-    if (invoice.nuvemFiscalId && company?.nuvemFiscalId) {
-      await cancelNfse(company.nuvemFiscalId, invoice.nuvemFiscalId, reason);
+    // Cancel with ACBr API if invoice has acbrApiId (legacy field name)
+    if (invoice.acbrApiId && company?.acbrApiId) {
+      await cancelNfse(company.acbrApiId, invoice.acbrApiId, reason);
     }
 
     // Update invoice status in database
@@ -653,10 +653,10 @@ router.get('/:id/xml', asyncHandler(async (req, res) => {
     throw new AppError('Invoice not found', 404, 'NOT_FOUND');
   }
 
-  // Download XML from Nuvem Fiscal
+  // Download XML from ACBr API
   if (invoice.xmlUrl) {
     try {
-      // Fetch XML from Nuvem Fiscal
+      // Fetch XML from ACBr API
       const response = await fetch(invoice.xmlUrl);
       if (!response.ok) {
         throw new Error(`Failed to fetch XML: ${response.status}`);
@@ -682,7 +682,7 @@ router.get('/:id/xml', asyncHandler(async (req, res) => {
 
 /**
  * GET /api/invoices/:id/pdf
- * Download invoice PDF (from Nuvem Fiscal or generate locally)
+ * Download invoice PDF (from ACBr API or generate locally)
  */
 router.get('/:id/pdf', asyncHandler(async (req, res) => {
   // Get user's company IDs
@@ -708,7 +708,7 @@ router.get('/:id/pdf', asyncHandler(async (req, res) => {
     where: { id: invoice.companyId }
   });
 
-  // Try Nuvem Fiscal URL first
+  // Try ACBr API URL first (legacy field pdfUrl)
   if (invoice.pdfUrl) {
     try {
       const response = await fetch(invoice.pdfUrl);
@@ -719,7 +719,7 @@ router.get('/:id/pdf', asyncHandler(async (req, res) => {
         return res.send(Buffer.from(pdfBuffer));
       }
     } catch (error) {
-      console.warn('[Invoice] Nuvem Fiscal PDF unavailable, generating locally:', error.message);
+      console.warn('[Invoice] ACBr API PDF unavailable, generating locally:', error.message);
     }
   }
 

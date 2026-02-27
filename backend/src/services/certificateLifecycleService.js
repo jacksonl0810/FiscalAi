@@ -4,7 +4,7 @@
  */
 
 import { prisma } from '../lib/prisma.js';
-import { getCredentialStatus } from './fiscalCredentialService.js';
+import { getCredentialStatus } from './acbrCredentialService.js';
 import { isDatabaseConnectionError } from '../utils/databaseConnection.js';
 
 // Notification thresholds (days before expiration)

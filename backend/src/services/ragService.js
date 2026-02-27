@@ -135,8 +135,8 @@ async function getCompanyDetails(userId, companyId) {
       inscricaoMunicipal: true,
       fiscalConnectionStatus: true,
       certificadoDigital: true,
-      certificateUploadedToNuvemFiscal: true,
-      nuvemFiscalId: true,
+      certificateUploadedToAcbrApi: true,
+      acbrApiId: true,
     }
   });
 }
@@ -272,11 +272,11 @@ function buildContextString(data, categories) {
   // Company info (always include if available)
   if (data.company) {
     const c = data.company;
-    const fiscalStatus = c.fiscalConnectionStatus === 'connected' && c.certificateUploadedToNuvemFiscal
+    const fiscalStatus = c.fiscalConnectionStatus === 'connected' && c.certificateUploadedToAcbrApi
       ? '✅ Conectado (pronto para emitir)'
-      : c.nuvemFiscalId 
+      : c.acbrApiId 
         ? '⚠️ Registrado, mas certificado pendente'
-        : '❌ Não registrado na Nuvem Fiscal';
+        : '❌ Não registrado na ACBr API';
     
     sections.push(`📋 EMPRESA ATIVA:
 - Razão Social: ${c.razaoSocial || 'N/A'}

@@ -7,7 +7,7 @@ import { prisma } from '../lib/prisma.js';
 import { authenticate } from '../middleware/auth.js';
 import { asyncHandler, AppError } from '../middleware/errorHandler.js';
 import { requireActiveSubscription } from '../middleware/subscriptionAccess.js';
-import { emitNfse, checkNfseStatus, isNuvemFiscalConfigured } from '../services/nuvemFiscal.js';
+import { emitNfse, checkNfseStatus, isAcbrApiConfigured } from '../services/acbrApi.js';
 import { sendSuccess } from '../utils/response.js';
 import { checkMEILimit } from '../services/meiLimitTracking.js';
 import { validateInvoiceForRegime, getRegimeRules, getRecommendedIssRate, getRegimeInvoiceDefaults } from '../services/regimeRules.js';
@@ -2890,17 +2890,17 @@ router.post('/validate-issuance', [
     });
   }
 
-  if (!isNuvemFiscalConfigured()) {
+  if (!isAcbrApiConfigured()) {
     validationErrors.push({
-      code: 'NUVEM_FISCAL_NOT_CONFIGURED',
+      code: 'ACBR_API_NOT_CONFIGURED',
       message: 'Integração fiscal não configurada no servidor.'
     });
   }
 
-  if (!company.nuvemFiscalId) {
+  if (!company.acbrApiId) {
     validationErrors.push({
       code: 'COMPANY_NOT_REGISTERED',
-      message: 'Empresa não registrada na Nuvem Fiscal.'
+      message: 'Empresa não registrada na ACBr API.'
     });
   }
 
@@ -2971,7 +2971,7 @@ router.post('/validate-issuance', [
       id: company.id,
       razaoSocial: company.razaoSocial,
       regime: company.regimeTributario,
-      nuvemFiscalId: company.nuvemFiscalId,
+      acbrApiId: company.acbrApiId,
       hasCredential: !!company.fiscalCredential,
       connectionStatus: company.fiscalConnectionStatus
     },
@@ -3251,7 +3251,7 @@ async function executeActionHandler(req, res) {
 }
 
 /**
- * Execute emitir_nfse action - Emit invoice via real Nuvem Fiscal API
+ * Execute emitir_nfse action - Emit invoice via real ACBr API
  */
 async function executeEmitNfse(actionData, company, userId, res) {
   // Comprehensive plan limits validation
@@ -3459,10 +3459,10 @@ async function executeEmitNfse(actionData, company, userId, res) {
     }
   }
 
-  // Check if Nuvem Fiscal is configured
-  if (!isNuvemFiscalConfigured()) {
+  // Check if ACBr API is configured
+  if (!isAcbrApiConfigured()) {
     throw new AppError(
-      'Integração fiscal não configurada. Para emitir notas fiscais, configure as credenciais da Nuvem Fiscal (NUVEM_FISCAL_CLIENT_ID e NUVEM_FISCAL_CLIENT_SECRET).',
+      'Integração fiscal não configurada. Para emitir notas fiscais, configure as credenciais da ACBr API (ACBR_API_CLIENT_ID e ACBR_API_CLIENT_SECRET).',
       503,
       'SERVICE_NOT_CONFIGURED'
     );
@@ -3476,10 +3476,10 @@ async function executeEmitNfse(actionData, company, userId, res) {
     throw new AppError('Valor deve ser maior que zero', 400, 'VALIDATION_ERROR');
   }
 
-  // Check if company is registered in Nuvem Fiscal
-  if (!company.nuvemFiscalId) {
+  // Check if company is registered in ACBr API
+  if (!company.acbrApiId) {
     throw new AppError(
-      'Empresa não registrada na Nuvem Fiscal. Por favor, registre a empresa primeiro usando o botão "Verificar conexão com prefeitura".',
+      'Empresa não registrada na ACBr API. Por favor, registre a empresa primeiro usando o botão "Verificar conexão com prefeitura".',
       400,
       'COMPANY_NOT_REGISTERED'
     );
@@ -3502,13 +3502,13 @@ async function executeEmitNfse(actionData, company, userId, res) {
   }
 
   // Validate fiscal connection before issuance (non-blocking for testing)
-  const { validateFiscalConnection } = await import('../services/fiscalConnectionService.js');
+  const { validateFiscalConnection } = await import('../services/acbrConnectionService.js');
   let fiscalConnectionValid = true;
   try {
     await validateFiscalConnection(company);
   } catch (connectionError) {
     fiscalConnectionValid = false;
-    console.warn(`[Invoice] Fiscal connection warning: ${connectionError.message}. Proceeding to let Nuvem Fiscal validate.`);
+    console.warn(`[Invoice] Fiscal connection warning: ${connectionError.message}. Proceeding to let ACBr API validate.`);
     
     // Handle different connection error types
     if (connectionError.code === 'FISCAL_NOT_CONNECTED') {
@@ -3652,7 +3652,7 @@ async function executeEmitNfse(actionData, company, userId, res) {
   }
 
   try {
-    // Emit NFS-e via real Nuvem Fiscal API
+    // Emit NFS-e via real ACBr API
     const nfseResult = await emitNfse(invoiceData, company);
 
     // Calculate ISS value
@@ -3677,7 +3677,7 @@ async function executeEmitNfse(actionData, company, userId, res) {
         codigoServico: invoiceData.codigo_servico,
         pdfUrl: nfseResult.nfse.pdf_url,
         xmlUrl: nfseResult.nfse.xml_url,
-        nuvemFiscalId: nfseResult.nfse.nuvem_fiscal_id,
+        acbrApiId: nfseResult.nfse.acbr_api_id,
         // Link to InvoiceUsage record for Pay Per Use tracking
         invoiceUsageId: invoiceUsageRecord?.id || null
       }
@@ -3700,7 +3700,7 @@ async function executeEmitNfse(actionData, company, userId, res) {
         message: 'Nota fiscal criada e enviada para processamento',
         source: 'api',
         metadata: {
-          nuvem_fiscal_id: nfseResult.nfse.nuvem_fiscal_id,
+          acbr_api_id: nfseResult.nfse.acbr_api_id,
           initial_status: invoice.status
         }
       }
@@ -3757,7 +3757,7 @@ async function executeEmitNfse(actionData, company, userId, res) {
       }
     });
 
-    // Preserve the error code from Nuvem Fiscal API (especially for 403 permission errors)
+    // Preserve the error code from ACBr API (especially for 403 permission errors)
     // This ensures we show the correct error type (municipality permission vs plan limit)
     const errorCode = error.code || (error.status === 403 ? 'MUNICIPALITY_PERMISSION_DENIED' : (error.status === 401 ? 'MUNICIPALITY_AUTH_ERROR' : 'INVOICE_EMISSION_ERROR'));
     const statusCode = error.status || 500;
@@ -3792,13 +3792,13 @@ async function executeCheckStatus(actionData, company, res) {
     throw new AppError('Nota fiscal não encontrada', 404, 'NOT_FOUND');
   }
 
-  if (!invoice.nuvemFiscalId) {
-    throw new AppError('Nota fiscal não possui ID da Nuvem Fiscal', 400, 'INVALID_INVOICE');
+  if (!invoice.acbrApiId) {
+    throw new AppError('Nota fiscal não possui ID da ACBr API', 400, 'INVALID_INVOICE');
   }
 
   try {
-    // Check status with Nuvem Fiscal API
-    const statusResult = await checkNfseStatus(company.nuvemFiscalId, invoice.nuvemFiscalId);
+    // Check status with ACBr API
+    const statusResult = await checkNfseStatus(company.acbrApiId, invoice.acbrApiId);
 
     // Update invoice status in database
     await prisma.invoice.update({
@@ -3835,17 +3835,17 @@ async function executeCheckStatus(actionData, company, res) {
  * Execute verificar_conexao action - Check fiscal connection
  */
 async function executeCheckConnection(company, res) {
-  if (!company.nuvemFiscalId) {
+  if (!company.acbrApiId) {
     throw new AppError(
-      'Empresa não registrada na Nuvem Fiscal',
+      'Empresa não registrada na ACBr API',
       400,
       'COMPANY_NOT_REGISTERED'
     );
   }
 
   try {
-    const { checkConnection } = await import('../services/nuvemFiscal.js');
-    const connectionResult = await checkConnection(company.nuvemFiscalId);
+    const { checkConnection } = await import('../services/acbrApi.js');
+    const connectionResult = await checkConnection(company.acbrApiId);
 
     await prisma.fiscalIntegrationStatus.upsert({
       where: { companyId: company.id },
@@ -3921,8 +3921,8 @@ async function executeCancelNfse(actionData, company, userId, res) {
   }
 
   try {
-    const { cancelNfse } = await import('../services/nuvemFiscal.js');
-    const cancelResult = await cancelNfse(company.nuvemFiscalId, invoice.nuvemFiscalId, reason);
+    const { cancelNfse } = await import('../services/acbrApi.js');
+    const cancelResult = await cancelNfse(company.acbrApiId, invoice.acbrApiId, reason);
 
     await prisma.invoice.update({
       where: { id: invoice.id },
@@ -4388,7 +4388,7 @@ Antes de emitir qualquer nota, você DEVE confirmar:
 1. Status do plano (ACTIVE, PAST_DUE, CANCELED)
 2. Limite de notas do plano (verificar se atingiu o limite mensal)
 3. Limite de empresas (se aplicável)
-4. Empresa registrada na Nuvem Fiscal
+4. Empresa registrada na ACBr API
 5. Conexão fiscal estabelecida
 6. Município suportado
 7. Certificado digital ou credenciais configurados

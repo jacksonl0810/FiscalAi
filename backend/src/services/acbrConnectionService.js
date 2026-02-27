@@ -2,8 +2,8 @@
  * Fiscal Connection Status Service
  * Manages company-level fiscal connection states and validation
  * 
- * Connection flow according to Nuvem Fiscal documentation:
- * 1. Register company in Nuvem Fiscal (POST /empresas)
+ * Connection flow according to ACBr API documentation:
+ * 1. Register company in ACBr API (POST /empresas)
  * 2. Configure authentication based on municipality requirements:
  *    - Certificate only: PUT /empresas/{cnpj}/certificado
  *    - Municipal credentials only: PUT /empresas/{cnpj}/nfse with prefeitura object
@@ -13,7 +13,7 @@
  */
 
 import { prisma } from '../lib/prisma.js';
-import { checkConnection } from './nuvemFiscal.js';
+import { checkConnection } from './acbrApi.js';
 import { getMunicipalityAuthRequirements } from './municipalityService.js';
 import { AppError } from '../middleware/errorHandler.js';
 
@@ -65,7 +65,7 @@ export async function validateMunicipalityAuthConfig(company) {
     const missing = [];
 
     // Check certificate requirement
-    if (requiresCertificate && !company.certificateUploadedToNuvemFiscal) {
+    if (requiresCertificate && !company.certificateUploadedToAcbrApi) {
       missing.push('certificado_digital');
     }
 
@@ -85,8 +85,8 @@ export async function validateMunicipalityAuthConfig(company) {
       }
 
       const missingDescriptions = missing.map(m => {
-        if (m === 'certificado_digital') return 'Certificado digital não configurado na Nuvem Fiscal';
-        if (m === 'credenciais_prefeitura') return 'Credenciais da prefeitura não configuradas na Nuvem Fiscal';
+        if (m === 'certificado_digital') return 'Certificado digital não configurado na ACBr API';
+        if (m === 'credenciais_prefeitura') return 'Credenciais da prefeitura não configuradas na ACBr API';
         return m;
       });
 
@@ -121,12 +121,12 @@ export async function validateMunicipalityAuthConfig(company) {
 /**
  * Test and update fiscal connection status for a company
  * 
- * IMPORTANT: For Nuvem Fiscal API, the following are REQUIRED to emit invoices:
- * 1. Company registered in Nuvem Fiscal (has nuvemFiscalId)
- * 2. Digital certificate configured AND uploaded to Nuvem Fiscal
+ * IMPORTANT: For ACBr API, the following are REQUIRED to emit invoices:
+ * 1. Company registered in ACBr API (has acbrApiId - legacy field name)
+ * 2. Digital certificate configured AND uploaded to ACBr API
  * 
  * Status meanings:
- * - 'connected': Company + certificate configured on Nuvem Fiscal, ready to issue invoices
+ * - 'connected': Company + certificate configured on ACBr API, ready to issue invoices
  * - 'not_connected': Missing requirements (company not registered, or certificate not configured)
  * - 'failed': Connection test failed
  * - 'expired': Certificate expired
@@ -158,25 +158,25 @@ export async function testFiscalConnection(companyId) {
     id: company.id, 
     hasCredential: !!company.fiscalCredential,
     credentialType: company.fiscalCredential?.type,
-    nuvemFiscalId: company.nuvemFiscalId,
+    acbrApiId: company.acbrApiId,
     certificadoDigital: company.certificadoDigital
   });
 
-  // Step 1: Check if company is registered in Nuvem Fiscal
-  if (!company.nuvemFiscalId) {
+  // Step 1: Check if company is registered in ACBr API
+  if (!company.acbrApiId) {
     await prisma.company.update({
       where: { id: companyId },
       data: {
         fiscalConnectionStatus: 'not_connected',
-        fiscalConnectionError: 'Empresa não registrada na Nuvem Fiscal',
+        fiscalConnectionError: 'Empresa não registrada na ACBr API',
         lastConnectionCheck: new Date()
       }
     });
 
     return {
       status: 'not_connected',
-      message: 'Empresa não registrada na Nuvem Fiscal. Acesse "Minhas Empresas", clique na empresa e registre na Nuvem Fiscal para habilitar a emissão de notas fiscais.',
-      error: 'Empresa não registrada na Nuvem Fiscal',
+      message: 'Empresa não registrada na ACBr API. Acesse "Minhas Empresas", clique na empresa e registre para habilitar a emissão de notas fiscais.',
+      error: 'Empresa não registrada na ACBr API',
       step: 'register_company'
     };
   }
@@ -247,21 +247,21 @@ export async function testFiscalConnection(companyId) {
       }
     }
 
-    // Check if certificate was uploaded to Nuvem Fiscal
-    if (!company.certificateUploadedToNuvemFiscal) {
+    // Check if certificate was uploaded to ACBr API
+    if (!company.certificateUploadedToAcbrApi) {
       await prisma.company.update({
         where: { id: companyId },
         data: {
           fiscalConnectionStatus: 'not_connected',
-          fiscalConnectionError: 'Certificado digital não foi enviado para Nuvem Fiscal',
+          fiscalConnectionError: 'Certificado digital não foi enviado para ACBr API',
           lastConnectionCheck: new Date()
         }
       });
 
       return {
         status: 'not_connected',
-        message: 'Certificado digital não foi enviado para Nuvem Fiscal. Faça upload do certificado digital novamente na aba "Integração Fiscal".',
-        error: 'Certificado digital não foi enviado para Nuvem Fiscal',
+        message: 'Certificado digital não foi enviado para ACBr API. Faça upload do certificado digital novamente na aba "Integração Fiscal".',
+        error: 'Certificado digital não foi enviado para ACBr API',
         step: 'upload_certificate'
       };
     }
@@ -269,21 +269,21 @@ export async function testFiscalConnection(companyId) {
 
   // Step 5: Municipal credentials-specific checks (only for municipal_credentials type)
   if (company.fiscalCredential.type === 'municipal_credentials') {
-    // Check if municipal credentials were configured on Nuvem Fiscal
+    // Check if municipal credentials were configured on ACBr API
     if (!company.municipalCredentialsConfigured) {
       await prisma.company.update({
         where: { id: companyId },
         data: {
           fiscalConnectionStatus: 'not_connected',
-          fiscalConnectionError: 'Credenciais da prefeitura não foram configuradas na Nuvem Fiscal',
+          fiscalConnectionError: 'Credenciais da prefeitura não foram configuradas na ACBr API',
           lastConnectionCheck: new Date()
         }
       });
 
       return {
         status: 'not_connected',
-        message: 'Credenciais da prefeitura não foram configuradas na Nuvem Fiscal. Salve as credenciais novamente na aba "Integração Fiscal".',
-        error: 'Credenciais da prefeitura não foram configuradas na Nuvem Fiscal',
+        message: 'Credenciais da prefeitura não foram configuradas na ACBr API. Salve as credenciais novamente na aba "Integração Fiscal".',
+        error: 'Credenciais da prefeitura não foram configuradas na ACBr API',
         step: 'configure_municipal_credentials'
       };
     }
@@ -295,7 +295,7 @@ export async function testFiscalConnection(companyId) {
     where: { id: companyId },
     select: {
       codigoMunicipio: true,
-      certificateUploadedToNuvemFiscal: true,
+      certificateUploadedToAcbrApi: true,
       municipalCredentialsConfigured: true
     }
   });
@@ -331,15 +331,15 @@ export async function testFiscalConnection(companyId) {
     }
   }
 
-  // Step 6: Test connection to Nuvem Fiscal
-  // Verify the company exists on Nuvem Fiscal
+  // Step 6: Test connection to ACBr API
+  // Verify the company exists on ACBr API
   try {
-    const connectionResult = await checkConnection(company.nuvemFiscalId);
+    const connectionResult = await checkConnection(company.acbrApiId);
 
     if (connectionResult.status === 'conectado') {
-      // Company exists on Nuvem Fiscal and authentication is configured
+      // Company exists on ACBr API and authentication is configured
       // Check if we have valid auth configured locally
-      const hasValidAuth = company.certificateUploadedToNuvemFiscal || company.municipalCredentialsConfigured;
+      const hasValidAuth = company.certificateUploadedToAcbrApi || company.municipalCredentialsConfigured;
       
       if (hasValidAuth) {
         // All good - mark as connected
@@ -358,24 +358,24 @@ export async function testFiscalConnection(companyId) {
 
         return {
           status: 'connected',
-          message: `Empresa conectada à Nuvem Fiscal com sucesso usando ${authMethod}. Pronta para emitir notas fiscais.`,
+          message: `Empresa conectada à ACBr API com sucesso usando ${authMethod}. Pronta para emitir notas fiscais.`,
           data: connectionResult.data
         };
       } else {
-        // Company exists but no auth configured on Nuvem Fiscal
+        // Company exists but no auth configured on ACBr API
         await prisma.company.update({
           where: { id: companyId },
           data: {
             fiscalConnectionStatus: 'not_connected',
-            fiscalConnectionError: 'Autenticação não configurada na Nuvem Fiscal',
+            fiscalConnectionError: 'Autenticação não configurada na ACBr API',
             lastConnectionCheck: new Date()
           }
         });
 
         return {
           status: 'not_connected',
-          message: 'Empresa está registrada na Nuvem Fiscal, mas a autenticação ainda não foi configurada. Configure o certificado digital ou as credenciais da prefeitura na aba "Integração Fiscal".',
-          error: 'Autenticação não configurada na Nuvem Fiscal',
+          message: 'Empresa está registrada na ACBr API, mas a autenticação ainda não foi configurada. Configure o certificado digital ou as credenciais da prefeitura na aba "Integração Fiscal".',
+          error: 'Autenticação não configurada na ACBr API',
           step: 'configure_auth',
           data: connectionResult.data
         };
@@ -386,7 +386,7 @@ export async function testFiscalConnection(companyId) {
         where: { id: companyId },
         data: {
           fiscalConnectionStatus: 'not_connected',
-          fiscalConnectionError: connectionResult.message || 'Certificado digital não está configurado na Nuvem Fiscal',
+          fiscalConnectionError: connectionResult.message || 'Certificado digital não está configurado na ACBr API',
           lastConnectionCheck: new Date()
         }
       });
@@ -407,7 +407,7 @@ export async function testFiscalConnection(companyId) {
             company.user.id,
             'credential_issue',
             {
-              error: connectionResult.message || 'Certificado não configurado na Nuvem Fiscal',
+              error: connectionResult.message || 'Certificado não configurado na ACBr API',
               company: company.razaoSocial || company.nomeFantasia
             }
           );
@@ -416,7 +416,7 @@ export async function testFiscalConnection(companyId) {
 
       return {
         status: 'not_connected',
-        message: connectionResult.message || 'Certificado digital não está configurado na Nuvem Fiscal. O certificado foi salvo localmente, mas precisa ser enviado para a Nuvem Fiscal. Tente fazer upload do certificado novamente.',
+        message: connectionResult.message || 'Certificado digital não está configurado na ACBr API. O certificado foi salvo localmente, mas precisa ser enviado para a ACBr API. Tente fazer upload do certificado novamente.',
         error: connectionResult.details || connectionResult.message,
         step: 'upload_certificate'
       };
@@ -456,7 +456,7 @@ export async function testFiscalConnection(companyId) {
 
     return {
       status: 'failed',
-      message: `Erro ao testar conexão com Nuvem Fiscal: ${error.message}`,
+      message: `Erro ao testar conexão com ACBr API: ${error.message}`,
       error: error.message,
       step: 'check_connection'
     };
@@ -562,7 +562,7 @@ export async function getFiscalConnectionStatus(companyId) {
       fiscalConnectionStatus: true,
       fiscalConnectionError: true,
       lastConnectionCheck: true,
-      nuvemFiscalId: true,
+      acbrApiId: true,
       fiscalCredential: {
         select: {
           type: true,
@@ -584,6 +584,6 @@ export async function getFiscalConnectionStatus(companyId) {
     hasCredential: !!company.fiscalCredential,
     credentialType: company.fiscalCredential?.type,
     certificateExpiresAt: company.fiscalCredential?.expiresAt,
-    isRegistered: !!company.nuvemFiscalId
+    isRegistered: !!company.acbrApiId
   };
 }

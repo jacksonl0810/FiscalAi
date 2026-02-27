@@ -9,7 +9,7 @@
  */
 
 import { prisma } from '../lib/prisma.js';
-import { apiRequest, isNuvemFiscalConfigured } from './nuvemFiscal.js';
+import { apiRequest, isAcbrApiConfigured } from './acbrApi.js';
 
 // Default cancellation rules (conservative - most restrictive)
 const DEFAULT_CANCELLATION_RULES = {
@@ -20,7 +20,7 @@ const DEFAULT_CANCELLATION_RULES = {
 };
 
 // Municipality-specific cancellation rules
-// These should be fetched from Nuvem Fiscal API when available
+// These should be fetched from ACBr API when available
 const MUNICIPALITY_RULES = {
   // São Paulo
   '3550308': {
@@ -174,23 +174,23 @@ export async function validateCancellation(invoice, company, justification = '')
 }
 
 /**
- * Check cancellation status via Nuvem Fiscal API
+ * Check cancellation status via ACBr API
  * 
- * @param {string} nuvemFiscalId - Company ID in Nuvem Fiscal
- * @param {string} nfseId - NFS-e ID in Nuvem Fiscal
+ * @param {string} acbrApiId - Company ID in ACBr API (legacy field name)
+ * @param {string} nfseId - NFS-e ID in ACBr API
  * @returns {Promise<object>} Cancellation status
  */
-export async function checkCancellationStatus(nuvemFiscalId, nfseId) {
-  if (!isNuvemFiscalConfigured()) {
+export async function checkCancellationStatus(acbrApiId, nfseId) {
+  if (!isAcbrApiConfigured()) {
     return {
       canCancel: null,
-      message: 'Nuvem Fiscal não configurada'
+      message: 'ACBr API não configurada'
     };
   }
 
   try {
     // Some APIs provide a specific endpoint to check if cancellation is allowed
-    const response = await apiRequest(`/empresas/${nuvemFiscalId}/nfse/${nfseId}/cancelamento/validar`, {
+    const response = await apiRequest(`/empresas/${acbrApiId}/nfse/${nfseId}/cancelamento/validar`, {
       method: 'GET'
     });
 

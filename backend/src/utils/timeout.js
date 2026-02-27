@@ -6,7 +6,8 @@
 
 // Timeout constants (in milliseconds)
 export const TIMEOUTS = {
-  NUVEM_FISCAL: 30000,      // 30 seconds
+  ACBR_API_LEGACY: 30000,   // 30 seconds (legacy fallback)
+  ACBR_API: 60000,          // 60 seconds for ACBr API
   OPENAI: 60000,            // 60 seconds (GPT can take longer)
   STRIPE: 30000,            // 30 seconds
   DEFAULT: 30000            // 30 seconds default
@@ -52,7 +53,8 @@ export async function fetchWithTimeout(url, options = {}, timeoutMs = TIMEOUTS.D
  */
 export function getTimeout(service) {
   const serviceTimeouts = {
-    'nuvem_fiscal': TIMEOUTS.NUVEM_FISCAL,
+    'nuvem_fiscal': TIMEOUTS.ACBR_API_LEGACY,
+    'acbr_api': TIMEOUTS.ACBR_API,
     'openai': TIMEOUTS.OPENAI,
     'stripe': TIMEOUTS.STRIPE
   };
