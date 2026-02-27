@@ -1,6 +1,6 @@
 /**
  * PDF Generation Service
- * Generates PDF invoices locally when Nuvem Fiscal URL is unavailable
+ * Generates PDF invoices locally when ACBr API URL is unavailable
  */
 
 import PDFDocument from 'pdfkit';

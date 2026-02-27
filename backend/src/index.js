@@ -196,7 +196,7 @@ const server = app.listen(PORT, async () => {
   console.log(`🚀 Server running on http://localhost:${PORT}`);
   console.log(`📚 API available at http://localhost:${PORT}/api`);
   console.log(`🔧 Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`📝 Nuvem Fiscal: Check backend/NUVEM_FISCAL_OPTIONAL.md for setup`);
+  console.log(`📝 ACBr API: Check backend/.env.example for setup`);
   
   // Start background tasks (enabled by default, can be disabled with ENABLE_BACKGROUND_TASKS=false)
   const enableBackgroundTasks = process.env.ENABLE_BACKGROUND_TASKS !== 'false';

@@ -277,7 +277,7 @@ IMPORTANTE: NÃO confunda nome com documento - são campos diferentes!`,
     type: 'function',
     function: {
       name: 'check_fiscal_connection',
-      description: 'Verifica o status da conexão com a prefeitura e Nuvem Fiscal.',
+      description: 'Verifica o status da conexão com a prefeitura e ACBr API.',
       parameters: {
         type: 'object',
         properties: {},

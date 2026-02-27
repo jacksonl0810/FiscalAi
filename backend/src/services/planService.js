@@ -278,13 +278,13 @@ export async function validateCNPJUniqueness(cnpj, userId) {
       cnpj: normalizedCnpj,
       userId: { not: userId }
     },
-    select: { id: true, nuvemFiscalId: true }
+    select: { id: true, acbrApiId: true }
   });
 
   return {
     unique: true,
     existsOnOtherAccounts: !!existingForOthers,
-    otherAccountNuvemFiscalId: existingForOthers?.nuvemFiscalId || null
+    otherAccountAcbrApiId: existingForOthers?.acbrApiId || null
   };
 }
 

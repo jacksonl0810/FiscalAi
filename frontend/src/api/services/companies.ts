@@ -42,12 +42,12 @@ export const companiesService = {
   },
 
   /**
-   * Register company in fiscal cloud (Nuvem Fiscal)
+   * Register company in ACBr API
    */
   async registerInFiscalCloud(companyId: string): Promise<{ 
     status?: string; 
     message?: string; 
-    nuvemFiscalId?: string; 
+    acbrApiId?: string; 
     alreadyExists?: boolean;
     requiresCertificateVerification?: boolean;
     nextStep?: string;
@@ -57,7 +57,7 @@ export const companiesService = {
       message: string; 
       data?: { 
         status?: string;
-        nuvemFiscalId?: string; 
+        acbrApiId?: string; 
         alreadyExists?: boolean;
         requiresCertificateVerification?: boolean;
         nextStep?: string;
@@ -71,7 +71,7 @@ export const companiesService = {
     return {
       status: result.data?.status || result.status,
       message: result.data?.message || result.message,
-      nuvemFiscalId: result.data?.nuvemFiscalId,
+      acbrApiId: result.data?.acbrApiId,
       alreadyExists: result.data?.alreadyExists,
       requiresCertificateVerification: result.data?.requiresCertificateVerification,
       nextStep: result.data?.nextStep,

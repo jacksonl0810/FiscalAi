@@ -1845,10 +1845,10 @@ const SettingsTab = () => {
 
   const integrations = [
     { 
-      name: 'Nuvem Fiscal', 
+      name: 'ACBr API', 
       icon: Globe, 
-      configured: settings?.settings?.nuvemFiscalConfigured, 
-      env: settings?.settings?.nuvemFiscalEnvironment, 
+      configured: settings?.settings?.acbrApiConfigured, 
+      env: settings?.settings?.acbrApiEnvironment, 
       desc: 'Integração para emissão de NFS-e' 
     },
     { 

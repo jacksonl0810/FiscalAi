@@ -119,7 +119,7 @@ router.get('/company/:companyId/status', asyncHandler(async (req, res) => {
  * - municipal_only: Only municipal credentials (login/password) needed
  * - both: Both certificate AND municipal credentials required
  * 
- * Based on Nuvem Fiscal /nfse/cidades/{codigo_ibge} endpoint
+ * Based on ACBr API /nfse/cidades/{codigo_ibge} endpoint
  * The `credenciais` field indicates requirements:
  * - ["certificado"] = certificate only
  * - ["login_senha"] = municipal credentials only

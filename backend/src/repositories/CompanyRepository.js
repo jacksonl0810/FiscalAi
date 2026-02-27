@@ -51,8 +51,8 @@ export class CompanyRepository extends BaseRepository {
   /**
    * Update Nuvem Fiscal ID
    */
-  async updateNuvemFiscalId(id, nuvemFiscalId) {
-    return this.update(id, { nuvemFiscalId });
+  async updateAcbrApiId(id, acbrApiId) {
+    return this.update(id, { acbrApiId });
   }
 
   /**

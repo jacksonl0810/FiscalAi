@@ -1,9 +1,9 @@
 /**
  * Invoice Status Monitoring Service
- * Automatically polls and monitors invoice status via Nuvem Fiscal API
+ * Automatically polls and monitors invoice status via ACBr API
  * 
  * Architecture:
- * - Nuvem Fiscal does NOT support configurable webhooks for NFS-e
+ * - ACBr API does NOT support configurable webhooks for NFS-e
  * - Status updates are obtained through API polling (official approach)
  * - Polling uses progressive backoff to respect rate limits
  * 
@@ -16,7 +16,7 @@
  */
 
 import { prisma } from '../lib/prisma.js';
-import { checkNfseStatus } from './nuvemFiscal.js';
+import { checkNfseStatus } from './acbrApi.js';
 import { translateErrorForUser } from './errorTranslationService.js';
 import { isDatabaseConnectionError } from '../utils/databaseConnection.js';
 
@@ -78,10 +78,10 @@ export async function pollInvoiceStatus(invoiceId) {
     };
   }
 
-  if (!invoice.nuvemFiscalId) {
+  if (!invoice.acbrApiId) {
     return {
       status: 'skipped',
-      reason: 'No Nuvem Fiscal ID',
+      reason: 'No ACBr API ID',
       currentStatus: invoice.status
     };
   }
@@ -130,8 +130,8 @@ export async function pollInvoiceStatus(invoiceId) {
     console.log(`[InvoiceStatusMonitoring] Polling invoice ${invoice.numero || invoiceId}`);
     
     const statusResult = await checkNfseStatus(
-      invoice.company.nuvemFiscalId,
-      invoice.nuvemFiscalId
+      invoice.company.acbrApiId,
+      invoice.acbrApiId
     );
 
     const newStatus = statusResult.status || invoice.status;
@@ -149,7 +149,7 @@ export async function pollInvoiceStatus(invoiceId) {
         source: 'polling',
         metadata: {
           pollingAttempt: pollingCount + 1,
-          nuvemFiscalStatus: statusResult.status,
+          acbrApiStatus: statusResult.status,
           intervalMinutes: getPollingInterval(invoice) / 60000
         }
       }
@@ -256,7 +256,7 @@ export async function pollAllPendingInvoices() {
       status: {
         in: ['processando', 'rascunho']
       },
-      nuvemFiscalId: {
+      acbrApiId: {
         not: null
       },
       createdAt: {
@@ -267,7 +267,7 @@ export async function pollAllPendingInvoices() {
       company: {
         select: {
           id: true,
-          nuvemFiscalId: true,
+          acbrApiId: true,
           userId: true,
           cidade: true
         }

@@ -2,14 +2,14 @@
  * Municipality Service
  * Handles municipality coverage validation, support checking, and authentication requirements
  * 
- * Uses Nuvem Fiscal endpoints:
+ * Uses ACBr API endpoints:
  * - CidadesAtendidas: List all supported municipalities
  * - /nfse/cidades/{codigo_ibge}: Get specific municipality details including auth requirements
  * 
- * Documentation: https://dev.nuvemfiscal.com.br/docs/api#tag/Nfse
+ * Documentation: https://dev.acbr.api.br/docs
  */
 
-import { apiRequest, getBaseUrl, isNuvemFiscalConfigured } from './nuvemFiscal.js';
+import { apiRequest, getBaseUrl, isAcbrApiConfigured } from './acbrApi.js';
 import { prisma } from '../lib/prisma.js';
 
 // Cache for municipality auth requirements (refresh every 24 hours)
@@ -26,7 +26,7 @@ let municipalityCache = {
 };
 
 /**
- * Get list of all supported municipalities from Nuvem Fiscal
+ * Get list of all supported municipalities from ACBr API
  * Uses the CidadesAtendidas endpoint
  * 
  * @returns {Promise<Array>} List of supported municipalities
@@ -39,13 +39,13 @@ export async function getSupportedMunicipalities() {
     return municipalityCache.data;
   }
 
-  if (!isNuvemFiscalConfigured()) {
-    console.warn('[Municipality] Nuvem Fiscal not configured, skipping municipality check');
+  if (!isAcbrApiConfigured()) {
+    console.warn('[Municipality] ACBr API not configured, skipping municipality check');
     return null;
   }
 
   try {
-    // Nuvem Fiscal NFS-e CidadesAtendidas endpoint
+    // ACBr API NFS-e CidadesAtendidas endpoint
     // This returns list of municipalities that support NFS-e issuance
     const response = await apiRequest('/nfse/cidades', {
       method: 'GET'
@@ -80,7 +80,7 @@ export async function getSupportedMunicipalities() {
 }
 
 /**
- * Get municipality authentication requirements from Nuvem Fiscal
+ * Get municipality authentication requirements from ACBr API
  * Uses the /nfse/cidades/{codigo_ibge} endpoint
  * 
  * The `credenciais` field indicates what authentication methods are required:
@@ -112,10 +112,10 @@ export async function getMunicipalityAuthRequirements(codigoMunicipio) {
       return cached.data;
     }
 
-    if (!isNuvemFiscalConfigured()) {
+    if (!isAcbrApiConfigured()) {
       return {
         supported: null,
-        message: 'Nuvem Fiscal não configurada. Não foi possível verificar os requisitos de autenticação do município.',
+        message: 'ACBr API não configurada. Não foi possível verificar os requisitos de autenticação do município.',
         authRequirements: null,
         checkedAt: new Date()
       };
@@ -123,7 +123,7 @@ export async function getMunicipalityAuthRequirements(codigoMunicipio) {
 
     console.log('[Municipality] Fetching auth requirements for municipality:', cleanCodigo);
 
-    // Fetch municipality details from Nuvem Fiscal
+    // Fetch municipality details from ACBr API
     const response = await apiRequest(`/nfse/cidades/${cleanCodigo}`, {
       method: 'GET'
     });
@@ -131,7 +131,7 @@ export async function getMunicipalityAuthRequirements(codigoMunicipio) {
     console.log('[Municipality] API response:', JSON.stringify(response, null, 2));
 
     // Parse the credentials field
-    // Nuvem Fiscal returns: { credenciais: ["certificado"] } or { credenciais: ["certificado", "login_senha"] }
+    // ACBr API returns: { credenciais: ["certificado"] } or { credenciais: ["certificado", "login_senha"] }
     const credenciais = response.credenciais || [];
     
     const requiresCertificate = credenciais.includes('certificado');
@@ -185,30 +185,53 @@ export async function getMunicipalityAuthRequirements(codigoMunicipio) {
   } catch (error) {
     console.error('[Municipality] Error fetching auth requirements:', error.message);
     
-    // If 404, municipality not supported
+    // If 404, the municipality metadata is not available in ACBr API
+    // This does NOT mean the municipality is unsupported - company registration can still proceed
+    // We provide default auth requirements (certificate) so the user can continue
     if (error.status === 404) {
+      console.log('[Municipality] Municipality metadata not available, providing default auth requirements');
       return {
-        supported: false,
-        message: `O município com código IBGE ${codigoMunicipio} não está na lista de municípios suportados pela Nuvem Fiscal para emissão de NFS-e.`,
-        authRequirements: null,
+        supported: null, // null = unknown, not false (which would block)
+        codigoIbge: codigoMunicipio,
+        nome: null,
+        uf: null,
+        provedor: null,
+        authRequirements: {
+          raw: ['certificado'],
+          requiresCertificate: true,
+          requiresLoginSenha: false,
+          authMode: 'certificate_only',
+          authModeDescription: 'Requisitos de autenticação não disponíveis. Recomendamos usar certificado digital (e-CNPJ A1).'
+        },
+        message: 'Metadados do município não disponíveis na ACBr API. Você pode prosseguir com o cadastro usando certificado digital.',
         checkedAt: new Date(),
-        hint: 'Verifique se o código IBGE está correto. Consulte: https://www.ibge.gov.br/explica/codigos-dos-municipios.php'
+        hint: 'O município pode ser suportado mesmo sem metadados. Prossiga com o cadastro.',
+        unknownMunicipality: true
       };
     }
 
+    // For other errors, also provide defaults to not block the user
     return {
       supported: null,
-      message: `Erro ao verificar requisitos do município: ${error.message}`,
-      authRequirements: null,
+      codigoIbge: codigoMunicipio,
+      authRequirements: {
+        raw: ['certificado'],
+        requiresCertificate: true,
+        requiresLoginSenha: false,
+        authMode: 'certificate_only',
+        authModeDescription: 'Não foi possível verificar requisitos. Recomendamos usar certificado digital (e-CNPJ A1).'
+      },
+      message: `Não foi possível verificar requisitos do município: ${error.message}. Você pode prosseguir usando certificado digital.`,
       checkedAt: new Date(),
-      error: error.message
+      error: error.message,
+      unknownMunicipality: true
     };
   }
 }
 
 /**
  * Check if a municipality is supported for NFS-e issuance
- * Uses Nuvem Fiscal CidadesAtendidas endpoint
+ * Uses ACBr API CidadesAtendidas endpoint
  * 
  * @param {string} codigoMunicipio - IBGE municipality code (7 digits)
  * @returns {Promise<object>} Support status and message
@@ -226,11 +249,11 @@ export async function checkMunicipalitySupport(codigoMunicipio) {
       };
     }
 
-    // If Nuvem Fiscal is not configured, allow (don't block)
-    if (!isNuvemFiscalConfigured()) {
+    // If ACBr API is not configured, allow (don't block)
+    if (!isAcbrApiConfigured()) {
       return {
         supported: null,
-        message: 'Nuvem Fiscal não configurada. Verifique manualmente se o município é suportado.',
+        message: 'ACBr API não configurada. Verifique manualmente se o município é suportado.',
         checkedAt: new Date()
       };
     }
@@ -273,7 +296,7 @@ export async function checkMunicipalitySupport(codigoMunicipio) {
     // Municipality not in the supported list
     return {
       supported: false,
-      message: `O município com código IBGE ${cleanCodigo} não está na lista de municípios suportados pela Nuvem Fiscal para emissão de NFS-e. Verifique se o código está correto.`,
+      message: `O município com código IBGE ${cleanCodigo} não está na lista de municípios suportados pela ACBr API para emissão de NFS-e. Verifique se o código está correto.`,
       checkedAt: new Date(),
       hint: 'Consulte o código IBGE correto em: https://www.ibge.gov.br/explica/codigos-dos-municipios.php'
     };
@@ -298,15 +321,15 @@ export async function checkMunicipalityAvailability(codigoMunicipio) {
   try {
     const cleanCodigo = (codigoMunicipio || '').replace(/\D/g, '');
     
-    if (!isNuvemFiscalConfigured()) {
+    if (!isAcbrApiConfigured()) {
       return {
         available: null,
-        message: 'Nuvem Fiscal não configurada',
+        message: 'ACBr API não configurada',
         checkedAt: new Date()
       };
     }
 
-    // Try to check municipality status via Nuvem Fiscal
+    // Try to check municipality status via ACBr API
     // This endpoint may return status information about the municipality's system
     try {
       const response = await apiRequest(`/nfse/cidades/${cleanCodigo}/status`, {
@@ -447,7 +470,7 @@ export async function validateMunicipalitySupport(company) {
   }
 
   if (supported === false) {
-    console.warn(`[Municipality] ${company.codigoMunicipio} marked as unsupported, but proceeding to let Nuvem Fiscal decide.`);
+    console.warn(`[Municipality] ${company.codigoMunicipio} marked as unsupported, but proceeding to let ACBr API decide.`);
   }
 
   if (supported === null || supported === undefined) {

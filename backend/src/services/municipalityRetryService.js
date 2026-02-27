@@ -9,7 +9,7 @@
  */
 
 import { prisma } from '../lib/prisma.js';
-import { emitNfse, checkConnection } from './nuvemFiscal.js';
+import { emitNfse, checkConnection } from './acbrApi.js';
 import { translateErrorForUser } from './errorTranslationService.js';
 import { isDatabaseConnectionError } from '../utils/databaseConnection.js';
 
@@ -137,8 +137,8 @@ export async function processRetryQueue() {
     let isOnline = false;
 
     try {
-      if (company.nuvemFiscalId) {
-        const connectionResult = await checkConnection(company.nuvemFiscalId);
+      if (company.acbrApiId) {
+        const connectionResult = await checkConnection(company.acbrApiId);
         isOnline = connectionResult.status === 'conectado';
       }
     } catch (error) {
@@ -192,7 +192,7 @@ export async function processRetryQueue() {
             codigoServico: item.invoiceData.codigo_servico,
             pdfUrl: nfseResult.nfse.pdf_url,
             xmlUrl: nfseResult.nfse.xml_url,
-            nuvemFiscalId: nfseResult.nfse.nuvem_fiscal_id
+            acbrApiId: nfseResult.nfse.acbr_api_id
           }
         });
 

@@ -1,6 +1,6 @@
 /**
  * Webhook Routes
- * Handles webhooks from Nuvem Fiscal
+ * Handles webhooks from ACBr API (and legacy Nuvem Fiscal)
  * 
  * Note: Stripe webhooks are handled in /routes/subscriptions.js
  */
@@ -10,7 +10,7 @@ import crypto from 'crypto';
 import { prisma } from '../lib/prisma.js';
 import { asyncHandler, AppError } from '../middleware/errorHandler.js';
 import { sendSuccess } from '../utils/response.js';
-import { checkNfseStatus } from '../services/nuvemFiscal.js';
+import { checkNfseStatus } from '../services/acbrApi.js';
 import { translateErrorForUser } from '../services/errorTranslationService.js';
 
 const router = express.Router();
@@ -25,7 +25,7 @@ const router = express.Router();
 function verifyWebhookSignature(payload, signature, secret) {
   if (!secret) {
     console.warn('[Webhook] No webhook secret configured, skipping signature verification');
-    console.warn('[Webhook] Set NUVEM_FISCAL_WEBHOOK_SECRET in your .env file for production');
+    console.warn('[Webhook] Set ACBR_API_WEBHOOK_SECRET in your .env file for production');
     return true; // Allow in development if no secret set
   }
 
@@ -41,7 +41,7 @@ function verifyWebhookSignature(payload, signature, secret) {
       .update(payload)
       .digest('hex');
 
-    // Nuvem Fiscal may send signature in different formats:
+    // ACBr API may send signature in different formats:
     // 1. Plain hex: "abc123..."
     // 2. With prefix: "sha256=abc123..."
     // 3. With prefix: "v1=abc123..."
@@ -114,7 +114,7 @@ function isEventFresh(event, maxAgeSeconds = 300) {
 
 /**
  * POST /api/webhooks/nuvem-fiscal
- * Handle webhooks from Nuvem Fiscal
+ * Handle webhooks from ACBr API (kept as /nuvem-fiscal for backward compatibility)
  * 
  * Events handled:
  * - invoice.status_changed - Invoice status update
@@ -122,8 +122,8 @@ function isEventFresh(event, maxAgeSeconds = 300) {
  * - certificate.expiration_warning - Certificate expiring soon
  */
 router.post('/nuvem-fiscal', express.raw({ type: 'application/json' }), asyncHandler(async (req, res) => {
-  const signature = req.headers['x-nuvem-fiscal-signature'] || req.headers['x-signature'];
-  const webhookSecret = process.env.NUVEM_FISCAL_WEBHOOK_SECRET;
+  const signature = req.headers['x-acbr-api-signature'] || req.headers['x-nuvem-fiscal-signature'] || req.headers['x-signature'];
+  const webhookSecret = process.env.ACBR_API_WEBHOOK_SECRET;
 
   // Get raw body for signature verification
   const payload = req.body.toString();
@@ -145,7 +145,7 @@ router.post('/nuvem-fiscal', express.raw({ type: 'application/json' }), asyncHan
     throw new AppError('Invalid webhook payload', 400, 'INVALID_PAYLOAD');
   }
 
-  console.log('[Webhook] Received Nuvem Fiscal event:', {
+  console.log('[Webhook] Received ACBr API event:', {
     type: event.type || event.event_type,
     id: event.id || event.event_id,
     timestamp: event.timestamp || event.created_at
@@ -194,10 +194,10 @@ async function handleInvoiceStatusChanged(event) {
     return;
   }
 
-  // Find invoice by nuvemFiscalId
+  // Find invoice by acbrApiId
   const invoice = await prisma.invoice.findFirst({
     where: {
-      nuvemFiscalId: nfseId.toString()
+      acbrApiId: nfseId.toString()
     },
     include: {
       company: {

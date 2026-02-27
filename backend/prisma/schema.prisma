@@ -113,13 +113,13 @@ model Company {
   cnaePrincipal                String?   @map("cnae_principal")
   regimeTributario             String    @map("regime_tributario")
   certificadoDigital           Boolean   @default(false) @map("certificado_digital")
-  certificateUploadedToNuvemFiscal Boolean @default(false) @map("certificate_uploaded_to_nuvem_fiscal") // true only when upload to Nuvem Fiscal succeeded
-  municipalCredentialsConfigured Boolean @default(false) @map("municipal_credentials_configured") // true when municipal credentials sent to Nuvem Fiscal
+  certificateUploadedToAcbrApi Boolean @default(false) @map("certificate_uploaded_to_nuvem_fiscal") // true only when certificate upload to ACBr API succeeded
+  municipalCredentialsConfigured Boolean @default(false) @map("municipal_credentials_configured") // true when municipal credentials sent to ACBr API
   email                        String
   telefone                     String
   inscricaoMunicipal           String    @map("inscricao_municipal")
-  nuvemFiscalId                String?   @map("nuvem_fiscal_id")
-  // Address fields required by Nuvem Fiscal
+  acbrApiId                    String?   @map("nuvem_fiscal_id")
+  // Address fields required by ACBr API
   cep                          String?   @map("cep")
   logradouro                   String?   @map("logradouro")
   numero                       String?   @map("numero")
@@ -170,7 +170,7 @@ model Invoice {
   codigoServico     String?   @map("codigo_servico")
   pdfUrl            String?   @map("pdf_url")
   xmlUrl            String?   @map("xml_url")
-  nuvemFiscalId     String?   @map("nuvem_fiscal_id")
+  acbrApiId         String?   @map("nuvem_fiscal_id")
   paymentStatus     String?   @default("pending") @map("payment_status")
   paymentOrderId    String?   @map("payment_order_id")
   invoiceUsageId    String?   @unique @map("invoice_usage_id")
