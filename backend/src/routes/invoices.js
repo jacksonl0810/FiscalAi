@@ -309,7 +309,15 @@ router.post('/issue', [
       iss_retido: false
     };
 
-    const nfseResult = await emitNfse(invoiceData, company);
+    // Atomic next RPS numero per company (concurrent-safe for DPS numbering)
+    const { lastRpsNumero: nextRpsNumero } = await prisma.company.update({
+      where: { id: company.id },
+      data: { lastRpsNumero: { increment: 1 } },
+      select: { lastRpsNumero: true }
+    });
+    const companyForEmission = { ...company, nextRpsNumero };
+
+    const nfseResult = await emitNfse(invoiceData, companyForEmission);
 
     // Save invoice to database
     const invoice = await prisma.invoice.create({

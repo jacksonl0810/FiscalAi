@@ -3,7 +3,7 @@ import { motion } from "framer-motion";
 import { TrendingUp, TrendingDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-export default function StatCard({ title, value, subtitle, icon: Icon, trend, trendUp, delay = 0 }) {
+export default function StatCard({ title, value, subtitle = null, icon: Icon, trend = null, trendUp = false, delay = 0 }) {
   return (
     <motion.div
       initial={{ opacity: 0, y: 20 }}

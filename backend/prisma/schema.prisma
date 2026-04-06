@@ -132,6 +132,8 @@ model Company {
   fiscalConnectionStatus       String    @default("not_connected") @map("fiscal_connection_status") // 'connected', 'not_connected', 'failed', 'expired'
   fiscalConnectionError        String?   @map("fiscal_connection_error")
   lastConnectionCheck          DateTime? @map("last_connection_check")
+  // Next RPS/DPS number for NFS-e (Sistema Nacional). Incremented atomically per emission to avoid duplicates under concurrency.
+  lastRpsNumero                 Int      @default(0) @map("last_rps_numero")
   createdAt                    DateTime  @default(now()) @map("created_at")
   updatedAt                    DateTime  @updatedAt @map("updated_at")
 

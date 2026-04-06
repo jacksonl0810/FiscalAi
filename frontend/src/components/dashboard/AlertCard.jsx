@@ -37,7 +37,7 @@ const colorMap = {
   },
 };
 
-export default function AlertCard({ type = "info", title, message, action, onAction, delay = 0 }) {
+export default function AlertCard({ type = "info", title, message, action = null, onAction = null, delay = 0 }) {
   const Icon = iconMap[type];
   const colors = colorMap[type];
 

@@ -22,7 +22,8 @@ import {
   FileX,
   Building2,
   User,
-  X
+  X,
+  AlertTriangle
 } from "lucide-react";
 import CancellationModal from "@/components/invoice/CancellationModal";
 import { Button } from "@/components/ui/button";
@@ -45,12 +46,14 @@ const statusConfig = {
   autorizada: { label: "Autorizada", icon: CheckCircle, color: "text-green-400", bg: "bg-green-500/20" },
   rejeitada: { label: "Rejeitada", icon: XCircle, color: "text-red-400", bg: "bg-red-500/20" },
   cancelada: { label: "Cancelada", icon: XCircle, color: "text-slate-400", bg: "bg-slate-500/20" },
+  erro: { label: "Erro", icon: AlertTriangle, color: "text-orange-400", bg: "bg-orange-500/20" },
 };
 
 function normalizeStatus(status) {
   if (status === 'autorizada') return 'autorizada';
   if (status === 'rejeitada') return 'rejeitada';
   if (status === 'cancelada') return 'cancelada';
+  if (status === 'erro') return 'erro';
   return 'processando';
 }
 
@@ -358,7 +361,7 @@ export default function Documents() {
                       <Button variant="outline" className="w-full justify-between bg-gradient-to-br from-white/5 via-white/3 to-white/5 border-white/10 text-white hover:bg-white/10 hover:border-orange-500/30 h-10 rounded-xl backdrop-blur-sm transition-all duration-200 shadow-md shadow-black/10">
                         {companyFilter === "all" 
                           ? "Todas as empresas" 
-                          : companies.find(c => c.id === companyFilter)?.nomeFantasia || companies.find(c => c.id === companyFilter)?.razaoSocial || "Empresa"}
+                          : companies.find(c => c.id === companyFilter)?.nome_fantasia || companies.find(c => c.id === companyFilter)?.razao_social || "Empresa"}
                         <ChevronDown className="w-4 h-4 opacity-70" />
                       </Button>
                     </DropdownMenuTrigger>
@@ -372,7 +375,7 @@ export default function Documents() {
                           onClick={() => setCompanyFilter(company.id)}
                           className="text-white hover:bg-white/10"
                         >
-                          {company.nomeFantasia || company.razaoSocial}
+                          {company.nome_fantasia || company.razao_social}
                         </DropdownMenuItem>
                       ))}
                     </DropdownMenuContent>

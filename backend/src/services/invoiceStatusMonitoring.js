@@ -20,7 +20,7 @@ import { checkNfseStatus } from './acbrApi.js';
 import { translateErrorForUser } from './errorTranslationService.js';
 import { isDatabaseConnectionError } from '../utils/databaseConnection.js';
 
-const POLLING_INTERVAL_MS = 3 * 60 * 1000;
+const POLLING_INTERVAL_MS = 2 * 60 * 1000;
 const MAX_POLLING_ATTEMPTS = 24;
 const BATCH_SIZE = 20;
 
@@ -69,7 +69,7 @@ export async function pollInvoiceStatus(invoiceId) {
     throw new Error(`Invoice ${invoiceId} not found`);
   }
 
-  const finalStates = ['autorizada', 'rejeitada', 'cancelada'];
+  const finalStates = ['autorizada', 'rejeitada', 'cancelada', 'erro'];
   if (finalStates.includes(invoice.status)) {
     return {
       status: 'skipped',
@@ -181,9 +181,16 @@ export async function pollInvoiceStatus(invoiceId) {
           },
           { invoiceId: invoice.id }
         );
-      } else if (newStatus === 'rejeitada') {
-        const errorMessage = statusResult.mensagem || 'Nota fiscal rejeitada pela prefeitura';
-        const translatedError = translateErrorForUser(new Error(errorMessage), {
+      } else if (newStatus === 'rejeitada' || newStatus === 'erro') {
+        const errorMessage = statusResult.mensagem || 
+          (newStatus === 'erro' ? 'Erro ao processar nota fiscal' : 'Nota fiscal rejeitada pela prefeitura');
+        
+        // Create error with code for proper translation
+        const errorForTranslation = new Error(errorMessage);
+        errorForTranslation.code = statusResult.errorCode || null;
+        errorForTranslation.status = 400;
+        
+        const translatedError = translateErrorForUser(errorForTranslation, {
           municipality: invoice.company.cidade
         });
         
@@ -193,7 +200,8 @@ export async function pollInvoiceStatus(invoiceId) {
           {
             cliente: invoice.clienteNome,
             valor: parseFloat(invoice.valor),
-            reason: translatedError
+            reason: translatedError,
+            errorType: newStatus === 'erro' ? 'processing_error' : 'rejection'
           },
           { invoiceId: invoice.id }
         );

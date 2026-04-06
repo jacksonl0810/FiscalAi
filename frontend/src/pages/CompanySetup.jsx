@@ -266,7 +266,7 @@ export default function CompanySetup() {
             operation: 'register_company',
             companyId: savedCompany.id 
           }, (message) => {
-            toast.error(`⚠️ Erro na Integração Fiscal\n\n${message}\n\nA empresa foi salva, mas não registrada na Nuvem Fiscal.`, {
+            toast.error(`⚠️ Erro na Integração Fiscal\n\n${message}\n\nA empresa foi salva, mas não registrada na ACBr API.`, {
               duration: 8000,
               style: {
                 background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)',
@@ -1633,9 +1633,9 @@ export default function CompanySetup() {
                   <div className="flex gap-3">
                     <AlertCircle className="w-5 h-5 text-blue-400 flex-shrink-0" />
                     <div>
-                      <p className="text-sm text-blue-400 font-medium">Campos obrigatórios para Nuvem Fiscal</p>
+                      <p className="text-sm text-blue-400 font-medium">Campos obrigatórios para ACBr API</p>
                       <p className="text-sm text-gray-400 mt-1">
-                        O CEP e o Código do Município (IBGE) são obrigatórios para registrar a empresa na Nuvem Fiscal.
+                        O CEP e o Código do Município (IBGE) são obrigatórios para registrar a empresa na ACBr API.
                         Você pode consultar o código IBGE do seu município no site oficial.
                       </p>
                     </div>

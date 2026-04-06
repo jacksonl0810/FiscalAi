@@ -586,12 +586,12 @@ function messageMatchesPriorityIntent(message) {
       if (/^\d+(?:[.,]\d+)?(?:\s*(?:reais|k))?$/i.test(line) || /^r\$\s*\d/i.test(line)) {
         hasValue = true;
       }
-      // Check for document (CPF/CNPJ)
-      if (/(?:cpf|cnpj|documento)\s*:?\s*\d/i.test(line) || /^\d{11}$|^\d{14}$/.test(line.replace(/\D/g, ''))) {
+      // Check for document (CPF/CNPJ) - also match "cpnj" as common typo
+      if (/(?:cpf|cnpj|cpnj|documento)\s*:?\s*\d/i.test(line) || /^\d{11}$|^\d{14}$/.test(line.replace(/\D/g, ''))) {
         hasDocument = true;
       }
       // Check for name (text only line)
-      if (/^[A-Za-zÀ-ÿ\s.]+$/i.test(line) && line.length >= 2 && !/^(?:cpf|cnpj|documento|valor|r\$)$/i.test(line)) {
+      if (/^[A-Za-zÀ-ÿ\s.]+$/i.test(line) && line.length >= 2 && !/^(?:cpf|cnpj|cpnj|documento|valor|r\$)$/i.test(line)) {
         hasName = true;
       }
     }
@@ -627,10 +627,10 @@ function messageMatchesPriorityIntent(message) {
   if (/(?:me\s+)?(?:ajud[ae]|auxili[ae])\s+(?:a\s+)?(?:criar|cadastrar|registrar|adicionar)\s+(?:um\s+|uma\s+)?(?:novo\s+|nova\s+)?cliente/i.test(message)) return true;
   // "cliente" + document pattern
   if (/cliente/i.test(message) && /(?:\d{3}\.?\d{3}\.?\d{3}[-.]?\d{2}|\d{2}\.?\d{3}\.?\d{3}[\/]?\d{4}[-.]?\d{2}|\b\d{11}\b|\b\d{14}\b)/i.test(message)) return true;
-  // Standalone: "Name CPF/CNPJ/documento [number]"
-  if (/^(.+?)\s+(?:cpf|cnpj|documento)\s*:?\s*(\d{3}\.?\d{3}\.?\d{3}[-.]?\d{2}|\d{2}\.?\d{3}\.?\d{3}[\/]?\d{4}[-.]?\d{2}|\d{11}|\d{14})$/i.test(trimmedMessage)) return true;
+  // Standalone: "Name CPF/CNPJ/documento [number]" - also match "cpnj" as common typo
+  if (/^(.+?)\s+(?:cpf|cnpj|cpnj|documento)\s*:?\s*(\d{3}\.?\d{3}\.?\d{3}[-.]?\d{2}|\d{2}\.?\d{3}\.?\d{3}[\/]?\d{4}[-.]?\d{2}|\d{11}|\d{14})$/i.test(trimmedMessage)) return true;
   // "Nome: X" with document somewhere
-  if (/nome\s*[:=]\s*.+/i.test(message) && /(?:cpf|cnpj|documento)\s*:?\s*\d/i.test(message)) return true;
+  if (/nome\s*[:=]\s*.+/i.test(message) && /(?:cpf|cnpj|cpnj|documento)\s*:?\s*\d/i.test(message)) return true;
   
   // Criar empresa / cadastrar empresa / nova empresa
   if (/(?:criar|cadastrar|registrar|nova)\s+empresa/i.test(message)) return true;
@@ -784,9 +784,9 @@ async function processWithPatternMatching(message, userId, companyId, res, inten
         }
       }
       
-      // Check for document (CPF/CNPJ)
+      // Check for document (CPF/CNPJ) - also match "cpnj" as common typo
       if (!multiLineDocument) {
-        const docMatch = line.match(/(?:cpf|cnpj|documento)\s*:?\s*(\d[\d.\-\/]*\d)/i) ||
+        const docMatch = line.match(/(?:cpf|cnpj|cpnj|documento)\s*:?\s*(\d[\d.\-\/]*\d)/i) ||
                         line.match(/^(\d{3}\.?\d{3}\.?\d{3}[-.]?\d{2})$/) || // CPF format
                         line.match(/^(\d{2}\.?\d{3}\.?\d{3}[\/]?\d{4}[-.]?\d{2})$/) || // CNPJ format
                         line.match(/^(\d{11}|\d{14})$/); // Plain digits
@@ -809,7 +809,7 @@ async function processWithPatternMatching(message, userId, companyId, res, inten
         // If line is mostly letters (with spaces) and not a keyword
         const isNameLine = /^[A-Za-zÀ-ÿ\s.]+$/.test(line) && 
                           line.length >= 2 && 
-                          !/^(?:cpf|cnpj|documento|valor|cliente|nota|emitir|r\$)$/i.test(line);
+                          !/^(?:cpf|cnpj|cpnj|documento|valor|cliente|nota|emitir|r\$)$/i.test(line);
         if (isNameLine) {
           // Clean the name - remove trailing punctuation
           multiLineName = line.trim().replace(/[.,;:!?]+$/g, '').trim();
@@ -1650,15 +1650,15 @@ async function processWithPatternMatching(message, userId, companyId, res, inten
     // Extract client name - use multiple patterns
     let clienteNome = null;
     
-    // Pattern 1: "para [client]" or "para o cliente [name]"
-    const paraMatch = message.match(/para\s+(?:o\s+)?(?:cliente\s+)?([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.]+?)(?:\s+(?:cpf|cnpj|pela\s+empresa|por\s+|referente|,|$))/i);
+    // Pattern 1: "para [client]" or "para o cliente [name]" - also match "cpnj" as common typo
+    const paraMatch = message.match(/para\s+(?:o\s+)?(?:cliente\s+)?([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.]+?)(?:\s+(?:cpf|cnpj|cpnj|pela\s+empresa|por\s+|referente|,|$))/i);
     if (paraMatch) {
       clienteNome = paraMatch[1].trim();
     }
     
-    // Pattern 2: "para [client] CPF/CNPJ [document]"
+    // Pattern 2: "para [client] CPF/CNPJ [document]" - also match "cpnj" as common typo
     if (!clienteNome) {
-      const paraDocMatch = message.match(/para\s+(?:o\s+)?(?:cliente\s+)?([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.]+?)\s+(?:cpf|cnpj)\s/i);
+      const paraDocMatch = message.match(/para\s+(?:o\s+)?(?:cliente\s+)?([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.]+?)\s+(?:cpf|cnpj|cpnj)\s/i);
       if (paraDocMatch) {
         clienteNome = paraDocMatch[1].trim();
       }
@@ -1687,11 +1687,11 @@ async function processWithPatternMatching(message, userId, companyId, res, inten
       clienteNome = clienteNome.replace(/[.,;:!?]+$/g, '').trim();
     }
     
-    // Extract service description if present
+    // Extract service description if present - also match "cpnj" as common typo
     let descricaoServico = 'Serviço prestado';
     const servicePatterns = [
-      /(?:por|referente\s+a|referente)\s+(.+?)(?:\s+(?:cpf|cnpj|pela\s+empresa)|,|$)/i,
-      /(?:serviço(?:s)?|serviço de|serviços de)\s*:?\s*(.+?)(?:\s+(?:cpf|cnpj|pela\s+empresa)|,|$)/i
+      /(?:por|referente\s+a|referente)\s+(.+?)(?:\s+(?:cpf|cnpj|cpnj|pela\s+empresa)|,|$)/i,
+      /(?:serviço(?:s)?|serviço de|serviços de)\s*:?\s*(.+?)(?:\s+(?:cpf|cnpj|cpnj|pela\s+empresa)|,|$)/i
     ];
     
     for (const pattern of servicePatterns) {
@@ -2136,8 +2136,8 @@ function detectClientCreationIntent(message, lowerMessage, intent) {
   const hasCreationWord = /(?:criar|cadastrar|cadastre|registrar|adicionar|novo|nova|incluir)/i.test(message);
   if (hasCreationWord && hasDocumentInMessage(message) && /(?:nome|chamad[oa])/i.test(message)) return true;
   
-  // 8. Standalone pattern: "[Name] CPF/CNPJ [document]" or "[Name], CPF: [document]"
-  const standalonePattern = /^(.+?)\s+(?:cpf|cnpj|documento)\s*:?\s*(\d{3}\.?\d{3}\.?\d{3}[-.]?\d{2}|\d{2}\.?\d{3}\.?\d{3}[\/]?\d{4}[-.]?\d{2}|\d{11}|\d{14})$/i;
+  // 8. Standalone pattern: "[Name] CPF/CNPJ [document]" or "[Name], CPF: [document]" - also match "cpnj" as common typo
+  const standalonePattern = /^(.+?)\s+(?:cpf|cnpj|cpnj|documento)\s*:?\s*(\d{3}\.?\d{3}\.?\d{3}[-.]?\d{2}|\d{2}\.?\d{3}\.?\d{3}[\/]?\d{4}[-.]?\d{2}|\d{11}|\d{14})$/i;
   if (standalonePattern.test(message.trim())) return true;
   
   // 9. "Nome: [name]" pattern with document somewhere in the message
@@ -2158,8 +2158,8 @@ function hasDocumentInMessage(message) {
   if (/\d{2}\.?\d{3}\.?\d{3}[\/]?\d{4}[-.]?\d{2}/.test(message)) return true;
   // Plain 11 or 14 digit number
   if (/\b\d{11}\b|\b\d{14}\b/.test(message)) return true;
-  // "CPF" or "CNPJ" or "documento" keyword followed by numbers
-  if (/(?:cpf|cnpj|documento)\s*:?\s*\d/i.test(message)) return true;
+  // "CPF" or "CNPJ" or "documento" keyword followed by numbers - also match "cpnj" as common typo
+  if (/(?:cpf|cnpj|cpnj|documento)\s*:?\s*\d/i.test(message)) return true;
   return false;
 }
 
@@ -2223,14 +2223,15 @@ function extractClientDataFromMessage(message) {
     .trim();
   
   // Strategy 1: "criar/cadastrar cliente [NAME]" - name after action+cliente
-  const afterClienteMatch = cleanMsg.match(/(?:criar|cadastrar|cadastre|registrar|adicionar|incluir|novo|nova)\s+(?:um\s+|uma\s+|o\s+|a\s+)?(?:novo\s+|nova\s+)?cliente\s*:?\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.]+?)(?:\s*[,;]|\s+(?:cpf|cnpj|documento|email|telefone|tel|fone|com\s|de\s|no\s)|$)/i);
+  // Note: also match "cpnj" as common typo for "cnpj"
+  const afterClienteMatch = cleanMsg.match(/(?:criar|cadastrar|cadastre|registrar|adicionar|incluir|novo|nova)\s+(?:um\s+|uma\s+|o\s+|a\s+)?(?:novo\s+|nova\s+)?cliente\s*:?\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.]+?)(?:\s*[,;]|\s+(?:cpf|cnpj|cpnj|documento|email|telefone|tel|fone|com\s|de\s|no\s)|$)/i);
   if (afterClienteMatch && afterClienteMatch[1]?.trim().length > 1) {
     name = afterClienteMatch[1].trim();
   }
   
   // Strategy 2: "Nome: [NAME]" or "nome = [NAME]" or "nome é [NAME]"
   if (!name) {
-    const nomeMatch = cleanMsg.match(/nome\s*(?:[:=é]|é)\s*([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.]+?)(?:\s*[,;]|\s+(?:cpf|cnpj|documento|email|telefone|tel|fone|e\s+o|com\s)|$)/i);
+    const nomeMatch = cleanMsg.match(/nome\s*(?:[:=é]|é)\s*([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.]+?)(?:\s*[,;]|\s+(?:cpf|cnpj|cpnj|documento|email|telefone|tel|fone|e\s+o|com\s)|$)/i);
     if (nomeMatch && nomeMatch[1]?.trim().length > 1) {
       name = nomeMatch[1].trim();
     }
@@ -2238,7 +2239,7 @@ function extractClientDataFromMessage(message) {
   
   // Strategy 3: "nome/razão social [NAME]" (without colon)
   if (!name) {
-    const razaoMatch = cleanMsg.match(/(?:razão\s*social|razao\s*social)\s*:?\s*([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.]+?)(?:\s*[,;]|\s+(?:cpf|cnpj|documento|email|telefone)|$)/i);
+    const razaoMatch = cleanMsg.match(/(?:razão\s*social|razao\s*social)\s*:?\s*([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.]+?)(?:\s*[,;]|\s+(?:cpf|cnpj|cpnj|documento|email|telefone)|$)/i);
     if (razaoMatch && razaoMatch[1]?.trim().length > 1) {
       name = razaoMatch[1].trim();
     }
@@ -2246,7 +2247,7 @@ function extractClientDataFromMessage(message) {
   
   // Strategy 4: "o nome é/dele é/dela é [NAME]"
   if (!name) {
-    const nameIsMatch = cleanMsg.match(/(?:o\s+nome|nome\s+(?:dele|dela)?)\s+(?:é|e)\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.]+?)(?:\s*[,;.]|\s+(?:cpf|cnpj|documento|email|telefone|e\s+o|com\s)|$)/i);
+    const nameIsMatch = cleanMsg.match(/(?:o\s+nome|nome\s+(?:dele|dela)?)\s+(?:é|e)\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.]+?)(?:\s*[,;.]|\s+(?:cpf|cnpj|cpnj|documento|email|telefone|e\s+o|com\s)|$)/i);
     if (nameIsMatch && nameIsMatch[1]?.trim().length > 1) {
       name = nameIsMatch[1].trim();
     }
@@ -2254,7 +2255,7 @@ function extractClientDataFromMessage(message) {
   
   // Strategy 5: "chamado/chamada [NAME]" or "de nome [NAME]"
   if (!name) {
-    const chamadoMatch = cleanMsg.match(/(?:chamad[oa]|de\s+nome)\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.]+?)(?:\s*[,;.]|\s+(?:cpf|cnpj|documento|email|telefone|com\s)|$)/i);
+    const chamadoMatch = cleanMsg.match(/(?:chamad[oa]|de\s+nome)\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.]+?)(?:\s*[,;.]|\s+(?:cpf|cnpj|cpnj|documento|email|telefone|com\s)|$)/i);
     if (chamadoMatch && chamadoMatch[1]?.trim().length > 1) {
       name = chamadoMatch[1].trim();
     }
@@ -2262,7 +2263,7 @@ function extractClientDataFromMessage(message) {
   
   // Strategy 6: "para [NAME]" in client creation context
   if (!name) {
-    const paraMatch = cleanMsg.match(/(?:para|do|da)\s+(?:o\s+|a\s+)?(?:cliente\s+)?([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.]+?)(?:\s*[,;.]|\s+(?:cpf|cnpj|documento|email|telefone|com\s)|$)/i);
+    const paraMatch = cleanMsg.match(/(?:para|do|da)\s+(?:o\s+|a\s+)?(?:cliente\s+)?([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.]+?)(?:\s*[,;.]|\s+(?:cpf|cnpj|cpnj|documento|email|telefone|com\s)|$)/i);
     if (paraMatch && paraMatch[1]?.trim().length > 1) {
       // Exclude common verbs/articles that aren't names
       const candidate = paraMatch[1].trim();
@@ -2273,8 +2274,9 @@ function extractClientDataFromMessage(message) {
   }
   
   // Strategy 7: Standalone "[NAME] CPF/CNPJ [doc]" - name is everything before CPF/CNPJ keyword
+  // Note: also match "cpnj" as common typo for "cnpj"
   if (!name) {
-    const standaloneMatch = cleanMsg.match(/^(.+?)(?:\s*[,;]\s*|\s+)(?:cpf|cnpj|documento)\s*:?\s*/i);
+    const standaloneMatch = cleanMsg.match(/^(.+?)(?:\s*[,;]\s*|\s+)(?:cpf|cnpj|cpnj|documento)\s*:?\s*/i);
     if (standaloneMatch && standaloneMatch[1]?.trim().length > 1) {
       let candidate = standaloneMatch[1].trim();
       // Remove leading action words
@@ -2299,7 +2301,7 @@ function extractClientDataFromMessage(message) {
       .replace(/(?:criar|cadastrar|cadastre|registrar|registre|adicionar|adicione|incluir|salvar|inserir)\s+/gi, '')
       .replace(/(?:um|uma|o|a|novo|nova|meu|minha)\s+/gi, '')
       .replace(/\bcliente\s*:?\s*/gi, '')
-      .replace(/\b(?:cpf|cnpj|documento)\s*:?\s*/gi, '')
+      .replace(/\b(?:cpf|cnpj|cpnj|documento)\s*:?\s*/gi, '')
       .replace(/\b(?:nome|razão\s*social|razao\s*social)\s*:?\s*/gi, '')
       .replace(/\b(?:email|telefone|tel|fone|celular|whatsapp)\s*:?\s*/gi, '')
       .replace(/\b(?:me\s+ajud[ae]|por\s+favor|com|de|do|da|para|no|na|é|e\s+o|e\s+a)\b/gi, '')
@@ -3340,12 +3342,57 @@ async function executeEmitNfse(actionData, company, userId, res) {
     console.log('[Invoice] Pay Per Use plan detected, processing payment...');
     
     // Get user's Stripe customer ID
-    const user = await prisma.user.findUnique({
+    let user = await prisma.user.findUnique({
       where: { id: userId },
       select: { id: true, email: true, name: true, stripeCustomerId: true }
     });
     
-    if (!user.stripeCustomerId) {
+    // Import Stripe SDK
+    const { chargeOneTimePayment, getCustomerPaymentMethods, ensureCustomerExists } = await import('../services/stripeSDK.js');
+    
+    // Verify Stripe customer exists (handle case where customer was deleted/switched accounts)
+    let validCustomerId = user.stripeCustomerId;
+    if (user.stripeCustomerId) {
+      try {
+        const { customerId, wasRecreated } = await ensureCustomerExists({
+          email: user.email,
+          name: user.name,
+          existingStripeId: user.stripeCustomerId
+        });
+        
+        if (wasRecreated) {
+          console.log(`[Invoice] Stripe customer was recreated: ${user.stripeCustomerId} -> ${customerId}`);
+          // Update user's stripeCustomerId in database
+          await prisma.user.update({
+            where: { id: userId },
+            data: { stripeCustomerId: customerId }
+          });
+          validCustomerId = customerId;
+          
+          // Customer was recreated, they need to add a payment method again
+          throw new AppError(
+            'Sua conta de pagamento foi reconfigurada.\n\n' +
+            'Para emitir notas no plano Pay per Use, você precisa cadastrar novamente seu cartão de crédito.\n\n' +
+            '💳 Acesse **Configurações** > **Assinatura** para adicionar seu cartão.',
+            402,
+            'PAYMENT_METHOD_REQUIRED'
+          );
+        }
+      } catch (error) {
+        if (error.code === 'PAYMENT_METHOD_REQUIRED') {
+          throw error;
+        }
+        console.error('[Invoice] Error verifying Stripe customer:', error.message);
+        throw new AppError(
+          'Erro ao verificar conta de pagamento.\n\n' +
+          'Por favor, tente novamente. Se o problema persistir, acesse **Configurações** > **Assinatura** para reconfigurar seu cartão.',
+          500,
+          'STRIPE_CUSTOMER_ERROR'
+        );
+      }
+    }
+    
+    if (!validCustomerId) {
       throw new AppError(
         'Método de pagamento não configurado.\n\n' +
         'Para emitir notas no plano Pay per Use, você precisa cadastrar um cartão de crédito.\n\n' +
@@ -3355,11 +3402,8 @@ async function executeEmitNfse(actionData, company, userId, res) {
       );
     }
     
-    // Import Stripe SDK
-    const { chargeOneTimePayment, getCustomerPaymentMethods } = await import('../services/stripeSDK.js');
-    
     // Check if customer has a payment method
-    const paymentMethods = await getCustomerPaymentMethods(user.stripeCustomerId);
+    const paymentMethods = await getCustomerPaymentMethods(validCustomerId);
     if (paymentMethods.length === 0) {
       throw new AppError(
         'Nenhum cartão cadastrado.\n\n' +
@@ -3370,13 +3414,17 @@ async function executeEmitNfse(actionData, company, userId, res) {
       );
     }
     
+    // Use first card (same one we validated) so charge never fails for "no default" edge cases
+    const paymentMethodIdToCharge = paymentMethods[0].id;
+    
     const invoiceValue = parseFloat(actionData.valor);
     const perInvoicePrice = limitsValidation.perInvoicePrice || 900; // R$9.00 in cents
     
     try {
       // Charge the user
       const paymentResult = await chargeOneTimePayment({
-        customerId: user.stripeCustomerId,
+        customerId: validCustomerId,
+        paymentMethodId: paymentMethodIdToCharge,
         amount: perInvoicePrice,
         currency: 'brl',
         description: `MAY - Nota Fiscal: ${actionData.cliente_nome} - R$ ${invoiceValue.toFixed(2)}`,
@@ -3652,8 +3700,16 @@ async function executeEmitNfse(actionData, company, userId, res) {
   }
 
   try {
+    // Atomic next RPS numero per company (concurrent-safe for DPS numbering)
+    const { lastRpsNumero: nextRpsNumero } = await prisma.company.update({
+      where: { id: company.id },
+      data: { lastRpsNumero: { increment: 1 } },
+      select: { lastRpsNumero: true }
+    });
+    const companyForEmission = { ...company, nextRpsNumero };
+
     // Emit NFS-e via real ACBr API
-    const nfseResult = await emitNfse(invoiceData, company);
+    const nfseResult = await emitNfse(invoiceData, companyForEmission);
 
     // Calculate ISS value
     const valorIss = (invoiceData.valor * invoiceData.aliquota_iss) / 100;

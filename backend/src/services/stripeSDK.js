@@ -317,17 +317,36 @@ export async function chargeOneTimePayment({
   amount,
   currency = 'brl',
   description,
-  metadata = {}
+  metadata = {},
+  paymentMethodId: explicitPaymentMethodId = null
 }) {
   try {
     console.log('[Stripe] Creating one-time payment for customer:', customerId, 'Amount:', amount);
     
-    // Get customer's default payment method
-    const customer = await stripe.customers.retrieve(customerId);
-    const defaultPaymentMethod = customer.invoice_settings?.default_payment_method;
+    // Resolve payment method: explicit ID, then customer default, then first attached card
+    let paymentMethodId = explicitPaymentMethodId;
     
-    if (!defaultPaymentMethod) {
-      console.error('[Stripe] Customer has no default payment method:', customerId);
+    if (!paymentMethodId) {
+      const customer = await stripe.customers.retrieve(customerId);
+      paymentMethodId = customer.invoice_settings?.default_payment_method;
+      
+      if (!paymentMethodId) {
+        const list = await stripe.paymentMethods.list({
+          customer: customerId,
+          type: 'card'
+        });
+        if (list.data.length > 0) {
+          paymentMethodId = list.data[0].id;
+          console.log('[Stripe] No default payment method; using first card and setting as default:', paymentMethodId);
+          await stripe.customers.update(customerId, {
+            invoice_settings: { default_payment_method: paymentMethodId }
+          });
+        }
+      }
+    }
+    
+    if (!paymentMethodId) {
+      console.error('[Stripe] Customer has no payment method:', customerId);
       throw new Error('PAYMENT_METHOD_REQUIRED');
     }
     
@@ -336,7 +355,7 @@ export async function chargeOneTimePayment({
       amount,
       currency,
       customer: customerId,
-      payment_method: defaultPaymentMethod,
+      payment_method: paymentMethodId,
       description,
       confirm: true, // Automatically confirm and charge
       automatic_payment_methods: {
@@ -404,6 +423,69 @@ export async function getCustomerPaymentMethods(customerId) {
   }
 }
 
+/**
+ * Verify if a Stripe customer exists
+ * @param {string} customerId - Stripe customer ID
+ * @returns {Promise<{exists: boolean, customer: Stripe.Customer|null}>}
+ */
+export async function verifyCustomerExists(customerId) {
+  try {
+    const customer = await stripe.customers.retrieve(customerId);
+    if (customer.deleted) {
+      return { exists: false, customer: null, reason: 'deleted' };
+    }
+    return { exists: true, customer };
+  } catch (error) {
+    if (error.code === 'resource_missing') {
+      return { exists: false, customer: null, reason: 'not_found' };
+    }
+    console.error('[Stripe] Error verifying customer:', error);
+    throw error;
+  }
+}
+
+/**
+ * Ensure customer exists in Stripe, recreate if necessary
+ * @param {Object} userData - User data to create customer
+ * @param {string} userData.email - User email
+ * @param {string} userData.name - User name
+ * @param {string} userData.existingStripeId - Current stored Stripe customer ID
+ * @returns {Promise<{customerId: string, wasRecreated: boolean}>}
+ */
+export async function ensureCustomerExists({ email, name, existingStripeId }) {
+  if (existingStripeId) {
+    const verification = await verifyCustomerExists(existingStripeId);
+    if (verification.exists) {
+      return { customerId: existingStripeId, wasRecreated: false };
+    }
+    console.warn(`[Stripe] Customer ${existingStripeId} no longer exists (${verification.reason}), will search/create new one`);
+  }
+
+  // Search for existing customer by email
+  const existingCustomers = await stripe.customers.list({ 
+    email, 
+    limit: 1 
+  });
+  
+  if (existingCustomers.data.length > 0) {
+    const customer = existingCustomers.data[0];
+    console.log('[Stripe] Found existing customer by email:', customer.id);
+    return { customerId: customer.id, wasRecreated: true };
+  }
+  
+  // Create new customer
+  console.log('[Stripe] Creating new customer for:', email);
+  const newCustomer = await stripe.customers.create({
+    email,
+    name,
+    metadata: {
+      source: 'fiscalai_auto_recreate'
+    }
+  });
+  
+  return { customerId: newCustomer.id, wasRecreated: true };
+}
+
 // Export default for convenience
 export default {
   stripe: stripeSDK,
@@ -419,4 +501,6 @@ export default {
   constructWebhookEvent,
   chargeOneTimePayment,
   getCustomerPaymentMethods,
+  verifyCustomerExists,
+  ensureCustomerExists,
 };

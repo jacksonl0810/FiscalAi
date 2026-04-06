@@ -151,7 +151,7 @@ export default function FiscalStatusIndicator({ companyId }) {
       color: "text-gray-400",
       bg: "bg-gray-500/10",
       border: "border-gray-500/20",
-      label: "⚪ Nuvem Fiscal não configurado"
+      label: "⚪ ACBr API não configurado"
     },
     expired: {
       icon: AlertCircle,
@@ -207,7 +207,7 @@ export default function FiscalStatusIndicator({ companyId }) {
               : rateLimitError 
                 ? rateLimitError 
                 : displayStatus === 'not_connected'
-                  ? 'Empresa cadastrada na Nuvem Fiscal. Configure certificado digital ou credenciais municipais para conectar.'
+                  ? 'Empresa cadastrada na ACBr API. Configure certificado digital ou credenciais municipais para conectar.'
                 : status.mensagem || (displayStatus === 'not_connected' ? 'Envie o certificado e clique em Salvar.' : 'Verificando status da conexão com a prefeitura.')}
           </p>
           {status.ultima_verificacao && !verifyMutation.isPending && !rateLimitError && (

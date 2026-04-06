@@ -29,6 +29,146 @@ let accessTokenCache = {
   expiresAt: null
 };
 
+// Cache for ACBr server time (in UTC/GMT+00:00)
+let acbrServerTimeMs = null;
+let acbrServerTimeFetchedAt = null;
+const TIME_SYNC_INTERVAL_MS = 2 * 60 * 1000; // Re-sync every 2 minutes
+
+/**
+ * Synchronize with ACBr API server time using their official endpoint.
+ * ACBr server works with GMT (+00:00).
+ * Endpoint: GET /utils/horario
+ * Response: { "horario": "2026-03-11T22:40:00.000Z" }
+ */
+async function syncTimeWithAcbrApi() {
+  try {
+    // Only sync if we haven't synced recently
+    if (acbrServerTimeFetchedAt && (Date.now() - acbrServerTimeFetchedAt < TIME_SYNC_INTERVAL_MS)) {
+      return;
+    }
+
+    console.log('[TimeSync] Fetching ACBr server time from /utils/horario...');
+    
+    const token = await getAccessToken();
+    const fetchedAtLocal = Date.now();
+    
+    const response = await fetch(`${getBaseUrl()}/utils/horario`, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Accept': 'application/json'
+      }
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const data = await response.json();
+    // ACBr returns: { "horario": "2026-03-11T22:40:00.000Z" } (UTC/GMT+00:00)
+    const acbrTimeStr = data.horario || data.dataHora || data.data_hora;
+    
+    if (acbrTimeStr) {
+      // ACBr server works with GMT (+00:00) per ACBr support
+      // "o servidor trabalha com horario +00:00 ou seja GMT"
+      // If no timezone indicator, treat as UTC
+      let acbrTimeIso = acbrTimeStr;
+      if (!acbrTimeStr.includes('Z') && !acbrTimeStr.includes('+') && !acbrTimeStr.includes('-', 10)) {
+        // Add UTC timezone indicator if not present
+        acbrTimeIso = acbrTimeStr + 'Z';
+      }
+      
+      acbrServerTimeMs = new Date(acbrTimeIso).getTime();
+      acbrServerTimeFetchedAt = fetchedAtLocal;
+      
+      const localTimeMs = Date.now();
+      const diffMs = localTimeMs - acbrServerTimeMs;
+      
+      // Also show Brazil time for reference
+      const brazilTimeMs = acbrServerTimeMs - (3 * 60 * 60 * 1000);
+      const brazilDate = new Date(brazilTimeMs);
+      const brazilStr = `${brazilDate.getUTCFullYear()}-${String(brazilDate.getUTCMonth()+1).padStart(2,'0')}-${String(brazilDate.getUTCDate()).padStart(2,'0')}T${String(brazilDate.getUTCHours()).padStart(2,'0')}:${String(brazilDate.getUTCMinutes()).padStart(2,'0')}:${String(brazilDate.getUTCSeconds()).padStart(2,'0')}-03:00`;
+      
+      console.log(`[TimeSync] ACBr server time (raw): ${acbrTimeStr}`);
+      console.log(`[TimeSync] ACBr server time (UTC): ${new Date(acbrServerTimeMs).toISOString()}`);
+      console.log(`[TimeSync] ACBr server time (Brazil): ${brazilStr}`);
+      console.log(`[TimeSync] Local server ${diffMs > 0 ? 'ahead' : 'behind'} by ${Math.abs(diffMs / 1000).toFixed(1)}s`);
+    } else {
+      console.log('[TimeSync] Unexpected response format:', JSON.stringify(data));
+      throw new Error('No time field in response');
+    }
+  } catch (error) {
+    console.log('[TimeSync] Could not fetch ACBr server time:', error.message);
+    // If we can't sync, we'll use the fallback in getBrazilDateTime
+    acbrServerTimeMs = null;
+    acbrServerTimeFetchedAt = Date.now(); // Don't retry immediately
+  }
+}
+
+/**
+ * Get current ACBr server time (adjusted for elapsed time since last sync).
+ * Returns time in milliseconds (UTC).
+ */
+function getAcbrServerTimeNow() {
+  if (acbrServerTimeMs && acbrServerTimeFetchedAt) {
+    const elapsedSinceSync = Date.now() - acbrServerTimeFetchedAt;
+    return acbrServerTimeMs + elapsedSinceSync;
+  }
+  // Fallback: use local time
+  return Date.now();
+}
+
+/**
+ * Get current date/time in Brazil timezone (BRT, UTC-3) with ISO format.
+ * Uses ACBr server time as the source of truth.
+ * 
+ * Per Sistema Nacional NFS-e: validation compares dhEmi vs dataHoraProcessamento.
+ * DPS is processed asynchronously (queue → validation → NFS-e).
+ * 
+ * Integrator guides recommend 10+ minutes backdate to account for:
+ * - ACBr ↔ Sefin Nacional clock drift (~3s observed)
+ * - Network latency
+ * - Queue processing delays
+ * - DPS validation time
+ */
+function getBrazilDateTime() {
+  // Backdate by 10 minutes - recommended by integrator documentation for production
+  const SAFETY_BUFFER_MS = 10 * 60 * 1000; // 10 minutes behind
+  const acbrTimeUtcMs = getAcbrServerTimeNow() - SAFETY_BUFFER_MS;
+  
+  // Convert UTC to Brazil time (UTC-3) by subtracting 3 hours
+  // This gives us a Date where getUTC* methods return Brazil time components
+  const BRT_OFFSET_MS = 3 * 60 * 60 * 1000;
+  const brazilTimeMs = acbrTimeUtcMs - BRT_OFFSET_MS;
+  const brazilDate = new Date(brazilTimeMs);
+
+  // Format as Brazil local time with -03:00 offset
+  const year = brazilDate.getUTCFullYear();
+  const month = String(brazilDate.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(brazilDate.getUTCDate()).padStart(2, '0');
+  const hours = String(brazilDate.getUTCHours()).padStart(2, '0');
+  const minutes = String(brazilDate.getUTCMinutes()).padStart(2, '0');
+  const seconds = String(brazilDate.getUTCSeconds()).padStart(2, '0');
+
+  const result = `${year}-${month}-${day}T${hours}:${minutes}:${seconds}-03:00`;
+  
+  // Log for debugging - show the conversion chain
+  const acbrNowUtc = new Date(acbrTimeUtcMs + SAFETY_BUFFER_MS).toISOString();
+  const dhEmiUtc = new Date(acbrTimeUtcMs).toISOString();
+  console.log(`[TimeSync] ACBr server now (UTC): ${acbrNowUtc}`);
+  console.log(`[TimeSync] dhEmi will be (UTC): ${dhEmiUtc} (10 min behind)`);
+  console.log(`[TimeSync] dhEmi formatted (Brazil): ${result}`);
+  
+  return result;
+}
+
+/**
+ * Get current date in Brazil timezone (YYYY-MM-DD format)
+ */
+function getBrazilDate() {
+  return getBrazilDateTime().split('T')[0];
+}
+
 /**
  * Get the base URL based on environment
  */
@@ -153,11 +293,14 @@ export async function apiRequest(endpoint, options = {}) {
     if (!response.ok) {
       let errorMessage = `API request failed: ${response.status}`;
       
+      let errorCode = null;
+      
       if (responseData.error) {
         if (typeof responseData.error === 'string') {
           errorMessage = responseData.error;
         } else if (responseData.error.message) {
           errorMessage = responseData.error.message;
+          errorCode = responseData.error.code || null;
           
           if (responseData.error.errors && Array.isArray(responseData.error.errors)) {
             const errorDetails = responseData.error.errors.map(e => {
@@ -171,6 +314,7 @@ export async function apiRequest(endpoint, options = {}) {
         }
       } else if (responseData.message) {
         errorMessage = responseData.message;
+        errorCode = responseData.code || null;
       } else if (responseData.error_description) {
         errorMessage = responseData.error_description;
       }
@@ -179,6 +323,7 @@ export async function apiRequest(endpoint, options = {}) {
       
       const error = new Error(errorMessage);
       error.status = response.status;
+      error.code = errorCode;
       error.data = responseData;
       throw error;
     }
@@ -194,6 +339,164 @@ export async function apiRequest(endpoint, options = {}) {
     
     throw error;
   }
+}
+
+// Cache for municipal parameters (avoid repeated API calls)
+const municipalParamsCache = new Map();
+const MUNICIPAL_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+/**
+ * Query municipal parameters from ACBr API
+ * Returns service codes, aliquotas, and tax rules for a municipality
+ * 
+ * Endpoint: GET /parametros_municipais/{codigoMunicipio}/aliquotas
+ * 
+ * @param {string} codigoMunicipio - IBGE 7-digit municipality code (e.g., "4202008" for Balneário Camboriú)
+ * @returns {Promise<object|null>} Municipal parameters or null if not available
+ */
+export async function getMunicipalParameters(codigoMunicipio) {
+  const cleanCode = (codigoMunicipio || '').replace(/\D/g, '');
+  
+  if (!cleanCode || cleanCode.length !== 7) {
+    console.log('[ACBrAPI] Invalid municipality code for parameters:', codigoMunicipio);
+    return null;
+  }
+
+  // Check cache
+  const cached = municipalParamsCache.get(cleanCode);
+  if (cached && Date.now() - cached.timestamp < MUNICIPAL_CACHE_TTL_MS) {
+    console.log('[ACBrAPI] Using cached municipal parameters for:', cleanCode);
+    return cached.data;
+  }
+
+  try {
+    console.log('[ACBrAPI] Querying municipal parameters for IBGE:', cleanCode);
+    
+    const response = await apiRequest(`/parametros_municipais/${cleanCode}/aliquotas`);
+    
+    if (response) {
+      // Cache the result
+      municipalParamsCache.set(cleanCode, {
+        data: response,
+        timestamp: Date.now()
+      });
+      
+      console.log('[ACBrAPI] Municipal parameters cached for:', cleanCode);
+      return response;
+    }
+    
+    return null;
+  } catch (error) {
+    // Don't fail emission if municipal params unavailable - log and continue
+    console.log('[ACBrAPI] Could not fetch municipal parameters:', error.message);
+    return null;
+  }
+}
+
+/**
+ * Query municipal tax retention rules
+ * 
+ * Endpoint: GET /parametros_municipais/{codigoMunicipio}/retencoes
+ * 
+ * @param {string} codigoMunicipio - IBGE 7-digit municipality code
+ * @returns {Promise<object|null>} Retention rules or null
+ */
+export async function getMunicipalRetentions(codigoMunicipio) {
+  const cleanCode = (codigoMunicipio || '').replace(/\D/g, '');
+  
+  if (!cleanCode || cleanCode.length !== 7) {
+    return null;
+  }
+
+  const cacheKey = `${cleanCode}_retencoes`;
+  const cached = municipalParamsCache.get(cacheKey);
+  if (cached && Date.now() - cached.timestamp < MUNICIPAL_CACHE_TTL_MS) {
+    return cached.data;
+  }
+
+  try {
+    console.log('[ACBrAPI] Querying municipal retentions for IBGE:', cleanCode);
+    
+    const response = await apiRequest(`/parametros_municipais/${cleanCode}/retencoes`);
+    
+    if (response) {
+      municipalParamsCache.set(cacheKey, {
+        data: response,
+        timestamp: Date.now()
+      });
+      return response;
+    }
+    
+    return null;
+  } catch (error) {
+    console.log('[ACBrAPI] Could not fetch municipal retentions:', error.message);
+    return null;
+  }
+}
+
+/**
+ * Validate and map national service code (cTribNac) for a municipality
+ * 
+ * Production systems should maintain a service mapping table and validate
+ * against municipal parameters before emission.
+ * 
+ * @param {string} cTribNac - National service code (LC 116 format, e.g., "140101")
+ * @param {string} codigoMunicipio - IBGE 7-digit municipality code
+ * @returns {Promise<object>} Validation result { valid, cTribNac, municipalCode?, issRate? }
+ */
+export async function validateServiceCode(cTribNac, codigoMunicipio) {
+  // Standard national service codes (LC 116/2003 format: XXYYZZ)
+  // XX = item, YY = subitem, ZZ = sequence
+  const validNationalCodes = [
+    '010501', '010502', '010503', '010504', '010505', '010506', '010507', '010508',
+    '140101', '140102', '140103', '140104', '140105', '140106', '140107', '140108', '140109',
+    '140201', '140202', '140203', '140204', '140205', '140206', '140207', '140208', '140209',
+    '170101', '170102', '170103', '170104', '170105', '170106', '170107', '170108', '170109',
+    '170201', '170202', '170203', '170204', '170205', '170206', '170207', '170208', '170209'
+  ];
+
+  const cleanCode = (cTribNac || '').replace(/\D/g, '');
+  
+  // Basic format validation (6 digits)
+  if (!cleanCode || cleanCode.length !== 6) {
+    return { 
+      valid: false, 
+      error: `Código de serviço inválido: ${cTribNac}. Deve ter 6 dígitos no formato XXYYZZ (LC 116)` 
+    };
+  }
+
+  // Query municipal parameters to check if code is supported
+  const params = await getMunicipalParameters(codigoMunicipio);
+  
+  if (params && params.servicos) {
+    // Check if service code exists in municipal list
+    const serviceInfo = params.servicos.find(s => s.codigo === cleanCode || s.cTribNac === cleanCode);
+    
+    if (serviceInfo) {
+      return {
+        valid: true,
+        cTribNac: cleanCode,
+        municipalCode: serviceInfo.codigoMunicipal || serviceInfo.codigo,
+        issRate: serviceInfo.aliquota,
+        description: serviceInfo.descricao
+      };
+    }
+  }
+
+  // Fallback: accept if it's a standard national code (many municipalities don't have API params)
+  if (validNationalCodes.includes(cleanCode) || /^[0-4]\d{5}$/.test(cleanCode)) {
+    return {
+      valid: true,
+      cTribNac: cleanCode,
+      note: 'Municipal validation not available - using national code'
+    };
+  }
+
+  return { 
+    valid: true, 
+    cTribNac: cleanCode,
+    note: 'Code accepted without municipal validation'
+  };
 }
 
 /**
@@ -387,6 +690,72 @@ async function registerCompany(companyData) {
 }
 
 /**
+ * Update company's Inscrição Municipal in ACBr API
+ * Required for municipalities that mandate IM (E0116)
+ * @param {string} cnpj - Company CNPJ
+ * @param {object} companyData - Company data including inscricaoMunicipal
+ * @returns {Promise<object>} Update result
+ */
+async function updateCompanyIM(cnpj, companyData) {
+  try {
+    const cleanCnpj = (cnpj || '').replace(/\D/g, '');
+    
+    if (!cleanCnpj || cleanCnpj.length !== 14) {
+      console.log('[ACBrAPI] Invalid CNPJ for IM update:', cnpj);
+      return { updated: false, reason: 'invalid_cnpj' };
+    }
+    
+    const inscricaoMunicipal = (companyData.inscricaoMunicipal || '').replace(/\D/g, '');
+    
+    if (!inscricaoMunicipal) {
+      console.log('[ACBrAPI] No Inscrição Municipal to update for:', cleanCnpj);
+      return { updated: false, reason: 'no_im' };
+    }
+    
+    console.log('[ACBrAPI] Updating company Inscrição Municipal:', {
+      cnpj: cleanCnpj,
+      inscricaoMunicipal
+    });
+    
+    let currentCompany;
+    try {
+      currentCompany = await apiRequest(`/empresas/${cleanCnpj}`, { method: 'GET' });
+    } catch (error) {
+      console.log('[ACBrAPI] Could not fetch company for IM update:', error.message);
+      return { updated: false, reason: 'company_not_found' };
+    }
+    
+    // Skip update if IM is already correctly set
+    if (currentCompany.inscricao_municipal === inscricaoMunicipal) {
+      console.log('[ACBrAPI] Inscrição Municipal already up to date:', inscricaoMunicipal);
+      return { updated: false, reason: 'already_current' };
+    }
+    
+    const updatedCompany = {
+      cpf_cnpj: cleanCnpj,
+      inscricao_municipal: inscricaoMunicipal,
+      inscricao_estadual: currentCompany.inscricao_estadual || '',
+      nome_razao_social: currentCompany.nome_razao_social,
+      nome_fantasia: currentCompany.nome_fantasia || currentCompany.nome_razao_social,
+      fone: currentCompany.fone || '',
+      email: currentCompany.email || '',
+      endereco: currentCompany.endereco || {}
+    };
+    
+    await apiRequest(`/empresas/${cleanCnpj}`, {
+      method: 'PUT',
+      body: JSON.stringify(updatedCompany)
+    });
+    
+    console.log('[ACBrAPI] Inscrição Municipal updated successfully');
+    return { updated: true };
+  } catch (error) {
+    console.error('[ACBrAPI] Error updating Inscrição Municipal:', error.message);
+    return { updated: false, reason: error.message };
+  }
+}
+
+/**
  * Check fiscal connection status
  * @param {string} acbrApiId - Company CNPJ in ACBr API
  * @returns {Promise<object>} Connection status
@@ -495,54 +864,296 @@ async function checkConnection(acbrApiId) {
  * @param {object} companyData - Company data
  * @returns {Promise<object>} Emission result
  */
+/**
+ * Normalize LC 116/2003 service code to 6 digits for ACBr API (cTribNac pattern [0-9]{6}).
+ * Valid codes follow format XXYYZZ where ZZ (subitem) is always >= 01 (never 00).
+ * We accept 4 (e.g. "1401") or 6 (e.g. "140101") and always return 6 valid digits.
+ * Example: "1401" -> "140101", "0106" -> "010601", "140101" -> "140101".
+ */
+function normalizeCodigoServico(codigo) {
+  if (!codigo || typeof codigo !== 'string') return '010601';
+  const digits = codigo.replace(/\D/g, '');
+  if (digits.length >= 6) return digits.slice(0, 6);
+  // For 4-digit codes (e.g., "1401"), append "01" to create valid subitem
+  // The last 2 digits (subitem) in LC 116/2003 are always >= 01, never 00
+  if (digits.length >= 4) return (digits + '01').slice(0, 6); // 1401 -> 140101, 0106 -> 010601
+  return digits.padStart(4, '0').slice(-4) + '01';
+}
+
+/**
+ * Valida CPF pelos dígitos verificadores (algoritmo oficial da Receita Federal).
+ * O campo infDPS.toma.CPF exige CPF válido; números como 12345678900 falham na prefeitura.
+ * @param {string} cpf - 11 dígitos (apenas números)
+ * @returns {boolean}
+ */
+function isValidCPF(cpf) {
+  if (!cpf || typeof cpf !== 'string') return false;
+  const d = cpf.replace(/\D/g, '');
+  if (d.length !== 11) return false;
+  if (/^(\d)\1{10}$/.test(d)) return false; // rejeita 11111111111, 00000000000, etc.
+  let sum = 0;
+  for (let i = 0; i < 9; i++) sum += parseInt(d[i], 10) * (10 - i);
+  let remainder = sum % 11;
+  const d1 = remainder < 2 ? 0 : 11 - remainder;
+  if (parseInt(d[9], 10) !== d1) return false;
+  sum = 0;
+  for (let i = 0; i < 10; i++) sum += parseInt(d[i], 10) * (11 - i);
+  remainder = sum % 11;
+  const d2 = remainder < 2 ? 0 : 11 - remainder;
+  if (parseInt(d[10], 10) !== d2) return false;
+  return true;
+}
+
+/**
+ * Valida CNPJ pelos dígitos verificadores (algoritmo oficial Receita Federal).
+ * O campo infDPS.toma.CNPJ exige CNPJ válido; a prefeitura rejeita números inválidos.
+ * @param {string} cnpj - 14 dígitos (apenas números)
+ * @returns {boolean}
+ */
+function isValidCNPJ(cnpj) {
+  if (!cnpj || typeof cnpj !== 'string') return false;
+  const d = cnpj.replace(/\D/g, '');
+  if (d.length !== 14) return false;
+  if (/^(\d)\1{13}$/.test(d)) return false; // rejeita 00000000000000, 11111111111111, etc.
+  const weights1 = [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2];
+  let sum = 0;
+  for (let i = 0; i < 12; i++) sum += parseInt(d[i], 10) * weights1[i];
+  let remainder = sum % 11;
+  const d1 = remainder < 2 ? 0 : 11 - remainder;
+  if (parseInt(d[12], 10) !== d1) return false;
+  const weights2 = [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2];
+  sum = 0;
+  for (let i = 0; i < 13; i++) sum += parseInt(d[i], 10) * weights2[i];
+  remainder = sum % 11;
+  const d2 = remainder < 2 ? 0 : 11 - remainder;
+  if (parseInt(d[13], 10) !== d2) return false;
+  return true;
+}
+
+/**
+ * Map company tributary regime to ACBr opSimpNac (Simples Nacional status).
+ * 1 = Não Optante (Lucro Real, Lucro Presumido, etc.)
+ * 2 = MEI
+ * 3 = ME/EPP Optante do Simples Nacional
+ * Prefeitura rejects if this does not match the company's cadastro Simples Nacional.
+ */
+function getOpSimpNacFromRegime(companyData) {
+  const regime = (companyData?.regimeTributario || companyData?.regime_tributario || '').toLowerCase();
+  if (regime.includes('mei')) return 2;
+  if (regime.includes('simples nacional') || (regime.includes('simples') && !regime.includes('não') && !regime.includes('nao'))) return 3;
+  return 1;
+}
+
+async function ensureRpsConfigured(cnpj, companyData = null) {
+  try {
+    const cleanCnpj = (cnpj || '').replace(/\D/g, '');
+    const ambiente = ACBR_API_ENVIRONMENT === 'production' ? 'producao' : 'homologacao';
+
+    const opSimpNac = companyData ? getOpSimpNacFromRegime(companyData) : 1;
+    // Use atomically assigned nextRpsNumero when provided (concurrent-safe); else default 1
+    const numero = (companyData && typeof companyData.nextRpsNumero === 'number') ? companyData.nextRpsNumero : 1;
+    // Sistema Nacional NFS-e: série identifica o tipo de emissor. Para API/webservice use 00001–49999 (E0010).
+    // 80000–89999 = portal manual. We use 900 (common in ERP integrations).
+    const nfseConfig = {
+      rps: {
+        lote: 1,
+        serie: '900',
+        numero
+      },
+      regTrib: {
+        opSimpNac,
+        regApTribSN: 1,
+        regEspTrib: 0
+      },
+      ambiente
+    };
+
+    console.log('[ACBrAPI] Ensuring RPS configuration is valid for:', cleanCnpj, '(opSimpNac:', opSimpNac + ', numero:', numero + ')');
+
+    await apiRequest(`/empresas/${cleanCnpj}/nfse`, {
+      method: 'PUT',
+      body: JSON.stringify(nfseConfig)
+    });
+
+    console.log('[ACBrAPI] RPS configuration updated successfully');
+  } catch (error) {
+    console.log('[ACBrAPI] RPS config update skipped (may already be correct):', error.message);
+  }
+}
+
 async function emitNfse(invoiceData, companyData) {
   try {
     if (!companyData.acbrApiId) {
       throw new Error('Empresa não registrada na ACBr API. Registre a empresa primeiro.');
     }
 
+    // Sync server time with ACBr API to prevent E0008 errors
+    await syncTimeWithAcbrApi();
+
     const cleanCnpj = companyData.cnpj.replace(/\D/g, '');
-    const clienteDocumento = (invoiceData.cliente_documento || '').replace(/\D/g, '');
+    
+    // Ensure RPS and regTrib (opSimpNac) are configured at company level before emission
+    await ensureRpsConfigured(cleanCnpj, companyData);
+    
+    // Ensure Inscrição Municipal is updated in ACBr API (required by many municipalities - E0116)
+    if (companyData.inscricaoMunicipal) {
+      await updateCompanyIM(cleanCnpj, companyData);
+    }
+    
+    let clienteDocumento = (invoiceData.cliente_documento || '').replace(/\D/g, '');
+    // Pad CPF to 11 / CNPJ to 14 digits (leading zeros) - required by prefeituras
+    if (clienteDocumento.length > 0 && clienteDocumento.length <= 11) {
+      clienteDocumento = clienteDocumento.padStart(11, '0');
+    }
+    if (clienteDocumento.length > 11 && clienteDocumento.length <= 14) {
+      clienteDocumento = clienteDocumento.padStart(14, '0');
+    }
+    if (clienteDocumento.length > 0 && clienteDocumento.length !== 11 && clienteDocumento.length !== 14) {
+      const err = new Error('CPF deve ter 11 dígitos ou CNPJ 14 dígitos.');
+      err.status = 400;
+      err.code = 'INVALID_DOCUMENT';
+      throw err;
+    }
+    if (clienteDocumento.length === 11 && !isValidCPF(clienteDocumento)) {
+      const err = new Error(
+        'O CPF informado não é válido. A prefeitura exige um CPF com dígitos verificadores corretos. ' +
+        'Verifique os 11 dígitos do CPF do cliente (evite números de teste como 12345678900).'
+      );
+      err.status = 400;
+      err.code = 'INVALID_CPF';
+      throw err;
+    }
+    if (clienteDocumento.length === 14 && !isValidCNPJ(clienteDocumento)) {
+      const err = new Error(
+        'O CNPJ informado não é válido. A prefeitura exige um CNPJ com dígitos verificadores corretos. ' +
+        'Verifique os 14 dígitos do CNPJ do cliente (evite números de teste).'
+      );
+      err.status = 400;
+      err.code = 'INVALID_CNPJ';
+      throw err;
+    }
     const ambiente = ACBR_API_ENVIRONMENT === 'production' ? 'producao' : 'homologacao';
 
-    // NFS-e payload (compatible with both ACBr API and Nuvem Fiscal)
+    // Normalize values to format expected by prefeitura (2 decimal places; cTribNac 4 chars)
+    const valorNum = parseFloat(invoiceData.valor || 0);
+    const vServ = Number((valorNum).toFixed(2));
+    const aliquotaNum = parseFloat(invoiceData.aliquota_iss ?? 5);
+    const pAliq = Number((aliquotaNum).toFixed(2));
+    const vBC = vServ;
+    const vISSQN = Number((vServ * (pAliq / 100)).toFixed(2));
+    const codigoServico = normalizeCodigoServico(invoiceData.codigo_servico || '0106');
+    
+    // Location of service: IBGE 7 digits (company municipality)
+    const codigoMunicipio = (companyData.codigoMunicipal || companyData.codigoMunicipio || '').replace(/\D/g, '');
+    
+    // Validate service code against municipal parameters (production best practice)
+    const serviceValidation = await validateServiceCode(codigoServico, codigoMunicipio);
+    console.log(`[ACBrAPI] Service code validation:`, JSON.stringify(serviceValidation));
+    
+    if (!serviceValidation.valid) {
+      const err = new Error(serviceValidation.error || `Código de serviço inválido: ${codigoServico}`);
+      err.status = 400;
+      err.code = 'INVALID_SERVICE_CODE';
+      throw err;
+    }
+
+    // Get emission datetime in Brazil timezone
+    const dhEmi = getBrazilDateTime();
+    const dhEmiDate = dhEmi.split('T')[0]; // Extract date part (YYYY-MM-DD)
+    
+    // dCompet: YYYY-MM-DD (date of service/competence)
+    // Rule: dCompet cannot be AFTER dhEmi date (E0015 validation)
+    let dataPrestacao = invoiceData.data_prestacao || dhEmiDate;
+    
+    // Ensure dCompet is not after dhEmi date
+    if (dataPrestacao > dhEmiDate) {
+      console.log(`[ACBrAPI] Adjusting dCompet from ${dataPrestacao} to ${dhEmiDate} (cannot be after dhEmi)`);
+      dataPrestacao = dhEmiDate;
+    }
+
+    // regEspTrib in DPS: 0 = nenhum regime especial
+    // Note: opSimpNac is set at COMPANY level (PUT /empresas/{cnpj}/nfse), NOT in DPS payload
+    const regEspTrib = 0;
+    // cLocPrestacao: IBGE 7 digits or null (codigoMunicipio already defined above)
+    const cLocPrestacao = codigoMunicipio.length === 7 ? codigoMunicipio : null;
+
+    // Check if company is Simples Nacional (opSimpNac = 3)
+    // For Simples Nacional with no ISS retention (tpRetISSQN = 1), we must NOT send pAliq, vBC, vISSQN
+    // because ISS is calculated and paid through DAS, not on individual invoices (E0625)
+    const opSimpNac = getOpSimpNacFromRegime(companyData);
+    const isSimplesToNoRetention = opSimpNac === 3; // ME/EPP Simples Nacional
+    
+    // tpRetISSQN: 1 = não retido, 2 = retido pelo tomador, 3 = retido pelo intermediário
+    const tpRetISSQN = invoiceData.iss_retido ? 2 : 1;
+    
+    // For Simples Nacional without retention: don't send ISS details (pAliq, vBC, vISSQN)
+    // vLiq = vServ for Simples Nacional (no ISS deduction on invoice)
+    const vLiq = isSimplesToNoRetention && tpRetISSQN === 1 
+      ? vServ 
+      : Number((vServ - vISSQN).toFixed(2));
+
+    // Build tribMun object based on company regime
+    const tribMun = {
+      tribISSQN: 1, // 1 = tributável
+      tpRetISSQN,
+      vLiq,
+      ...(cLocPrestacao ? { cLocIncid: cLocPrestacao } : {})
+    };
+
+    // Only add ISS rate fields if NOT Simples Nacional without retention
+    if (!(isSimplesToNoRetention && tpRetISSQN === 1)) {
+      tribMun.pAliq = pAliq;
+      tribMun.vBC = vBC;
+      tribMun.vISSQN = vISSQN;
+    }
+
+    console.log(`[ACBrAPI] Company regime: opSimpNac=${opSimpNac}, tpRetISSQN=${tpRetISSQN}, includeISSFields=${!(isSimplesToNoRetention && tpRetISSQN === 1)}`);
+
+    // NFS-e payload aligned with ACBr API schema (infDPS structure)
     const nfsePayload = {
       provedor: 'padrao',
       ambiente: ambiente,
+      referencia: `nfse-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
       infDPS: {
         tpAmb: ACBR_API_ENVIRONMENT === 'production' ? 1 : 2,
-        dhEmi: new Date().toISOString(),
-        verAplic: "1.0",
-        dCompet: invoiceData.data_prestacao || new Date().toISOString().split('T')[0],
+        dhEmi: dhEmi,
+        verAplic: '1.0',
+        dCompet: dataPrestacao,
         prest: {
-          CNPJ: cleanCnpj
+          CNPJ: cleanCnpj,
+          regTrib: { regEspTrib }
         },
         toma: {
-          xNome: invoiceData.cliente_nome,
+          orgaoPublico: false,
+          xNome: String(invoiceData.cliente_nome || '').trim(),
           ...(clienteDocumento.length === 11 ? { CPF: clienteDocumento } : {}),
           ...(clienteDocumento.length === 14 ? { CNPJ: clienteDocumento } : {}),
         },
         serv: {
+          ...(cLocPrestacao ? {
+            locPrest: {
+              cLocPrestacao,
+              cPaisPrestacao: 'BR'
+            }
+          } : {}),
           cServ: {
-            cTribNac: invoiceData.codigo_servico || '010601',
-            xDescServ: invoiceData.descricao_servico || 'Serviço prestado'
+            cTribNac: codigoServico,
+            xDescServ: String(invoiceData.descricao_servico || 'Serviço prestado').trim()
           }
         },
         valores: {
           vServPrest: {
-            vServ: parseFloat(invoiceData.valor || 0)
+            // vReceb should NOT be sent when prestador is the DPS emitter (E0424)
+            vServ
           },
           trib: {
-            tribMun: {
-              tribISSQN: 1,
-              pAliq: parseFloat(invoiceData.aliquota_iss || 5)
-            }
+            tribMun
           }
         }
       }
     };
 
-    console.log('[ACBrAPI] Emitting NFS-e to: /nfse/dps');
+    console.log(`[ACBrAPI] Emitting NFS-e to: /nfse/dps (dhEmi: ${dhEmi})`);
     console.log('[ACBrAPI] NFS-e payload:', JSON.stringify(nfsePayload, null, 2));
     
     let response;
@@ -569,6 +1180,37 @@ async function emitNfse(invoiceData, companyData) {
         authError.code = 'MUNICIPALITY_AUTH_ERROR';
         authError.data = apiError.data;
         throw authError;
+      }
+      
+      if (apiError.status === 400) {
+        const data = apiError.data || {};
+        let detail = apiError.message || '';
+        const errObj = data.error;
+        
+        if (errObj?.errors && Array.isArray(errObj.errors)) {
+          const parts = errObj.errors.map(e => {
+            if (typeof e === 'string') return e;
+            if (e.field && e.message) return `${e.field}: ${e.message}`;
+            if (e.message) return e.message;
+            if (e.descricao) return e.descricao;
+            return JSON.stringify(e);
+          });
+          if (parts.length) detail = parts.join('. ');
+        } else if (data.mensagens && Array.isArray(data.mensagens)) {
+          const parts = data.mensagens.map(m => m.descricao || m.mensagem || m.message || String(m));
+          if (parts.length) detail = parts.join('. ');
+        } else if (errObj?.message) {
+          detail = errObj.message;
+        } else if (data.message) {
+          detail = data.message;
+        }
+        const validationError = new Error(detail || 'Dados inválidos para emissão.');
+        validationError.status = 400;
+        // Preserve original error code from API, fallback to generic code
+        validationError.code = apiError.code || errObj?.code || 'INVOICE_EMISSION_ERROR';
+        validationError.data = apiError.data;
+        
+        throw validationError;
       }
       
       // Simulation fallback only in sandbox
@@ -668,20 +1310,68 @@ async function checkNfseStatus(companyAcbrId, nfseId) {
       'cancelado': 'cancelada',
       'cancelada': 'cancelada',
       'processando': 'processando',
-      'pendente': 'processando'
+      'pendente': 'processando',
+      'erro': 'erro',
+      'error': 'erro',
+      'falha': 'erro',
+      'failed': 'erro'
     };
 
-    const mappedStatus = statusMap[response.status?.toLowerCase()] || response.status || 'processando';
+    const rawStatus = (response.status ?? response.data?.status ?? '').toString().trim().toLowerCase();
+    const mappedStatus = statusMap[rawStatus] || 'processando';
     
-    console.log('[ACBrAPI] NFS-e status result:', mappedStatus);
+    console.log('[ACBrAPI] NFS-e status result:', mappedStatus, rawStatus ? `(raw: ${rawStatus})` : '(from response)');
+    
+    // Log full response for debugging when status is erro
+    if (mappedStatus === 'erro') {
+      console.log('[ACBrAPI] NFS-e error response:', JSON.stringify(response, null, 2));
+    }
 
+    const data = response.data ?? response;
+    
+    // Extract error messages and codes from various possible locations
+    let mensagem = response.mensagem ?? response.message ?? data.mensagem ?? data.message ?? '';
+    let errorCode = null;
+    
+    // Check for messages array (common in ACBr responses)
+    const mensagens = response.mensagens ?? data.mensagens ?? [];
+    if (Array.isArray(mensagens) && mensagens.length > 0) {
+      const errorMessages = mensagens
+        .map(m => {
+          if (typeof m === 'string') return m;
+          if (m.mensagem) return m.mensagem;
+          if (m.message) return m.message;
+          if (m.descricao) return m.descricao;
+          if (m.codigo && m.descricao) return `${m.codigo}: ${m.descricao}`;
+          return JSON.stringify(m);
+        })
+        .filter(m => m && m.length > 0);
+      
+      if (errorMessages.length > 0) {
+        mensagem = errorMessages.join('; ');
+      }
+      
+      // Extract the first error code from mensagens
+      const firstErrorWithCode = mensagens.find(m => m.codigo && m.codigo !== 'HTTP 400');
+      if (firstErrorWithCode) {
+        errorCode = firstErrorWithCode.codigo;
+      }
+    }
+    
+    // Check for error object
+    if (!mensagem && response.error) {
+      mensagem = response.error.message ?? response.error.descricao ?? JSON.stringify(response.error);
+      errorCode = errorCode || response.error.code;
+    }
+    
     return {
       status: mappedStatus,
-      numero: response.numero ? String(response.numero) : null,
-      codigo_verificacao: response.codigo_verificacao || response.codigoVerificacao,
-      pdf_url: response.pdf_url || response.pdfUrl,
-      xml_url: response.xml_url || response.xmlUrl,
-      mensagem: response.mensagem || response.message || ''
+      numero: (response.numero ?? data.numero) ? String(response.numero ?? data.numero) : null,
+      codigo_verificacao: response.codigo_verificacao ?? response.codigoVerificacao ?? data.codigo_verificacao ?? data.codigoVerificacao,
+      pdf_url: response.pdf_url ?? response.pdfUrl ?? data.pdf_url ?? data.pdfUrl,
+      xml_url: response.xml_url ?? response.xmlUrl ?? data.xml_url ?? data.xmlUrl,
+      mensagem,
+      errorCode
     };
   } catch (error) {
     console.error('[ACBrAPI] Error checking NFS-e status:', error.message);
@@ -832,12 +1522,7 @@ async function configureMunicipalCredentials(cpfCnpj, companyData, login, senha,
 
     console.log('[ACBrAPI] Configuring municipal credentials for:', cleanCpfCnpj);
 
-    let opSimpNac = 1;
-    const regime = (companyData.regimeTributario || companyData.regime_tributario || '').toLowerCase();
-    if (regime.includes('lucro presumido') || regime.includes('lucro real')) {
-      opSimpNac = 3;
-    }
-
+    const opSimpNac = getOpSimpNacFromRegime(companyData);
     const ambiente = ACBR_API_ENVIRONMENT === 'production' ? 'producao' : 'homologacao';
 
     const prefeitura = { login, senha };
@@ -852,9 +1537,9 @@ async function configureMunicipalCredentials(cpfCnpj, companyData, login, senha,
         regEspTrib: 0
       },
       rps: {
-        lote: 0,
-        serie: 'RPS',
-        numero: 0
+        lote: 1,
+        serie: '900',
+        numero: 1
       },
       prefeitura,
       incentivo_fiscal: false,
@@ -904,12 +1589,7 @@ async function configureNfseForCertificate(cpfCnpj, companyData) {
 
     console.log('[ACBrAPI] Configuring NFS-e to use digital certificate for:', cleanCpfCnpj);
 
-    let opSimpNac = 1;
-    const regime = (companyData.regimeTributario || companyData.regime_tributario || '').toLowerCase();
-    if (regime.includes('lucro presumido') || regime.includes('lucro real')) {
-      opSimpNac = 3;
-    }
-
+    const opSimpNac = getOpSimpNacFromRegime(companyData);
     const ambiente = ACBR_API_ENVIRONMENT === 'production' ? 'producao' : 'homologacao';
 
     const nfseConfig = {
@@ -919,9 +1599,9 @@ async function configureNfseForCertificate(cpfCnpj, companyData) {
         regEspTrib: 0
       },
       rps: {
-        lote: 0,
-        serie: 'RPS',
-        numero: 0
+        lote: 1,
+        serie: '900',
+        numero: 1
       },
       prefeitura: null,
       incentivo_fiscal: false,
@@ -965,8 +1645,8 @@ async function testNfseEmissionCapability(cnpj) {
     ambiente: ambiente,
     infDPS: {
       tpAmb: ACBR_API_ENVIRONMENT === 'production' ? 1 : 2,
-      dhEmi: new Date().toISOString(),
-      dCompet: new Date().toISOString().split('T')[0],
+      dhEmi: getBrazilDateTime(),
+      dCompet: getBrazilDate(),
       prest: { CNPJ: cleanCnpj },
       toma: { xNome: 'TESTE VALIDACAO', CNPJ: '00000000000191' },
       serv: { cServ: { cTribNac: '010601', xDescServ: 'Teste de validação de emissão' } },
@@ -1033,6 +1713,7 @@ async function testNfseEmissionCapability(cnpj) {
 
 export {
   registerCompany,
+  updateCompanyIM,
   checkConnection,
   emitNfse,
   checkNfseStatus,

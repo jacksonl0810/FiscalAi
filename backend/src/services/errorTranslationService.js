@@ -137,6 +137,18 @@ const ERROR_KNOWLEDGE_BASE = {
     explanation: 'O número da inscrição municipal informado não é válido ou não está cadastrado na prefeitura.',
     action: 'Verifique o número da inscrição municipal da empresa e certifique-se de que está correto.'
   },
+  'INVALID_CPF': {
+    category: 'validation',
+    message: 'CPF inválido',
+    explanation: 'O CPF do cliente não passa na validação dos dígitos verificadores. A prefeitura exige um CPF válido (não use números de teste como 12345678900).',
+    action: 'Informe um CPF válido do cliente com 11 dígitos. Para testes, use um CPF válido (ex.: 529.982.247-25).'
+  },
+  'INVALID_CNPJ': {
+    category: 'validation',
+    message: 'CNPJ inválido',
+    explanation: 'O CNPJ do cliente (tomador) não passa na validação dos dígitos verificadores. A prefeitura exige um CNPJ válido.',
+    action: 'Informe um CNPJ válido do cliente com 14 dígitos. Para testes, use um CNPJ válido (ex.: 00.000.000/0001-91 ou 11.222.333/0001-81).'
+  },
   'invalidjson': {
     category: 'validation',
     message: 'Formato de dados inválido',
@@ -148,6 +160,12 @@ const ERROR_KNOWLEDGE_BASE = {
     message: 'Validação de dados falhou',
     explanation: 'Alguns dados não passaram na validação da API.',
     action: 'Verifique se todos os campos obrigatórios estão preenchidos corretamente.'
+  },
+  'INVALID_NDPS': {
+    category: 'validation',
+    message: 'Número da DPS (nDPS) inválido',
+    explanation: 'O número da Declaração de Prestação de Serviço deve ser um número que comece com 1 a 9 (não pode ser zero).',
+    action: 'O sistema gera o nDPS automaticamente. Se o erro persistir, tente novamente em alguns segundos.'
   },
   'service_code_not_allowed': {
     category: 'validation',
@@ -161,7 +179,83 @@ const ERROR_KNOWLEDGE_BASE = {
     explanation: 'Este município ainda não está disponível para emissão de NFS-e.',
     action: 'Verifique se o município está correto ou entre em contato com o suporte.'
   },
+  'MunicipioNaoHomologado': {
+    category: 'validation',
+    message: 'Município não homologado para NFSe Nacional',
+    explanation: 'Este município ainda não aderiu ao Padrão Nacional de NFSe (Nota Fiscal de Serviço eletrônica). O sistema nacional ainda está em fase de implantação em todo o Brasil.',
+    action: 'Você pode: (1) Aguardar a adesão do município ao padrão nacional, ou (2) Emitir a nota fiscal diretamente no portal da prefeitura do seu município.'
+  },
+  'Município não homologado': {
+    category: 'validation',
+    message: 'Município não homologado para NFSe Nacional',
+    explanation: 'Este município ainda não aderiu ao Padrão Nacional de NFSe. A integração nacional está em fase de implantação gradual pelos municípios brasileiros.',
+    action: 'Verifique no site nfse.gov.br se seu município já aderiu ao padrão nacional, ou emita a nota fiscal diretamente no portal da prefeitura.'
+  },
   
+  // ACBr DPS/NFS-e validation errors
+  'E0008': {
+    category: 'validation',
+    message: 'Data de emissão inválida',
+    explanation: 'A data de emissão da nota fiscal não pode ser posterior à data de processamento. Isso geralmente ocorre por diferença de fuso horário entre o servidor e a prefeitura.',
+    action: 'Tente emitir a nota fiscal novamente. Se o problema persistir, verifique se a data e hora do sistema estão corretas.'
+  },
+  'E0310': {
+    category: 'validation',
+    message: 'Código de serviço inválido',
+    explanation: 'O código de tributação nacional informado não existe na lista de serviços do Sistema Nacional NFS-e.',
+    action: 'Verifique o código de serviço utilizado e selecione um código válido da lista de serviços nacional.'
+  },
+  'E0015': {
+    category: 'validation',
+    message: 'Data de competência inválida',
+    explanation: 'A data de competência (data do serviço) não pode ser posterior à data de emissão da nota fiscal.',
+    action: 'Verifique a data do serviço prestado e tente novamente. A data deve ser igual ou anterior à data atual.'
+  },
+  'E0116': {
+    category: 'configuration',
+    message: 'Inscrição Municipal não configurada',
+    explanation: 'A Inscrição Municipal (IM) do prestador de serviço é obrigatória para este município, mas não está cadastrada na empresa.',
+    action: 'Acesse a configuração da empresa e informe a Inscrição Municipal correta. Você pode obter esse número no cadastro da prefeitura.'
+  },
+  'E0625': {
+    category: 'validation',
+    message: 'Alíquota ISS não permitida para Simples Nacional',
+    explanation: 'Para empresas do Simples Nacional (ME/EPP), quando não há retenção de ISS pelo tomador, não é permitido informar a alíquota de ISS na nota fiscal. O ISS é calculado e pago através do DAS mensal.',
+    action: 'O sistema foi atualizado para não enviar a alíquota de ISS quando a empresa é Simples Nacional. Tente emitir a nota novamente.'
+  },
+  'E0424': {
+    category: 'validation',
+    message: 'Valor recebido não deve ser informado',
+    explanation: 'O campo "valor recebido" (vReceb) não deve ser informado na DPS quando o prestador de serviço é o emitente da nota fiscal.',
+    action: 'O sistema foi atualizado para não enviar este campo. Tente emitir a nota novamente.'
+  },
+  'E0010': {
+    category: 'validation',
+    message: 'Série da DPS inválida',
+    explanation: 'A série informada na DPS não pertence à faixa definida para o tipo de emissor. Para emissão via API/webservice use série entre 00001 e 49999 (ex.: 900).',
+    action: 'O sistema foi configurado para usar série 900 (emissão via API). Tente emitir a nota novamente.'
+  },
+  'INVALID_SERVICE_CODE': {
+    category: 'validation',
+    message: 'Código de serviço inválido',
+    explanation: 'O código de serviço (cTribNac) não corresponde ao formato esperado pela Lista de Serviços LC 116/2003 ou não é suportado pelo município.',
+    action: 'Verifique o código de serviço no cadastro da empresa e confirme que segue o formato de 6 dígitos (XXYYZZ) conforme LC 116. Ex.: 140101 para serviços de TI.'
+  },
+  // Simples Nacional: opção na DPS não confere com o cadastro (Receita Federal / prefeitura)
+  'SIMPLES_NACIONAL_CADASTRO': {
+    category: 'configuration',
+    message: 'Regime tributário não confere com o cadastro',
+    explanation: 'A opção de situação perante o Simples Nacional informada na nota não está de acordo com o cadastro oficial (Receita Federal / Simples Nacional). A prefeitura compara esse dado com o que consta no governo.',
+    action: 'Acesse "Minha Empresa", abra a empresa que emite a nota e altere o campo "Regime Tributário" para bater exatamente com a situação real da empresa: se for MEI, escolha "MEI"; se for optante do Simples Nacional, escolha "Simples Nacional"; se não for optante (Lucro Presumido ou Lucro Real), escolha "Lucro Presumido" ou "Lucro Real". Depois salve e tente emitir a nota novamente.'
+  },
+  
+  'InvalidJsonProperty': {
+    category: 'validation',
+    message: 'Propriedade inválida no payload',
+    explanation: 'Uma propriedade enviada não é reconhecida pela API. Isso geralmente indica um campo incorreto no payload.',
+    action: 'Verifique os campos enviados e tente novamente.'
+  },
+
   // ACBr API / Fiscal specific errors
   'cpf_cnpj_diferente': {
     category: 'certificate',
@@ -302,16 +396,32 @@ export function translateError(error, context = {}) {
 
   // PRIORITY 1: Check specific error codes FIRST (most specific)
   if (errorCode) {
-    // Check exact code match (case insensitive)
-    const upperCode = errorCode.toUpperCase();
-    if (ERROR_KNOWLEDGE_BASE[upperCode]) {
-      translation = ERROR_KNOWLEDGE_BASE[upperCode];
-  }
-    // Check normalized code
+    // Check exact code match first
+    if (ERROR_KNOWLEDGE_BASE[errorCode]) {
+      translation = ERROR_KNOWLEDGE_BASE[errorCode];
+    }
+    // Check exact code match (case insensitive - uppercase)
     if (!translation) {
-    const codeKey = errorCode.toLowerCase().replace(/[^a-z0-9_]/g, '_');
-    if (ERROR_KNOWLEDGE_BASE[codeKey]) {
-      translation = ERROR_KNOWLEDGE_BASE[codeKey];
+      const upperCode = errorCode.toUpperCase();
+      if (ERROR_KNOWLEDGE_BASE[upperCode]) {
+        translation = ERROR_KNOWLEDGE_BASE[upperCode];
+      }
+    }
+    // Check normalized code (lowercase with underscores)
+    if (!translation) {
+      const codeKey = errorCode.toLowerCase().replace(/[^a-z0-9_]/g, '_');
+      if (ERROR_KNOWLEDGE_BASE[codeKey]) {
+        translation = ERROR_KNOWLEDGE_BASE[codeKey];
+      }
+    }
+    // Check all keys case-insensitively
+    if (!translation) {
+      const lowerCode = errorCode.toLowerCase();
+      for (const [key, value] of Object.entries(ERROR_KNOWLEDGE_BASE)) {
+        if (key.toLowerCase() === lowerCode) {
+          translation = value;
+          break;
+        }
       }
     }
   }
@@ -374,6 +484,27 @@ export function translateError(error, context = {}) {
       } else {
         translation = ERROR_KNOWLEDGE_BASE['INVALID_CREDENTIALS'];
       }
+    } else if (statusCode === 400 && errorMessage) {
+      const generic400 = ERROR_KNOWLEDGE_BASE['400'];
+      const looksSpecific = /campo|inválido|obrigatório|obrigatorio|formato|esperado|descricao|correcao|cnpj|cpf|valor|código|codigo|serviço|servico|homologado|município|municipio|tributação|tributacao|existe/i.test(errorMessage);
+      
+      // Clean the error message - remove JSON and keep only the human-readable part
+      let cleanMessage = errorMessage;
+      const jsonStart = errorMessage.indexOf('; {');
+      if (jsonStart > 0) {
+        cleanMessage = errorMessage.substring(0, jsonStart).trim();
+      }
+      // Also try to clean "codigo: description" format to just description
+      const colonMatch = cleanMessage.match(/^[A-Z]\d+:\s*(.+)$/i);
+      if (colonMatch) {
+        cleanMessage = colonMatch[1];
+      }
+      
+      if (looksSpecific && cleanMessage.length > 10) {
+        translation = { ...generic400, message: cleanMessage };
+      } else if (generic400) {
+        translation = generic400;
+      }
     } else if (ERROR_KNOWLEDGE_BASE[statusCode.toString()]) {
       translation = ERROR_KNOWLEDGE_BASE[statusCode.toString()];
     }
@@ -392,7 +523,11 @@ export function translateError(error, context = {}) {
 
   // Check common patterns in error message
   if (!translation) {
-    if (normalizedMessage.includes('inscrição municipal') || normalizedMessage.includes('inscricao municipal') || normalizedMessage.includes('municipal_registration')) {
+    if (normalizedMessage.includes('município não homologado') || normalizedMessage.includes('municipio nao homologado') || normalizedMessage.includes('municipionaohomologado')) {
+      translation = ERROR_KNOWLEDGE_BASE['MunicipioNaoHomologado'];
+    } else if (normalizedMessage.includes('data de emissão') && normalizedMessage.includes('posterior')) {
+      translation = ERROR_KNOWLEDGE_BASE['E0008'];
+    } else if (normalizedMessage.includes('inscrição municipal') || normalizedMessage.includes('inscricao municipal') || normalizedMessage.includes('municipal_registration')) {
       translation = ERROR_KNOWLEDGE_BASE['invalid_municipal_registration'];
     } else if (normalizedMessage.includes('código de serviço') || normalizedMessage.includes('codigo servico')) {
       translation = ERROR_KNOWLEDGE_BASE['service_code_not_allowed'];
@@ -418,10 +553,14 @@ export function translateError(error, context = {}) {
       translation = ERROR_KNOWLEDGE_BASE['network_error'];
     } else if (normalizedMessage.includes('invalidjson') || normalizedMessage.includes('invalid json')) {
       translation = ERROR_KNOWLEDGE_BASE['invalidjson'];
+    } else if (normalizedMessage.includes("'nfse}ndps'") || (normalizedMessage.includes('ndps') && normalizedMessage.includes('pattern'))) {
+      translation = ERROR_KNOWLEDGE_BASE['INVALID_NDPS'];
     } else if (normalizedMessage.includes('validationfailed') || normalizedMessage.includes('validation failed')) {
       translation = ERROR_KNOWLEDGE_BASE['validationfailed'];
     } else if (normalizedMessage.includes('service_not_configured') || normalizedMessage.includes('integração fiscal não configurada')) {
       translation = ERROR_KNOWLEDGE_BASE['service_not_configured'];
+    } else if (normalizedMessage.includes('simples nacional') && (normalizedMessage.includes('não está de acordo') || normalizedMessage.includes('nao esta de acordo') || normalizedMessage.includes('opção de situação'))) {
+      translation = ERROR_KNOWLEDGE_BASE['SIMPLES_NACIONAL_CADASTRO'];
     }
   }
 

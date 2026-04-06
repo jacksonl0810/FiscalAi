@@ -28,6 +28,7 @@ function normalizeStatus(status) {
   if (status === 'autorizada') return 'autorizada';
   if (status === 'rejeitada') return 'rejeitada';
   if (status === 'cancelada') return 'cancelada';
+  if (status === 'erro') return 'erro';
   return 'processando';
 }
 
@@ -38,6 +39,7 @@ function getStatusDisplay(status) {
     autorizada: { label: 'Autorizada', bg: 'bg-green-500/20', text: 'text-green-400' },
     rejeitada: { label: 'Rejeitada', bg: 'bg-red-500/20', text: 'text-red-400' },
     cancelada: { label: 'Cancelada', bg: 'bg-slate-500/20', text: 'text-slate-400' },
+    erro: { label: 'Erro', bg: 'bg-orange-500/20', text: 'text-orange-400' },
   };
   return config[normalized] || config.processando;
 }

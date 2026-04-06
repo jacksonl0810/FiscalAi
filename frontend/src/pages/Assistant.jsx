@@ -373,7 +373,7 @@ export default function Assistant() {
           invoice_id: notaFiscal?.id
         });
 
-        const successContent = `✅ Nota fiscal ${notaFiscal?.status === 'autorizada' ? 'autorizada' : 'emitida'} com sucesso!\n\n📄 Número: ${notaFiscal?.numero || '---'}\n👤 Cliente: ${pendingInvoice.cliente_nome}\n💰 Valor: R$ ${pendingInvoice.valor.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}\n${notaFiscal?.codigo_verificacao ? `🔐 Código de Verificação: ${notaFiscal.codigo_verificacao}\n` : ''}\n✨ A nota foi enviada para a prefeitura através da Nuvem Fiscal.`;
+        const successContent = `✅ Nota fiscal ${notaFiscal?.status === 'autorizada' ? 'autorizada' : 'emitida'} com sucesso!\n\n📄 Número: ${notaFiscal?.numero || '---'}\n👤 Cliente: ${pendingInvoice.cliente_nome}\n💰 Valor: R$ ${pendingInvoice.valor.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}\n${notaFiscal?.codigo_verificacao ? `🔐 Código de Verificação: ${notaFiscal.codigo_verificacao}\n` : ''}\n✨ A nota foi enviada para a prefeitura através da ACBr API.`;
 
         // Save success message to conversation history (persists after reload)
         try {
@@ -489,7 +489,7 @@ export default function Assistant() {
         invoice_id: notaFiscal?.id
       });
 
-      const successContent = `✅ Pagamento confirmado e nota fiscal ${notaFiscal?.status === 'autorizada' ? 'autorizada' : 'emitida'} com sucesso!\n\n💳 Taxa de emissão: R$ 9,00\n📄 Número: ${notaFiscal?.numero || '---'}\n👤 Cliente: ${pendingInvoice.cliente_nome}\n💰 Valor: R$ ${pendingInvoice.valor.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}\n${notaFiscal?.codigo_verificacao ? `🔐 Código de Verificação: ${notaFiscal.codigo_verificacao}\n` : ''}\n✨ A nota foi enviada para a prefeitura através da Nuvem Fiscal.`;
+      const successContent = `✅ Pagamento confirmado e nota fiscal ${notaFiscal?.status === 'autorizada' ? 'autorizada' : 'emitida'} com sucesso!\n\n💳 Taxa de emissão: R$ 9,00\n📄 Número: ${notaFiscal?.numero || '---'}\n👤 Cliente: ${pendingInvoice.cliente_nome}\n💰 Valor: R$ ${pendingInvoice.valor.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}\n${notaFiscal?.codigo_verificacao ? `🔐 Código de Verificação: ${notaFiscal.codigo_verificacao}\n` : ''}\n✨ A nota foi enviada para a prefeitura através da ACBr API.`;
 
       // Save success message to conversation history (persists after reload)
       try {

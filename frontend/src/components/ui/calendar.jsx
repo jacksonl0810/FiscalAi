@@ -21,7 +21,7 @@ const MONTHS = [
 
 function Calendar({
   className,
-  classNames,
+  classNames = {},
   showOutsideDays = true,
   ...props
 }) {

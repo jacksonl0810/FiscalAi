@@ -585,42 +585,43 @@ export function extractClientName(text) {
   // SPECIAL PATTERN: "para mim contra [name]" or "pra mim contra [name]"
   // Common Brazilian expression: "emite uma nota para mim contra o João"
   // means "issue an invoice for me, billing João"
-  const mimContraMatch = cleanText.match(/(?:para|pra)\s+mim\s+contra\s+(?:o|a|os|as)?\s*([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.]+?)(?:\s*[,;]|\s+(?:cpf|cnpj|documento|de|no\s+valor|por|referente)|$)/i);
+  // Note: also match "cpnj" as common typo for "cnpj"
+  const mimContraMatch = cleanText.match(/(?:para|pra)\s+mim\s+contra\s+(?:o|a|os|as)?\s*([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.]+?)(?:\s*[,;]|\s+(?:cpf|cnpj|cpnj|documento|de|no\s+valor|por|referente)|$)/i);
   if (mimContraMatch && mimContraMatch[1]?.trim().length > 1) {
     const candidate = cleanName(mimContraMatch[1]);
     if (candidate) return candidate;
   }
   
   // Pattern 1: "Nome: [name]" or "nome é [name]" or "nome = [name]"
-  const nomeMatch = cleanText.match(/nome\s*(?:[:=é]|é)\s*([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.]+?)(?:\s*[,;]|\s+(?:cpf|cnpj|documento|email|telefone|tel|fone|e\s+o|com\s)|$)/i);
+  const nomeMatch = cleanText.match(/nome\s*(?:[:=é]|é)\s*([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.]+?)(?:\s*[,;]|\s+(?:cpf|cnpj|cpnj|documento|email|telefone|tel|fone|e\s+o|com\s)|$)/i);
   if (nomeMatch && nomeMatch[1]?.trim().length > 1) {
     const candidate = cleanName(nomeMatch[1]);
     if (candidate) return candidate;
   }
   
   // Pattern 2: "o nome é/dele é/dela é [name]"
-  const nameIsMatch = cleanText.match(/(?:o\s+nome|nome\s+(?:dele|dela)?)\s+(?:é|e)\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.]+?)(?:\s*[,;.]|\s+(?:cpf|cnpj|documento|email|telefone|e\s+o|com\s)|$)/i);
+  const nameIsMatch = cleanText.match(/(?:o\s+nome|nome\s+(?:dele|dela)?)\s+(?:é|e)\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.]+?)(?:\s*[,;.]|\s+(?:cpf|cnpj|cpnj|documento|email|telefone|e\s+o|com\s)|$)/i);
   if (nameIsMatch && nameIsMatch[1]?.trim().length > 1) {
     const candidate = cleanName(nameIsMatch[1]);
     if (candidate) return candidate;
   }
   
   // Pattern 3: "chamado/chamada [name]" or "de nome [name]"
-  const chamadoMatch = cleanText.match(/(?:chamad[oa]|de\s+nome)\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.]+?)(?:\s*[,;.]|\s+(?:cpf|cnpj|documento|email|telefone|com\s)|$)/i);
+  const chamadoMatch = cleanText.match(/(?:chamad[oa]|de\s+nome)\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.]+?)(?:\s*[,;.]|\s+(?:cpf|cnpj|cpnj|documento|email|telefone|com\s)|$)/i);
   if (chamadoMatch && chamadoMatch[1]?.trim().length > 1) {
     const candidate = cleanName(chamadoMatch[1]);
     if (candidate) return candidate;
   }
   
   // Pattern 4: "criar/cadastrar cliente [name]"
-  const afterClienteMatch = cleanText.match(/(?:criar|cadastrar|cadastre|registrar|adicionar|incluir|novo|nova)\s+(?:um\s+|uma\s+|o\s+|a\s+)?(?:novo\s+|nova\s+)?cliente\s*:?\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.]+?)(?:\s*[,;]|\s+(?:cpf|cnpj|documento|email|telefone|tel|fone|com\s|de\s|no\s)|$)/i);
+  const afterClienteMatch = cleanText.match(/(?:criar|cadastrar|cadastre|registrar|adicionar|incluir|novo|nova)\s+(?:um\s+|uma\s+|o\s+|a\s+)?(?:novo\s+|nova\s+)?cliente\s*:?\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.]+?)(?:\s*[,;]|\s+(?:cpf|cnpj|cpnj|documento|email|telefone|tel|fone|com\s|de\s|no\s)|$)/i);
   if (afterClienteMatch && afterClienteMatch[1]?.trim().length > 1) {
     const candidate = cleanName(afterClienteMatch[1]);
     if (candidate) return candidate;
   }
   
   // Pattern 5: "cliente [name]" (simple)
-  const clienteMatch = cleanText.match(/cliente\s*:?\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.]+?)(?:\s*[,;]|\s+(?:cpf|cnpj|documento|de|no|por|email|telefone)|$)/i);
+  const clienteMatch = cleanText.match(/cliente\s*:?\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.]+?)(?:\s*[,;]|\s+(?:cpf|cnpj|cpnj|documento|de|no|por|email|telefone)|$)/i);
   if (clienteMatch && clienteMatch[1]?.trim().length > 1) {
     const candidate = cleanName(clienteMatch[1]);
     if (candidate) return candidate;
@@ -628,28 +629,28 @@ export function extractClientName(text) {
   
   // Pattern 6: "para [name]" (but NOT "para mim", "para eu", etc.)
   // Note: Don't strip "Empresa" from company names like "Empresa ABC LTDA"
-  const paraMatch = cleanText.match(/para\s+(?:o\s+cliente\s+)?([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.]+?)(?:\s+(?:cpf|cnpj|documento|de|no\s+valor|por|referente)|$)/i);
+  const paraMatch = cleanText.match(/para\s+(?:o\s+cliente\s+)?([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.]+?)(?:\s+(?:cpf|cnpj|cpnj|documento|de|no\s+valor|por|referente)|$)/i);
   if (paraMatch && paraMatch[1]?.trim().length > 1) {
     const candidate = cleanName(paraMatch[1]);
     if (candidate) return candidate;
   }
   
   // Pattern 7: "do/da [name]"
-  const doMatch = cleanText.match(/(?:do|da)\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.]+?)(?:\s+(?:cpf|cnpj|documento|de|no|por)|$)/i);
+  const doMatch = cleanText.match(/(?:do|da)\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.]+?)(?:\s+(?:cpf|cnpj|cpnj|documento|de|no|por)|$)/i);
   if (doMatch && doMatch[1]?.trim().length > 1 && !doMatch[1].toLowerCase().includes('cliente')) {
     const candidate = cleanName(doMatch[1]);
     if (candidate) return candidate;
   }
   
   // Pattern 8: "razão social [name]"
-  const razaoMatch = cleanText.match(/(?:razão\s*social|razao\s*social)\s*:?\s*([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.]+?)(?:\s*[,;]|\s+(?:cpf|cnpj|documento|email|telefone)|$)/i);
+  const razaoMatch = cleanText.match(/(?:razão\s*social|razao\s*social)\s*:?\s*([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.]+?)(?:\s*[,;]|\s+(?:cpf|cnpj|cpnj|documento|email|telefone)|$)/i);
   if (razaoMatch && razaoMatch[1]?.trim().length > 1) {
     const candidate = cleanName(razaoMatch[1]);
     if (candidate) return candidate;
   }
   
   // Pattern 9: "contra [name]" (as fallback for "billing [name]")
-  const contraMatch = cleanText.match(/contra\s+(?:o|a|os|as)?\s*([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.]+?)(?:\s*[,;]|\s+(?:cpf|cnpj|documento|de|no\s+valor|por|referente)|$)/i);
+  const contraMatch = cleanText.match(/contra\s+(?:o|a|os|as)?\s*([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.]+?)(?:\s*[,;]|\s+(?:cpf|cnpj|cpnj|documento|de|no\s+valor|por|referente)|$)/i);
   if (contraMatch && contraMatch[1]?.trim().length > 1) {
     const candidate = cleanName(contraMatch[1]);
     if (candidate) return candidate;
@@ -759,8 +760,8 @@ export function classifyIntent(message, context = {}) {
   
   // Check if this is a client creation pattern - multiple approaches
   
-  // Pattern A: "[Name] CPF/CNPJ/documento [number]" (standalone)
-  const clientCreationPattern = /^(.+?)\s+(?:cpf|cnpj|documento)\s*:?\s*(\d{3}\.?\d{3}\.?\d{3}[-.]?\d{2}|\d{2}\.?\d{3}\.?\d{3}[\/]?\d{4}[-.]?\d{2}|\d{11}|\d{14})$/i;
+  // Pattern A: "[Name] CPF/CNPJ/documento [number]" (standalone) - also match "cpnj" as common typo
+  const clientCreationPattern = /^(.+?)\s+(?:cpf|cnpj|cpnj|documento)\s*:?\s*(\d{3}\.?\d{3}\.?\d{3}[-.]?\d{2}|\d{2}\.?\d{3}\.?\d{3}[\/]?\d{4}[-.]?\d{2}|\d{11}|\d{14})$/i;
   if (clientCreationPattern.test(message.trim())) {
     const match = message.trim().match(clientCreationPattern);
     return {

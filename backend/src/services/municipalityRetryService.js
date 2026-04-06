@@ -167,8 +167,16 @@ export async function processRetryQueue() {
 
     for (const item of items) {
       try {
+        // Atomic next RPS numero per company (concurrent-safe for DPS numbering)
+        const { lastRpsNumero: nextRpsNumero } = await prisma.company.update({
+          where: { id: item.companyId },
+          data: { lastRpsNumero: { increment: 1 } },
+          select: { lastRpsNumero: true }
+        });
+        const companyForEmission = { ...item.company, nextRpsNumero };
+
         // Emit the invoice
-        const nfseResult = await emitNfse(item.invoiceData, item.company);
+        const nfseResult = await emitNfse(item.invoiceData, companyForEmission);
 
         // Calculate ISS
         const valorIss = (parseFloat(item.invoiceData.valor) * parseFloat(item.invoiceData.aliquota_iss || 5)) / 100;

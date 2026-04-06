@@ -133,7 +133,7 @@ const cspDirectives = [
   "font-src 'self' https://fonts.gstatic.com data:",
   "img-src 'self' data: blob: https: http:",
   "frame-src 'self' https://js.stripe.com https://hooks.stripe.com https://m.stripe.network https://hcaptcha.com https://*.hcaptcha.com",
-  "connect-src 'self' https://js.stripe.com https://api.stripe.com https://m.stripe.network https://r.stripe.com https://hcaptcha.com https://*.hcaptcha.com wss: ws:",
+  "connect-src 'self' https://js.stripe.com https://api.stripe.com https://m.stripe.network https://r.stripe.com https://hcaptcha.com https://*.hcaptcha.com https://brasilapi.com.br https://*.brasilapi.com.br https://viacep.com.br wss: ws:",
   "worker-src 'self' blob:",
   "object-src 'none'",
   "base-uri 'self'",
